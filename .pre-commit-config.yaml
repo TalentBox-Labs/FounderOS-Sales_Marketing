@@ -5,6 +5,12 @@ repos:
       - id: detect-private-key
       - id: check-added-large-files
 
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.25.1
+    hooks:
+      - id: gitleaks
+        args: ["protect", "--staged", "--redact"]
+
   - repo: local
     hooks:
       - id: fixture-verify
