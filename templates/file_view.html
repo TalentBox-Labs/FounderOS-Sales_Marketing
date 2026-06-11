@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ week_id }} — File View — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}{{ week_id }} / {{ filename }}{% endblock %}
+{% block topbar_meta %}File viewer{% endblock %}
+
+{% block topbar_right %}
+  <a href="/weeks/{{ week_id }}" class="btn btn-ghost btn-sm">← Back to Week</a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-title">
+    📄 {{ filename }}
+    <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">{{ char_count }} chars · {{ line_count }} lines</span>
+  </div>
+  <pre style="
+    background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:16px;font-size:12.5px;font-family:'JetBrains Mono','Fira Code',monospace;
+    color:#c9d1d9;overflow-x:auto;line-height:1.7;white-space:pre-wrap;max-height:70vh;overflow-y:auto;
+  ">{{ content | e }}</pre>
+</div>
+{% endblock %}

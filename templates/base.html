@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}WorkCrew CMS OS{% endblock %}</title>
+  <style>
+    /* ─── Design Tokens ──────────────────────────────────────────────────── */
+    :root {
+      --bg:          #0d0f14;
+      --surface:     #141720;
+      --surface2:    #1c2030;
+      --border:      #242840;
+      --accent:      #5b6ef5;
+      --accent-soft: #3a4bcc22;
+      --accent-glow: #5b6ef540;
+      --text:        #e4e8f0;
+      --text-muted:  #6b7280;
+      --text-dim:    #4b5563;
+      --green:       #22c55e;
+      --green-soft:  #22c55e20;
+      --amber:       #f59e0b;
+      --amber-soft:  #f59e0b20;
+      --red:         #ef4444;
+      --red-soft:    #ef444420;
+      --blue:        #3b82f6;
+      --blue-soft:   #3b82f620;
+      --radius:      10px;
+      --radius-sm:   6px;
+      --shadow:      0 4px 24px #00000040;
+    }
+    /* ─── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 15px; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      line-height: 1.6;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    button { cursor: pointer; font: inherit; }
+
+    /* ─── Sidebar ────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .logo-icon {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 14px; color: #fff;
+      flex-shrink: 0;
+    }
+    .sidebar-logo .logo-text { font-weight: 700; font-size: 13px; color: var(--text); line-height: 1.2; }
+    .sidebar-logo .logo-sub  { font-size: 10px; color: var(--text-muted); }
+    .nav-section { padding: 18px 12px 4px; }
+    .nav-section-label {
+      font-size: 10px; font-weight: 600; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--text-dim); padding: 0 8px 6px;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 10px; border-radius: var(--radius-sm);
+      font-size: 13px; color: var(--text-muted);
+      transition: background .15s, color .15s;
+      text-decoration: none;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); text-decoration: none; }
+    .nav-item.active { background: var(--accent-soft); color: var(--accent); }
+    .nav-item .icon { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--text-dim);
+    }
+
+    /* ─── Main ───────────────────────────────────────────────────────────── */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px;
+    }
+    .topbar-title { font-size: 16px; font-weight: 600; }
+    .topbar-meta  { font-size: 12px; color: var(--text-muted); }
+    .topbar-right { display: flex; align-items: center; gap: 12px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+    }
+    .pill.green { background: var(--green-soft); color: var(--green); }
+    .pill.amber { background: var(--amber-soft); color: var(--amber); }
+    .pill.red   { background: var(--red-soft);   color: var(--red); }
+    .pill.blue  { background: var(--blue-soft);  color: var(--blue); }
+    .pill.gray  { background: var(--surface2);   color: var(--text-muted); }
+    .page { padding: 28px; flex: 1; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 22px; font-weight: 700; }
+    .page-header p  { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+
+    /* ─── Stats Row ──────────────────────────────────────────────────────── */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .stat-card .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+    .stat-card .stat-val   { font-size: 26px; font-weight: 700; margin-top: 4px; }
+    .stat-card .stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ─── Card ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+    /* ─── Table ──────────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody td { padding: 11px 12px; vertical-align: middle; }
+
+    /* ─── Progress Pipeline ──────────────────────────────────────────────── */
+    .pipeline { display: flex; align-items: center; gap: 0; }
+    .pipe-step {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 11px; padding: 3px 8px; border-radius: var(--radius-sm);
+      white-space: nowrap;
+    }
+    .pipe-step.done    { color: var(--green); background: var(--green-soft); }
+    .pipe-step.active  { color: var(--accent); background: var(--accent-soft); }
+    .pipe-step.pending { color: var(--text-dim); background: none; }
+    .pipe-sep { color: var(--text-dim); font-size: 10px; margin: 0 2px; }
+
+    /* ─── Buttons ────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 500; border: none;
+      transition: opacity .15s, background .15s;
+    }
+    .btn:hover { opacity: .88; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger  { background: var(--red-soft); color: var(--red); }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ─── Form ───────────────────────────────────────────────────────────── */
+    select, input[type=text] {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: var(--radius-sm);
+      padding: 7px 12px; font-size: 13px; font-family: inherit;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+
+    /* ─── Log ────────────────────────────────────────────────────────────── */
+    .log-box {
+      background: #090b10; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 12px; line-height: 1.7; color: #9ca3af;
+      max-height: 340px; overflow-y: auto; white-space: pre-wrap;
+    }
+    .log-box .ok   { color: var(--green); }
+    .log-box .err  { color: var(--red); }
+    .log-box .warn { color: var(--amber); }
+    .log-box .info { color: var(--blue); }
+
+    /* ─── Toast ──────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 18px;
+      font-size: 13px; box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; pointer-events: auto; }
+
+    /* ─── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 720px) {
+      .sidebar { display: none; }
+      .page { padding: 16px; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<!-- ░ Sidebar ─────────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">W</div>
+    <div>
+      <div class="logo-text">WorkCrew</div>
+      <div class="logo-sub">CMS OS</div>
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Overview</div>
+    <a href="/" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+      <span class="icon">⬛</span> Dashboard
+    </a>
+    <a href="/weeks" class="nav-item {% if active_page == 'weeks' %}active{% endif %}">
+      <span class="icon">📅</span> Content Calendar
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Pipeline</div>
+    <a href="/pipeline" class="nav-item {% if active_page == 'pipeline' %}active{% endif %}">
+      <span class="icon">⚡</span> Run Pipeline
+    </a>
+    <a href="/qa" class="nav-item {% if active_page == 'qa' %}active{% endif %}">
+      <span class="icon">✅</span> QA Reports
+    </a>
+    <a href="/publish" class="nav-item {% if active_page == 'publish' %}active{% endif %}">
+      <span class="icon">🚀</span> Go-Live
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">System</div>
+    <a href="/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">
+      <span class="icon">⚙️</span> Settings
+    </a>
+    <a href="/health" class="nav-item">
+      <span class="icon">💓</span> Health
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    Active week: <strong>{{ active_week or "—" }}</strong>
+  </div>
+</aside>
+
+<!-- ░ Main ──────────────────────────────────────────────────────────────── -->
+<div class="main">
+  {% block topbar %}
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">{% block topbar_title %}WorkCrew CMS OS{% endblock %}</div>
+      <div class="topbar-meta">{% block topbar_meta %}Content Management & Publishing System{% endblock %}</div>
+    </div>
+    <div class="topbar-right">
+      {% block topbar_right %}{% endblock %}
+    </div>
+  </div>
+  {% endblock %}
+
+  <div class="page">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+
+<!-- ░ Toast ──────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+function showToast(msg, ok=true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderLeftColor = ok ? 'var(--green)' : 'var(--red)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+async function apiPost(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  return r.json();
+}
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -9,22 +9,22 @@ repos:
     rev: v8.25.1
     hooks:
       - id: gitleaks
-        args: ["protect", "--staged", "--redact"]
+        args: ["--redact"]
 
   - repo: local
     hooks:
       - id: fixture-verify
         name: Verify week fixtures sync
-        entry: python scripts/generate_week_fixtures.py --verify
+        entry: ./.venv/bin/python scripts/generate_week_fixtures.py --verify
         language: system
-        stages: [commit]
+        stages: [pre-commit]
         pass_filenames: false
         always_run: true
       - id: pytest
         name: Run pytest
-        entry: python -m pytest tests/ -q
+        entry: ./.venv/bin/python -m pytest tests/ -q
         language: system
-        stages: [commit]
+        stages: [pre-commit]
         pass_filenames: false
         always_run: true
         require_serial: true

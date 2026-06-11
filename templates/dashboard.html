@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Dashboard{% endblock %}
+{% block topbar_meta %}Content calendar overview & pipeline health{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill {% if pipeline_ok %}green{% else %}red{% endif %}">
+    ● {% if pipeline_ok %}Pipeline healthy{% else %}Pipeline needs attention{% endif %}
+  </span>
+{% endblock %}
+
+{% block content %}
+
+<!-- ░ Stats ──────────────────────────────────────────────────────────────── -->
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-label">Total Articles</div>
+    <div class="stat-val">{{ stats.total }}</div>
+    <div class="stat-sub">{{ stats.weeks }} content weeks</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">QA Passed</div>
+    <div class="stat-val" style="color:var(--green)">{{ stats.qa_passed }}</div>
+    <div class="stat-sub">{{ stats.qa_pct }}% pass rate</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Published</div>
+    <div class="stat-val" style="color:var(--accent)">{{ stats.published }}</div>
+    <div class="stat-sub">live on site</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">In Progress</div>
+    <div class="stat-val" style="color:var(--amber)">{{ stats.in_progress }}</div>
+    <div class="stat-sub">awaiting steps</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Active Week</div>
+    <div class="stat-val" style="color:var(--accent);font-size:20px">{{ active_week }}</div>
+    <div class="stat-sub"><a href="/weeks/{{ active_week }}">open week →</a></div>
+  </div>
+</div>
+
+<!-- ░ Content Calendar ────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">
+    📅 Content Calendar
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <select id="filter-status" onchange="filterTable()" style="padding:4px 8px;font-size:12px">
+        <option value="">All statuses</option>
+        <option value="QA Passed">QA Passed</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Publish Review">Publish Review</option>
+        <option value="Draft">Draft</option>
+        <option value="Not Started">Not Started</option>
+      </select>
+      <a href="/pipeline" class="btn btn-primary btn-sm">⚡ Run Pipeline</a>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="week-table">
+      <thead>
+        <tr>
+          <th>Week</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>QA</th>
+          <th>Pipeline Stage</th>
+          <th>Artifacts</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in weeks %}
+        <tr data-status="{{ row.status }}">
+          <td>
+            <a href="/weeks/{{ row.content_id }}" style="font-weight:600;font-family:monospace;font-size:13px">
+              {{ row.content_id }}
+            </a>
+          </td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ row.title or "—" }}
+          </td>
+          <td>
+            {% set s = row.status | lower %}
+            {% if "pass" in s or "complete" in s %}
+              <span class="pill green">{{ row.status }}</span>
+            {% elif "review" in s or "progress" in s %}
+              <span class="pill amber">{{ row.status }}</span>
+            {% elif "draft" in s %}
+              <span class="pill blue">{{ row.status }}</span>
+            {% else %}
+              <span class="pill gray">{{ row.status or "—" }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.qa_status == "PASS" %}
+              <span class="pill green">✓ PASS</span>
+            {% elif row.qa_status == "FAIL" %}
+              <span class="pill red">✗ FAIL</span>
+            {% else %}
+              <span class="pill gray">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="pipeline">
+              {% for step in row.pipeline_steps %}
+                <span class="pipe-step {{ step.state }}">{{ step.label }}</span>
+                {% if not loop.last %}<span class="pipe-sep">›</span>{% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            <div style="display:flex;gap:4px">
+              {% if row.has_draft %}<span title="Draft" style="font-size:13px">📝</span>{% endif %}
+              {% if row.has_final %}<span title="Final" style="font-size:13px">📄</span>{% endif %}
+              {% if row.has_qa %}<span title="QA Report" style="font-size:13px">✅</span>{% endif %}
+              {% if row.has_checklist %}<span title="Checklist" style="font-size:13px">☑️</span>{% endif %}
+            </div>
+          </td>
+          <td>
+            <div style="display:flex;gap:6px">
+              <a href="/weeks/{{ row.content_id }}" class="btn btn-ghost btn-sm">View</a>
+              <button class="btn btn-primary btn-sm"
+                onclick="runWeek('{{ row.content_id }}')">▶ Run</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ░ Last Pipeline Run ───────────────────────────────────────────────────── -->
+{% if last_run %}
+<div class="card">
+  <div class="card-title">
+    ⚡ Last Pipeline Run
+    <span class="pill {% if last_run.ok %}green{% else %}red{% endif %}" style="margin-left:8px">
+      {% if last_run.ok %}Success{% else %}Failed{% endif %}
+    </span>
+    <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">
+      {{ last_run.active_week }} · {{ last_run.started_at }}
+    </span>
+  </div>
+  {% if last_run.error %}
+  <div class="log-box"><span class="err">{{ last_run.error }}</span></div>
+  {% else %}
+  <div style="font-size:12px;color:var(--text-muted)">
+    Finished at {{ last_run.finished_at }} — no errors recorded.
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function filterTable() {
+  const val = document.getElementById('filter-status').value.toLowerCase();
+  document.querySelectorAll('#week-table tbody tr').forEach(r => {
+    const s = (r.dataset.status || '').toLowerCase();
+    r.style.display = !val || s.includes(val) ? '' : 'none';
+  });
+}
+
+async function runWeek(week) {
+  if (!confirm(`Run pipeline for ${week}?`)) return;
+  showToast(`Starting pipeline for ${week}…`);
+  const res = await apiPost('/run', { week });
+  const ok = res.ok !== false;
+  showToast(ok ? `✓ ${week} pipeline complete` : `✗ ${week} failed: ${res.detail || res.stderr || ''}`, ok);
+  if (ok) setTimeout(() => location.reload(), 800);
+}
+</script>
+{% endblock %}

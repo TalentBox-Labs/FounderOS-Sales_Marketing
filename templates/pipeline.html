@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Pipeline — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Run Pipeline{% endblock %}
+{% block topbar_meta %}Trigger content generation, validation, and publishing stages{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:380px 1fr;gap:24px;align-items:start">
+
+  <!-- ░ Controls Panel ──────────────────────────────────────────────────── -->
+  <div>
+    <div class="card">
+      <div class="card-title">⚡ Quick Run</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Select Week</label>
+          <select id="week-select" style="width:100%">
+            {% for w in weeks %}
+            <option value="{{ w.content_id }}" {% if w.content_id == active_week %}selected{% endif %}>
+              {{ w.content_id }} — {{ w.title[:45] if w.title else "Untitled" }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:8px">Pipeline Stage</label>
+          <div style="display:flex;flex-direction:column;gap:6px" id="stage-radio">
+            {% for stage_id, stage_label, stage_desc in [
+              ("full",       "⚡ Full Pipeline",       "Validate → QA → Tracker update"),
+              ("generate",   "✍️ Generate Content",     "Phase 2A: Brief → SEO → Research → Draft"),
+              ("edit",       "✏️ Edit (Phase 2B)",      "Editor agent → staged Final"),
+              ("validate",   "✅ Validate Only",        "Run all validators, no writes"),
+              ("qa",         "🤖 CrewAI QA",            "LLM QA pass on draft/final"),
+              ("sheet-sync", "📊 Sheet Sync",           "Mirror tracker to Google Sheets"),
+            ] %}
+            <label style="
+              display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
+              border-radius:var(--radius-sm);border:1px solid var(--border);
+              cursor:pointer;transition:background .1s;
+            " class="stage-opt" for="s-{{ stage_id }}">
+              <input type="radio" name="stage" id="s-{{ stage_id }}" value="{{ stage_id }}"
+                {% if stage_id == "full" %}checked{% endif %}
+                style="margin-top:2px;accent-color:var(--accent)">
+              <div>
+                <div style="font-size:13px;font-weight:500">{{ stage_label }}</div>
+                <div style="font-size:11px;color:var(--text-muted)">{{ stage_desc }}</div>
+              </div>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="runSelected()">
+          ▶ Run
+        </button>
+      </div>
+    </div>
+
+    <!-- Active week switcher -->
+    <div class="card">
+      <div class="card-title">🔀 Switch Active Week</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Changes <code>data/runtime_config.json</code> to point at a different week profile.
+      </p>
+      <div style="display:flex;gap:8px">
+        <select id="switch-week" style="flex:1">
+          {% for w in weeks %}
+          <option value="{{ w.content_id }}" {% if w.content_id == active_week %}selected{% endif %}>
+            {{ w.content_id }}
+          </option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-ghost" onclick="switchWeek()">Apply</button>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">
+        Current: <strong>{{ active_week }}</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- ░ Live Log ────────────────────────────────────────────────────────── -->
+  <div>
+    <div class="card">
+      <div class="card-title">
+        📟 Live Output
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="clearLog()">Clear</button>
+      </div>
+      <div id="live-log" class="log-box" style="min-height:420px">
+        <span style="color:var(--text-dim)">Output will appear here when you run a pipeline stage…</span>
+      </div>
+    </div>
+
+    <!-- Last run summary -->
+    {% if last_run %}
+    <div class="card">
+      <div class="card-title">
+        Last Run
+        <span class="pill {% if last_run.ok %}green{% else %}red{% endif %}" style="margin-left:8px">
+          {% if last_run.ok %}OK{% else %}Failed{% endif %}
+        </span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">
+          {{ last_run.active_week }} · {{ last_run.started_at }}
+        </span>
+      </div>
+      {% if last_run.error %}
+      <div class="log-box"><span class="err">{{ last_run.error }}</span></div>
+      {% else %}
+      <div style="font-size:12px;color:var(--text-muted)">Finished {{ last_run.finished_at }} — no errors.</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Highlight selected stage option
+document.querySelectorAll('input[name=stage]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.querySelectorAll('.stage-opt').forEach(el => el.style.background = '');
+    r.closest('.stage-opt').style.background = 'var(--accent-soft)';
+  });
+  if (r.checked) r.closest('.stage-opt').style.background = 'var(--accent-soft)';
+});
+
+function log(msg, cls='') {
+  const box = document.getElementById('live-log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('live-log').innerHTML = '';
+}
+
+const STAGE_ENDPOINTS = {
+  full:        '/run',
+  generate:    '/generate',
+  edit:        '/edit',
+  validate:    '/validate',
+  qa:          '/qa',
+  'sheet-sync':'/sheet-sync',
+};
+
+async function runSelected() {
+  const week  = document.getElementById('week-select').value;
+  const stage = document.querySelector('input[name=stage]:checked').value;
+  const ep    = STAGE_ENDPOINTS[stage] || '/run';
+
+  clearLog();
+  log(`▶ Starting: ${stage} for ${week}`, 'info');
+  showToast(`Running ${stage} for ${week}…`);
+
+  try {
+    const res = await apiPost(ep, { week });
+    const ok  = res.ok !== false;
+    if (res.stdout) res.stdout.split('\n').forEach(l => log(l));
+    if (res.stderr) res.stderr.split('\n').filter(Boolean).forEach(l => log(l, 'warn'));
+    log(ok ? `✓ Done: ${stage}` : `✗ Failed: ${res.detail || ''}`, ok ? 'ok' : 'err');
+    showToast(ok ? `✓ ${stage} complete` : `✗ ${stage} failed`, ok);
+  } catch(e) {
+    log(`Error: ${e}`, 'err');
+  }
+}
+
+async function switchWeek() {
+  const week = document.getElementById('switch-week').value;
+  if (!confirm(`Switch active week to ${week}?`)) return;
+  const res = await apiPost('/switch-week', { week });
+  const ok = res.ok !== false;
+  showToast(ok ? `✓ Switched to ${week}` : `✗ Failed`, ok);
+  if (ok) setTimeout(() => location.reload(), 600);
+}
+</script>
+{% endblock %}
