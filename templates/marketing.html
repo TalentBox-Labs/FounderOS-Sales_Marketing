@@ -189,7 +189,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Timestamp</th><th>Backend</th><th>Brand</th><th>Keyword</th><th>GEO</th><th>Events</th>
+            <th>Timestamp</th><th>Backend</th><th>Brand</th><th>Keyword</th><th>GEO</th><th>Events</th><th>Action</th>
           </tr></thead>
           <tbody>
             {% for run in orchestration_runs %}
@@ -200,6 +200,7 @@
               <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ run.keyword }}</td>
               <td style="font-size:12px">{{ run.geo_target }}</td>
               <td style="font-size:12px">{{ run.event_count }}</td>
+              <td><a href="/orchestration/run/{{ run.run_id }}" class="btn btn-ghost btn-sm">View</a></td>
             </tr>
             {% endfor %}
           </tbody>

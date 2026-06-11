@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import csv
 import json
+import html
 import os
 import subprocess
 import sys
@@ -49,6 +50,7 @@ from pydantic import BaseModel, Field
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
+    load_orchestration_run,
     load_recent_orchestration_runs,
     run_orchestration,
 )
@@ -510,6 +512,19 @@ def page_marketing(request: Request) -> HTMLResponse:
     })
 
 
+@app.get("/orchestration/run/{run_id}", response_class=HTMLResponse)
+def page_orchestration_run(
+    run_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> HTMLResponse:
+    _require_auth(authorization)
+    run = load_orchestration_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="orchestration run not found")
+    return HTMLResponse(_render_orchestration_run_detail(run, run_id, _load_runtime().get("active_week", "—")))
+
+
 class MarketingRequest(BaseModel):
     brand:               str = "workcrew"
     topic:               str = ""
@@ -686,6 +701,141 @@ def marketing_publish(
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def _render_orchestration_run_detail(run: dict[str, Any], run_id: str, active_week: str) -> str:
+    results = run.get("results", {}) if isinstance(run.get("results"), dict) else {}
+    executions = results.get("executions", {}) if isinstance(results.get("executions"), dict) else {}
+    events = run.get("events", []) if isinstance(run.get("events"), list) else []
+    audit = results.get("audit", {}) if isinstance(results.get("audit"), dict) else {}
+
+    def esc(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return html.escape(json.dumps(value, indent=2, ensure_ascii=True))
+        return html.escape(str(value))
+
+    summary_rows = "".join(
+        f"<tr><th>{label}</th><td>{esc(value)}</td></tr>"
+        for label, value in [
+            ("Run ID", run.get("run_id", run_id)),
+            ("Timestamp", run.get("timestamp", "—")),
+            ("Backend", run.get("backend", "—")),
+            ("Brand", run.get("brand", "—")),
+            ("Keyword", run.get("keyword", "—")),
+            ("Topic", run.get("topic", "—")),
+            ("GEO", run.get("geo_target", "—")),
+            ("Funnel Stage", run.get("funnel_stage", "—")),
+            ("Audience", run.get("audience", "—")),
+            ("Audit File", audit.get("run_file", "—") if isinstance(audit, dict) else "—"),
+            ("Active Week", active_week),
+        ]
+    )
+
+    event_cards = "".join(
+        f"""
+        <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2)\">
+          <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
+            <span class=\"pill {'green' if event.get('ok') is True else 'red' if event.get('ok') is False else 'gray'}\">{html.escape(str(event.get('channel', 'unknown')))}</span>
+            <span style=\"font-size:12px;font-weight:500\">{html.escape(str(event.get('step', 'step')))}</span>
+            <span style=\"font-size:11px;color:var(--text-muted);margin-left:auto\">{html.escape(str(event.get('timestamp', '')))}</span>
+          </div>
+          <div style=\"font-size:12px;color:var(--text-muted);margin-bottom:8px\">Run: {html.escape(str(event.get('run_id', run_id)))}</div>
+          <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:240px;overflow-y:auto;\">{esc(event.get('payload', {}))}</pre>
+        </div>
+        """
+        for event in events
+    ) or '<p style="color:var(--text-muted)">No per-channel events were recorded for this run.</p>'
+
+    failure_cards: list[str] = []
+    for key, payload in executions.items():
+        if isinstance(payload, dict) and (
+            payload.get("error") or payload.get("ok") is False or payload.get("status") == "not_configured"
+        ):
+            failure_cards.append(
+                f"""
+                <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08)\">
+                  <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
+                    <span class=\"pill red\">{html.escape(str(key))}</span>
+                    <span style=\"font-size:12px;font-weight:500\">Issue detected</span>
+                  </div>
+                  <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:180px;overflow-y:auto;\">{esc(payload)}</pre>
+                </div>
+                """
+            )
+    failures_html = "".join(failure_cards) or '<p style="color:var(--text-muted)">No failures were recorded in the execution payload.</p>'
+
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\">
+    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+    <title>Orchestration Run — {html.escape(run_id)} — WorkCrew CMS OS</title>
+    <style>
+        :root {{
+            --bg:#0b0f14; --surface:#11161d; --surface2:#151b23; --border:#26303d;
+            --text:#e6edf3; --text-muted:#94a3b8; --green:#16a34a; --red:#ef4444; --accent:#60a5fa;
+            --radius-sm:12px; --radius-md:18px;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }}
+        body {{ margin:0; background:linear-gradient(180deg,#0b0f14,#10151b 70%); color:var(--text); }}
+        .page {{ padding:24px; max-width:1400px; margin:0 auto; }}
+        .topbar {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }}
+        .topbar-title {{ font-size:28px; font-weight:700; }}
+        .topbar-meta {{ color:var(--text-muted); margin-top:4px; }}
+        .card {{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:18px; margin-bottom:18px; }}
+        .card-title {{ display:flex; align-items:center; gap:8px; font-size:16px; font-weight:600; margin-bottom:14px; }}
+        .table-wrap {{ overflow:auto; }}
+        table {{ width:100%; border-collapse:collapse; }}
+        th, td {{ text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }}
+        th {{ width:180px; color:var(--text-muted); font-weight:600; }}
+        pre {{ margin:0; }}
+        .pill {{ padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid var(--border); background:var(--surface2); }}
+        .pill.green {{ color:#bbf7d0; border-color:rgba(22,163,74,.4); }}
+        .pill.red {{ color:#fecaca; border-color:rgba(239,68,68,.4); }}
+        .pill.gray {{ color:var(--text-muted); }}
+        .btn {{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:12px; border:1px solid var(--border); color:var(--text); text-decoration:none; background:var(--surface2); }}
+        .layout {{ display:grid; grid-template-columns:1.1fr .9fr; gap:24px; align-items:start; }}
+        @media (max-width: 980px) {{ .layout {{ grid-template-columns:1fr; }} .topbar {{ flex-direction:column; align-items:flex-start; gap:12px; }} }}
+    </style>
+</head>
+<body>
+    <div class=\"page\">
+        <div class=\"topbar\">
+            <div>
+                <div class=\"topbar-title\">Orchestration Run {html.escape(run_id[:8])}</div>
+                <div class=\"topbar-meta\">Per-channel execution audit and failure trace</div>
+            </div>
+            <div><a href=\"/marketing\" class=\"btn\">← Back to Marketing</a></div>
+        </div>
+
+        <div class=\"layout\">
+            <div>
+                <div class=\"card\">
+                    <div class=\"card-title\">🧾 Run Summary</div>
+                    <div class=\"table-wrap\"><table><tbody>{summary_rows}</tbody></table></div>
+                </div>
+
+                <div class=\"card\">
+                    <div class=\"card-title\">📦 Execution Payload</div>
+                    <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-size:12px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;line-height:1.7;white-space:pre-wrap;max-height:60vh;overflow-y:auto;\">{esc(run.get('results', {}))}</pre>
+                </div>
+            </div>
+
+            <div>
+                <div class=\"card\">
+                    <div class=\"card-title\">🔎 Per-Channel Events</div>
+                    <div style=\"display:flex;flex-direction:column;gap:10px\">{event_cards}</div>
+                </div>
+
+                <div class=\"card\">
+                    <div class=\"card-title\">⚠️ Failures / Notes</div>
+                    <div style=\"display:flex;flex-direction:column;gap:10px\">{failures_html}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
 
 
 # ── Health ───────────────────────────────────────────────────────────────────

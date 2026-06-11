@@ -149,6 +149,19 @@ def load_recent_orchestration_runs(limit: int = 20) -> list[dict[str, Any]]:
     return rows[:limit]
 
 
+def load_orchestration_run(run_id: str) -> dict[str, Any] | None:
+    run_id = (run_id or "").strip()
+    if not run_id:
+        return None
+    run_file = _audit_dir() / f"{run_id}.json"
+    if not run_file.is_file():
+        return None
+    try:
+        return json.loads(run_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def build_strategy(req: GTMOrchestrationRequest) -> dict[str, Any]:
     """Return a deterministic, execution-ready strategy plan."""
     channels = req.channels or ["blog", "linkedin", "instagram", "youtube", "email", "whatsapp"]
