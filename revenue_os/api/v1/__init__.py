@@ -7,6 +7,7 @@ from revenue_os.api.v1.command_center import router as command_center_router
 from revenue_os.api.v1.contacts import router as contacts_router
 from revenue_os.api.v1.companies import router as companies_router
 from revenue_os.api.v1.deals import router as deals_router
+from revenue_os.api.v1.orchestration import router as orchestration_router
 from revenue_os.api.v1.outreach import router as outreach_router
 from revenue_os.api.v1.social import router as social_router
 
@@ -19,5 +20,6 @@ v1_router.include_router(companies_router, dependencies=[Depends(get_current_use
 v1_router.include_router(deals_router, dependencies=[Depends(get_current_user)])
 v1_router.include_router(outreach_router, dependencies=[Depends(get_current_user)])
 v1_router.include_router(social_router, dependencies=[Depends(get_current_user)])
+v1_router.include_router(orchestration_router, dependencies=[Depends(get_current_user)])
 
 __all__ = ["v1_router"]
