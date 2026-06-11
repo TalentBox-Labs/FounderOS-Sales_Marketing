@@ -1,0 +1,194 @@
+# ─── Marketing Crew Tasks ───────────────────────────────────────────────────
+# Used by src/marketing_crew.py
+# All tasks receive brand_voice, topic, target_keyword, and geo_target as
+# context injected at runtime.
+
+strategy_brief_task:
+  description: >
+    Create a marketing content brief for the provided topic and brand.
+
+    Inputs you will receive:
+    - brand: one of "workcrew" | "hirestack" | "founder"
+    - topic: the article topic or angle
+    - target_keyword: primary SEO keyword
+    - geo_target: optional geography (e.g. "United States", "UK", leave blank for global)
+    - funnel_stage: awareness | consideration | decision
+
+    Produce a structured brief with these sections:
+    1. **Content Goal** — one sentence on the traffic/conversion objective
+    2. **Primary Keyword** + search intent (informational/commercial/navigational)
+    3. **Secondary Keywords** — 5 LSI or supporting terms
+    4. **AEO Target Queries** — 5 questions an AI answer engine would surface
+       this article for (format: "What is…", "How to…", "Best…")
+    5. **GEO Signals** — locality terms to weave in naturally (city, region, or
+       "global") based on geo_target
+    6. **Brand Voice Notes** — tone, CTA, phrases to use/avoid for this brand
+    7. **Suggested H2 Structure** — 5–7 headings that follow BLUF + FAQ pattern
+    8. **CTA** — the single conversion action at the end
+  expected_output: >
+    A structured markdown brief with all 8 sections filled. Use headers
+    (##) for each section. No filler, no placeholder text.
+
+blog_article_task:
+  description: >
+    Write a complete, publish-ready blog article following the content brief.
+
+    Requirements:
+    - Length: 1,200–2,000 words (article body only, excluding front matter)
+    - Front matter YAML block with: title, primary_keyword, meta_description
+      (under 155 chars), canonical_url (use https://workcrew.ai/blog/{slug} for
+      WorkCrew, https://hirestack.io/blog/{slug} for HireStack, or
+      https://cyril.ai/posts/{slug} for Founder), publish_status: draft,
+      brand, geo_target
+    - H1 must contain the primary keyword
+    - Include at least 2 internal link placeholders [INTERNAL: topic]
+    - Include a "## Frequently Asked Questions" section with exactly 5 Q&A pairs
+      — each answer must be under 60 words (optimised for AI answer engine
+      citation and featured snippets)
+    - Each FAQ answer must start with a direct answer to the question (BLUF style)
+    - End with a CTA section linking to the brand product
+    - No banned phrases: game-changer, cutting-edge, revolutionary,
+      in today's fast-paced world, guaranteed, 100% success rate
+  expected_output: >
+    Complete markdown article starting with a --- YAML front matter block,
+    followed by the article body with H1, body sections, FAQ section, and CTA.
+    No code fences wrapping the entire output.
+
+linkedin_post_task:
+  description: >
+    Write a LinkedIn post for the provided article targeting the brand's audience.
+
+    Platform rules:
+    - Hook: first line must stop the scroll — use a bold claim, contrarian take,
+      or surprising stat from the article (max 25 words, no emoji opening)
+    - Body: 3–5 short paragraphs (2–3 sentences each), line breaks between each
+    - Use first-person for Founder brand, brand voice for WorkCrew/HireStack
+    - Include 1 soft CTA in the last paragraph linking to the article
+    - First comment suggestion: 5–8 relevant hashtags formatted for first comment
+    - Carousel hook: if the article has a clear list structure, add a
+      "Carousel version:" section with 7 slide titles (cover + 5 content + CTA)
+    - Length: 150–300 words (body)
+  expected_output: >
+    Markdown with sections:
+    ## LinkedIn Post
+    [post body]
+    ## First Comment (hashtags)
+    [hashtags]
+    ## Carousel Slides (if applicable)
+    [slide titles]
+
+instagram_post_task:
+  description: >
+    Write Instagram content for the provided article.
+
+    Platform rules:
+    - Caption hook: 1 punchy line (max 15 words) that works as the first visible
+      line before "more" — emoji allowed, question or bold stat preferred
+    - Caption body: 4–6 short paragraphs with line breaks, conversational tone
+    - Bio link CTA: end with "Link in bio →" or similar
+    - Hashtags: 20–25 relevant hashtags in a separate block
+    - Reel concept: 30-second reel script outline (hook 0–3s, value 3–25s,
+      CTA 25–30s) — one punchy sentence per beat
+    - Stories sequence: 3-story sequence (tease → value → CTA swipe-up)
+  expected_output: >
+    Markdown with sections:
+    ## Instagram Caption
+    [caption]
+    ## Hashtags
+    [hashtags]
+    ## Reel Script (30s)
+    [script outline]
+    ## Stories Sequence
+    [3-story outline]
+
+youtube_content_task:
+  description: >
+    Create YouTube content package for the provided article.
+
+    Deliverables:
+    - Video title: 2 variants — one keyword-optimised (under 70 chars), one
+      curiosity-gap style
+    - Description: 3 paragraphs — hook (2 sentences), body (key points as
+      bullets), CTA + links section. Total under 500 words. First 125 chars
+      must work as a standalone teaser.
+    - Tags: 15 tags (mix of exact-match keywords, broad topic tags, brand tags)
+    - Chapters: 6–8 timestamps with section titles (format: 0:00 Title)
+    - Script intro: first 60 seconds scripted verbatim — hook, credibility line,
+      promise/payoff statement, and transition to main content
+    - Thumbnail text: 2–4 word bold text overlay suggestion
+  expected_output: >
+    Markdown with sections:
+    ## YouTube Titles
+    ## Description
+    ## Tags
+    ## Chapter Markers
+    ## Script Intro (0:00–1:00)
+    ## Thumbnail Text
+
+image_prompt_task:
+  description: >
+    Produce professional image generation prompts for Instagram and YouTube.
+
+    Instagram post image (1080×1080):
+    - Style: clean, modern B2B SaaS — NOT stock photo corporate
+    - Must include bold typography overlay with the hook text
+    - Color palette aligned to brand (WorkCrew: deep blue + white,
+      HireStack: teal + dark, Founder: warm neutral + accent)
+    - Subject: data visualisation, human at laptop, or abstract concept
+    - Lighting: professional studio or natural window light
+
+    YouTube thumbnail (1280×720):
+    - Bold emotion or reaction face (if person is in content)
+    - Large, high-contrast text (max 4 words) on left or right third
+    - Bright accent color arrow or circle pointing to face/text
+    - Background: blurred office OR solid brand color gradient
+    - No cluttered elements — 3 visual elements max
+
+    Each prompt must specify: subject, style, colors, lighting, composition,
+    mood, and any text overlay in [brackets].
+  expected_output: >
+    Markdown with sections:
+    ## Instagram Image Prompt
+    [detailed prompt]
+    ## YouTube Thumbnail Prompt
+    [detailed prompt]
+
+seo_metadata_task:
+  description: >
+    Produce the complete SEO and AEO metadata package for the blog article.
+
+    Deliverables:
+    - Title tag (under 60 chars, keyword first)
+    - Meta description (under 155 chars, includes keyword + CTA word)
+    - Primary keyword
+    - Secondary keywords (5)
+    - Canonical URL
+    - Open Graph tags (og:title, og:description, og:type, og:url, og:image)
+    - Twitter Card tags (twitter:card, twitter:title, twitter:description)
+    - FAQ Schema JSON-LD block — extract exactly 5 Q&A pairs from the article
+      FAQ section and format as application/ld+json. Each answer under 60 words.
+    - Article Schema JSON-LD (articleType, datePublished placeholder, author,
+      publisher)
+    - AEO readiness checklist: 5-item list confirming which AI citation signals
+      are present (direct answers, structured headers, FAQ block, author entity,
+      canonical URL)
+  expected_output: >
+    Markdown with sections:
+    ## HTML Meta Tags
+    ```html
+    [tags]
+    ```
+    ## Open Graph Tags
+    ```html
+    [tags]
+    ```
+    ## FAQ Schema (JSON-LD)
+    ```json
+    [schema]
+    ```
+    ## Article Schema (JSON-LD)
+    ```json
+    [schema]
+    ```
+    ## AEO Readiness Checklist
+    [5 items]

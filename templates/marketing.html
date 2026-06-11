@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Marketing Agent — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Marketing Agent{% endblock %}
+{% block topbar_meta %}SEO · GEO · AEO · LinkedIn · Instagram · YouTube — multi-brand content engine{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:400px 1fr;gap:24px;align-items:start">
+
+  <!-- ░ Generate Panel ───────────────────────────────────────────────────── -->
+  <div>
+    <div class="card">
+      <div class="card-title">✍️ Generate Content</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Brand</label>
+          <div style="display:flex;gap:8px">
+            {% for b in ["workcrew", "hirestack", "founder"] %}
+            <label style="
+              flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;
+              padding:10px 6px;border-radius:var(--radius-sm);border:1px solid var(--border);
+              cursor:pointer;font-size:12px;text-align:center;
+            " class="brand-opt" for="brand-{{ b }}">
+              <input type="radio" name="brand" id="brand-{{ b }}" value="{{ b }}"
+                {% if b == 'workcrew' %}checked{% endif %}
+                style="accent-color:var(--accent)">
+              <span>{{ {"workcrew":"🔷 WorkCrew", "hirestack":"🟢 HireStack", "founder":"👤 Founder"}[b] }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Topic / Angle *</label>
+          <input type="text" id="topic" placeholder="e.g. Why LinkedIn Recruiter is too expensive for SMBs"
+            style="width:100%">
+        </div>
+
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Primary Keyword *</label>
+          <input type="text" id="keyword" placeholder="e.g. linkedin recruiter alternatives"
+            style="width:100%">
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">GEO Target</label>
+            <input type="text" id="geo" placeholder="e.g. United States" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Funnel Stage</label>
+            <select id="funnel" style="width:100%">
+              <option value="awareness">Awareness</option>
+              <option value="consideration" selected>Consideration</option>
+              <option value="decision">Decision</option>
+            </select>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="generateContent()">
+          ⚡ Generate All Channels
+        </button>
+
+        <div style="font-size:11px;color:var(--text-muted);line-height:1.5">
+          Generates: blog article · LinkedIn post · Instagram caption & reel · YouTube script · image prompts · SEO/AEO metadata
+        </div>
+      </div>
+    </div>
+
+    <!-- Publish Panel -->
+    <div class="card">
+      <div class="card-title">🚀 Publish to Channels</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Paste the path to a generated <code>08_Publish_Status.json</code> to publish.
+      </p>
+      <input type="text" id="status-path"
+        placeholder="output/marketing/workcrew/slug/08_Publish_Status.json"
+        style="width:100%;margin-bottom:10px">
+
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+        {% for ch, label, icon in [
+          ("all",       "All Channels",  "🌐"),
+          ("hashnode",  "Hashnode Blog", "📝"),
+          ("linkedin",  "LinkedIn",      "💼"),
+          ("instagram", "Instagram",     "📸"),
+          ("youtube",   "YouTube",       "🎬"),
+        ] %}
+        <button class="btn btn-ghost" style="justify-content:flex-start;gap:8px"
+          onclick="dryRun('{{ ch }}')">
+          {{ icon }} Preview {{ label }}
+        </button>
+        {% endfor %}
+      </div>
+
+      <div id="ig-url-wrap" style="display:none;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">
+          Instagram Image URL (required for image post)
+        </label>
+        <input type="text" id="ig-image-url" placeholder="https://cdn.example.com/image.jpg" style="width:100%">
+      </div>
+
+      <button class="btn btn-danger" style="width:100%;justify-content:center"
+        onclick="publishConfirm()">
+        ⚠️ Publish (Irreversible)
+      </button>
+    </div>
+  </div>
+
+  <!-- ░ Output / Log ────────────────────────────────────────────────────── -->
+  <div>
+    <!-- Recent runs -->
+    {% if runs %}
+    <div class="card">
+      <div class="card-title">📁 Recent Marketing Runs</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Brand</th><th>Keyword</th><th>GEO</th><th>Generated</th>
+            <th>Blog</th><th>LI</th><th>IG</th><th>YT</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            {% for run in runs %}
+            <tr>
+              <td><span class="pill {{ {'workcrew':'blue','hirestack':'green','founder':'amber'}[run.brand] }}">
+                {{ run.brand }}</span></td>
+              <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                {{ run.target_keyword }}</td>
+              <td style="font-size:12px">{{ run.geo_target or "global" }}</td>
+              <td style="font-size:11px;color:var(--text-muted)">{{ run.generated_at }}</td>
+              {% for ch in ["hashnode", "linkedin", "instagram", "youtube"] %}
+              <td>
+                {% if run.published.get(ch) %}
+                  <span class="pill green" style="font-size:10px">✓</span>
+                {% else %}
+                  <span class="pill gray" style="font-size:10px">—</span>
+                {% endif %}
+              </td>
+              {% endfor %}
+              <td>
+                <a href="/marketing/run/{{ run.slug }}" class="btn btn-ghost btn-sm">View</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Live log -->
+    <div class="card">
+      <div class="card-title">
+        📟 Live Output
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="clearLog()">Clear</button>
+      </div>
+      <div id="mkt-log" class="log-box" style="min-height:380px">
+        <span style="color:var(--text-dim)">Generation output will stream here…</span>
+      </div>
+    </div>
+
+    <!-- Channel status -->
+    <div class="card">
+      <div class="card-title">📊 Channel Integration Status</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+        {% for ch, label, env_key, icon in [
+          ("hashnode",  "Hashnode Blog", "HASHNODE_ACCESS_TOKEN",   "📝"),
+          ("linkedin",  "LinkedIn",      "LINKEDIN_ACCESS_TOKEN",   "💼"),
+          ("instagram", "Instagram",     "INSTAGRAM_ACCESS_TOKEN",  "📸"),
+          ("youtube",   "YouTube",       "YOUTUBE_API_KEY",         "🎬"),
+        ] %}
+        <div style="
+          padding:12px;border-radius:var(--radius-sm);
+          background:{% if integration_status[ch] %}var(--green-soft){% else %}var(--surface2){% endif %};
+          border:1px solid {% if integration_status[ch] %}var(--green){% else %}var(--border){% endif %};
+        ">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span>{{ icon }}</span>
+            <span style="font-size:13px;font-weight:500">{{ label }}</span>
+            <span class="pill {% if integration_status[ch] %}green{% else %}gray{% endif %}"
+              style="font-size:10px;margin-left:auto">
+              {% if integration_status[ch] %}Connected{% else %}Not configured{% endif %}
+            </span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted)">
+            Env: <code>{{ env_key }}</code>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.querySelectorAll('input[name=brand]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.querySelectorAll('.brand-opt').forEach(el => el.style.background = '');
+    r.closest('.brand-opt').style.background = 'var(--accent-soft)';
+  });
+  if (r.checked) r.closest('.brand-opt').style.background = 'var(--accent-soft)';
+});
+
+function log(msg, cls='') {
+  const box = document.getElementById('mkt-log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog() { document.getElementById('mkt-log').innerHTML = ''; }
+
+async function generateContent() {
+  const brand   = document.querySelector('input[name=brand]:checked').value;
+  const topic   = document.getElementById('topic').value.trim();
+  const keyword = document.getElementById('keyword').value.trim();
+  const geo     = document.getElementById('geo').value.trim();
+  const funnel  = document.getElementById('funnel').value;
+
+  if (!topic || !keyword) { showToast('Topic and keyword are required', false); return; }
+
+  clearLog();
+  log(`▶ Starting marketing generation: ${brand} / ${keyword}`, 'info');
+  showToast(`Generating content for "${keyword}"…`);
+
+  const res = await apiPost('/marketing/generate', { brand, topic, keyword, geo, funnel });
+  const ok = res.ok !== false;
+
+  if (res.artifacts) {
+    Object.entries(res.artifacts).forEach(([f, p]) => log(`  ${f}: ${p}`));
+  }
+  if (res.stderr) res.stderr.split('\n').filter(Boolean).forEach(l => log(l, 'warn'));
+  log(ok ? '✓ Generation complete' : `✗ Failed: ${res.detail || ''}`, ok ? 'ok' : 'err');
+  showToast(ok ? '✓ Content generated' : '✗ Generation failed', ok);
+  if (ok) setTimeout(() => location.reload(), 1200);
+}
+
+async function dryRun(channel) {
+  const path = document.getElementById('status-path').value.trim();
+  if (!path) { showToast('Paste a status path first', false); return; }
+  const res = await apiPost('/marketing/dry-run', { status_path: path, channel });
+  log(JSON.stringify(res, null, 2), 'info');
+}
+
+async function publishConfirm() {
+  const path = document.getElementById('status-path').value.trim();
+  if (!path) { showToast('Paste a status path first', false); return; }
+  if (!confirm('This will publish to live platforms. Are you sure?')) return;
+  const igUrl = document.getElementById('ig-image-url').value.trim();
+  const res = await apiPost('/marketing/publish', { status_path: path, instagram_image_url: igUrl, confirmed: true });
+  Object.entries(res).forEach(([ch, r]) => log(`${ch}: ${JSON.stringify(r)}`, r.error ? 'err' : 'ok'));
+  showToast('Publish calls sent — check per-channel results above');
+}
+
+document.getElementById('status-path').addEventListener('input', function() {
+  document.getElementById('ig-url-wrap').style.display = this.value ? 'block' : 'none';
+});
+</script>
+{% endblock %}

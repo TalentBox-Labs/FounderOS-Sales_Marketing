@@ -24,6 +24,12 @@ API routes:
   POST /go-live       — Record live URL
   POST /run-pipeline  — Legacy alias
   GET  /health        — Health check
+
+Marketing routes:
+  GET  /marketing          — Marketing agent UI
+  POST /marketing/generate — Generate multi-channel content
+  POST /marketing/dry-run  — Preview publish status
+  POST /marketing/publish  — Publish to live platforms
 """
 
 from __future__ import annotations
@@ -40,6 +46,11 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+
+# Marketing integration (optional — only loads when needed)
+def _social_publisher():
+    from revenue_os.integrations.social_publisher import SocialPublisher
+    return SocialPublisher()
 
 app = FastAPI(title="WorkCrew CMS OS")
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -450,7 +461,122 @@ def record_go_live(
     return {"ok": r.returncode == 0, "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")}
 
 
-# ── Health ──────────────────────────────────────────────────────────────────
+# ── Marketing ───────────────────────────────────────────────────────────────
+
+
+def _marketing_integration_status() -> dict[str, bool]:
+    return {
+        "hashnode":  bool(os.environ.get("HASHNODE_ACCESS_TOKEN")),
+        "linkedin":  bool(os.environ.get("LINKEDIN_ACCESS_TOKEN")),
+        "instagram": bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")),
+        "youtube":   bool(os.environ.get("YOUTUBE_API_KEY")),
+    }
+
+
+def _marketing_runs() -> list[dict]:
+    """Scan output/marketing for 08_Publish_Status.json manifests."""
+    mkt_dir = PROJECT_ROOT / "output" / "marketing"
+    runs = []
+    if not mkt_dir.is_dir():
+        return runs
+    for status_file in sorted(mkt_dir.rglob("08_Publish_Status.json"), reverse=True):
+        try:
+            data = json.loads(status_file.read_text(encoding="utf-8"))
+            data["slug"] = status_file.parent.name
+            runs.append(data)
+        except Exception:
+            pass
+    return runs[:20]
+
+
+@app.get("/marketing", response_class=HTMLResponse)
+def page_marketing(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("marketing.html", {
+        "request":            request,
+        "active_page":        "marketing",
+        "active_week":        runtime.get("active_week", "—"),
+        "runs":               _marketing_runs(),
+        "integration_status": _marketing_integration_status(),
+    })
+
+
+class MarketingRequest(BaseModel):
+    brand:               str = "workcrew"
+    topic:               str = ""
+    keyword:             str = ""
+    geo:                 str = ""
+    funnel:              str = "consideration"
+    output_root:         str | None = None
+    status_path:         str = ""
+    instagram_image_url: str = ""
+    confirmed:           bool = False
+    channel:             str = "all"
+
+
+@app.post("/marketing/generate")
+def marketing_generate(
+    req: MarketingRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Generate multi-channel marketing content via CrewAI agents."""
+    _require_auth(authorization)
+    if not req.topic or not req.keyword:
+        raise HTTPException(status_code=400, detail="topic and keyword are required")
+    r = _run([
+        sys.executable, "-m", "src.marketing_crew",
+        "--brand",   req.brand,
+        "--topic",   req.topic,
+        "--keyword", req.keyword,
+        "--geo",     req.geo,
+        "--funnel",  req.funnel,
+    ] + (["--output", req.output_root] if req.output_root else []))
+    return {
+        "ok":     r.returncode == 0,
+        "stdout": _tail(r.stdout or ""),
+        "stderr": _tail(r.stderr or ""),
+    }
+
+
+@app.post("/marketing/dry-run")
+def marketing_dry_run(
+    req: MarketingRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Preview what publish_all would post without hitting any APIs."""
+    _require_auth(authorization)
+    if not req.status_path:
+        raise HTTPException(status_code=400, detail="status_path is required")
+    try:
+        pub = _social_publisher()
+        return pub.dry_run(req.status_path)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/marketing/publish")
+def marketing_publish(
+    req: MarketingRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Publish to all configured social channels. Requires confirmed=True."""
+    _require_auth(authorization)
+    if not req.status_path:
+        raise HTTPException(status_code=400, detail="status_path is required")
+    if not req.confirmed:
+        raise HTTPException(status_code=400, detail="confirmed must be true to publish")
+    try:
+        pub = _social_publisher()
+        return pub.publish_all(
+            req.status_path,
+            instagram_image_url=req.instagram_image_url,
+            confirmed=True,
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health() -> dict:
