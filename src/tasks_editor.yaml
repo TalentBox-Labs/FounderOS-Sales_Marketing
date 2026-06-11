@@ -1,0 +1,12 @@
+editor_final_task:
+  description: >
+    Merge staged draft and QA feedback into the publish-track final markdown artifact.
+  expected_output: >
+    Complete markdown file: YAML front matter (--- delimited) then article body.
+    Required front matter keys — non-empty scalars, no [BRACKET] placeholders in any YAML value:
+    week_id, article_title, primary_keyword, search_intent, funnel_stage, status, publish_status,
+    canonical_url (https:// URL only), cta_type (non-empty, e.g. try_workcrew_free).
+    publish_status must be one of: draft, in progress, in review, ready, published, scheduled,
+    archived, pending, not started, approved (match editorial state; case-insensitive in gates).
+    Body must keep H1, multiple H2 sections, FAQ, CTAs, and internal links aligned with the draft
+    unless QA explicitly requires a fix.

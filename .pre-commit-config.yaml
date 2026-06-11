@@ -1,0 +1,24 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: fixture-verify
+        name: Verify week fixtures sync
+        entry: python scripts/generate_week_fixtures.py --verify
+        language: system
+        stages: [commit]
+        pass_filenames: false
+        always_run: true
+      - id: pytest
+        name: Run pytest
+        entry: python -m pytest tests/ -q
+        language: system
+        stages: [commit]
+        pass_filenames: false
+        always_run: true
+        require_serial: true

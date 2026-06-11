@@ -1,0 +1,17 @@
+# Expected-output hints only; full instructions are assembled in generation_crew.py.
+
+strategist_task:
+  expected_output: >
+    A single markdown document: the full contents of 01_Content_Brief.md with all required sections.
+
+seo_task:
+  expected_output: >
+    A single markdown document: the full contents of 02_SEO_Plan.md with all required sections.
+
+research_task:
+  expected_output: >
+    A single markdown document: the full contents of 03_Research.md with all required sections.
+
+writer_task:
+  expected_output: >
+    A single markdown document: the full contents of 04_Draft.md with H1, H2 sections, FAQ, and CTAs.

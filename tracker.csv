@@ -1,0 +1,14 @@
+content_id,title,status,qa_status,current_step,next_step,draft_path,qa_output_path,final_output_path,artifact_folder
+W01,M1/Wk1,QA Passed,PASS,Completed,None,input/W01/04_Draft.md,output/qa_reports/W01_Publish_Checklist_Check.md,input/W01/05_Final.md,
+W02,M1/Wk2,QA Passed,PASS,Publish Review,CMS Go-live,input/W02/04_Draft.md,output/qa_reports/W02_Publish_Checklist_Check.md,input/W02/05_Final.md,
+W03,M1/Wk3,QA Passed,PASS,Completed,None,input/W03/04_Draft.md,output/qa_reports/W03_Publish_Checklist_Check.md,input/W03/05_Final.md,
+W04,M1/Wk4,QA Passed,PASS,Publish Review,CMS Go-live,input/W04/04_Draft.md,output/qa_reports/W04_Publish_Checklist_Check.md,input/W04/05_Final.md,
+W05A,M2/Wk5a,QA Passed,PASS,Publish Review,CMS Go-live,input/W05/04_Draft.md,output/qa_reports/W05_Publish_Checklist_Check.md,input/W05/05_Final.md,W05
+W05B,M2/Wk5b,QA Passed,PASS,Publish Review,CMS Go-live,input/W05/04_Draft.md,output/qa_reports/W05_Publish_Checklist_Check.md,input/W05/05_Final.md,W05
+W06A,Tech Talent Sourcing Tools: How Recruiters Compare Platforms in 2026,QA Passed,PASS,Publish Review,CMS Go-live,input/W06A/04_Draft.md,output/qa_reports/W06A_Publish_Checklist_Check.md,input/W06A/05_Final.md,
+W06B,Tech Sourcing Metrics: What to Track Before You Add Another Seat,QA Passed,PASS,Publish Review,CMS Go-live,input/W06B/04_Draft.md,output/qa_reports/W06B_Publish_Checklist_Check.md,input/W06B/05_Final.md,
+W07A,Tech Hiring Feedback Loops: Why Cadence Beats Perfect Emails,QA Passed,PASS,Publish Review,CMS Go-live,input/W07A/04_Draft.md,output/qa_reports/W07A_Publish_Checklist_Check.md,input/W07A/05_Final.md,
+W07B,Hiring Manager Alignment: Syncing Before the Tech Interview,QA Passed,PASS,Publish Review,CMS Go-live,input/W07B/04_Draft.md,output/qa_reports/W07B_Publish_Checklist_Check.md,input/W07B/05_Final.md,
+W09A,Tech Offer Negotiation: Closing Without Last-Minute Surprises,QA Passed,PASS,Completed,None,input/W09A/04_Draft.md,output/qa_reports/W09A_Publish_Checklist_Check.md,input/W09A/05_Final.md,
+W09B,Engineer Onboarding: Two Weeks That Protect Retention,QA Passed,PASS,Completed,None,input/W09B/04_Draft.md,output/qa_reports/W09B_Publish_Checklist_Check.md,input/W09B/05_Final.md,
+W10,Q3 Tech Hiring Roadmap: Metrics That Survive Budget Reviews,QA Passed,PASS,Publish Review,CMS Go-live,input/W10/04_Draft.md,output/qa_reports/W10_Publish_Checklist_Check.md,input/W10/05_Final.md,

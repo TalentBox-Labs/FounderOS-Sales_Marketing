@@ -1,0 +1,37 @@
+strategist_brief_task:
+  description: >
+    Write one content brief for this week. Use the tracker title as the working article title
+    unless the brief explicitly defines a sharper headline.
+  expected_output: >
+    Markdown document starting with a level-1 heading in the form "# Content Brief — WXX".
+    Include sections for audience, intent, job-to-be-done, tone and constraints, internal links
+    to programme siblings when relevant, and an approval line. No YAML front matter.
+
+seo_plan_task:
+  description: >
+    Write one SEO plan markdown file for this week from the staged content brief.
+  expected_output: >
+    Markdown starting with "# SEO Plan — WXX" then "## {Article Title}".
+    Must include lines or sections that contain the literal substrings (for downstream gates):
+    meta description, title tag, canonical, h1 tag, frequently asked questions,
+    and the primary keyword phrase from the brief. Include a CTA line that lists approved
+    try/explore/create variants. No YAML.
+
+research_task:
+  description: >
+    Write research notes from the staged brief and SEO plan.
+  expected_output: >
+    Markdown starting with "# Research — WXX" and "## Themes for Writer" with multiple
+    thematic subsections (H3 allowed). Connect themes to gate keywords from week runtime when provided.
+
+writer_draft_task:
+  description: >
+    Write the draft markdown using the standard WorkCrew draft scaffold.
+  expected_output: >
+    Markdown starting with "# Draft Document — WXX" then "## Article Title".
+    Must include these template headings exactly (for draft_validator template mode):
+    "# Drafting Instructions", "# Writing Rules", "# SEO Execution Rules", "# CTA Rules",
+    "# Draft Structure", "# Frequently Asked Questions", "# Internal Linking Requirements",
+    "# Evidence & Validation Requirements", "# Draft QA Checklist".
+    Under Draft Structure include an H1 title line and several "##" section outlines.
+    Primary keyword from SEO plan must appear in SEO Execution Rules. No YAML in the draft file.

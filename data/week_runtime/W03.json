@@ -1,0 +1,9 @@
+{
+  "active_week": "W03",
+  "draft_path": "input/W03/04_Draft.md",
+  "research_path": "input/W03/03_Research.md",
+  "seo_plan_path": "input/W03/02_SEO_Plan.md",
+  "final_path": "input/W03/05_Final.md",
+  "qa_output_dir": "output/qa_reports/",
+  "draft_validation_mode": "template"
+}

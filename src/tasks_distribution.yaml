@@ -1,0 +1,31 @@
+design_brief_task:
+  description: >
+    Produce `06_Design_Brief.md` for creative handoff.
+  expected_output: >
+    Complete markdown for 06_Design_Brief.md with sections including Article Information;
+    Platform Distribution (LinkedIn, Instagram or similar with asset type, format, objective, CTA);
+    Creative Direction; Core Messaging. Fill fields from the article context; use TBD only where
+    genuinely unknown. No code fences around the whole file.
+
+social_posts_task:
+  description: >
+    Produce `07_Social_Posts.md` for social distribution.
+  expected_output: >
+    Complete markdown with Article Information; LinkedIn sections (primary post with Hook, Body, CTA,
+    suggested first comment); carousel table skeleton if applicable; hashtags; additional platforms if
+    relevant. Ground copy in the final article; no fabricated engagement stats.
+
+email_copy_task:
+  description: >
+    Produce `08_Email_Copy.md` for email / newsletter use.
+  expected_output: >
+    Complete markdown with Campaign Information; Newsletter Objective; Subject Line Variants;
+    Preview Text Variants; Short and Long email bodies with hooks and CTAs aligned to the article.
+
+publish_checklist_task:
+  description: >
+    Produce `09_Publish_Checklist.md` as a QA checklist (not a publish execution).
+  expected_output: >
+    Complete markdown with Article Information and checklist sections with these exact H1 headings:
+    "# Content QA", "# SEO QA", "# Brand QA", "# Technical QA", "# Final Approval".
+    Under each, use bullet checklist items appropriate for go-live review (human will tick in practice).

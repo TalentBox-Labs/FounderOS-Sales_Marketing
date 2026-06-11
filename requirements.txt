@@ -1,0 +1,14 @@
+# WorkCrew CMS OS — install from repo root: pip install -r requirements.txt
+# Python 3.10+ recommended (CrewAI stack).
+
+crewai>=0.80.0
+crewai-tools>=0.25.0
+pandas>=2.0.0
+PyYAML>=6.0
+pytest>=8.0.0
+
+# Google Sheets API (Phase 4A verify / future sync)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.2.0
+python-dotenv>=1.0.0

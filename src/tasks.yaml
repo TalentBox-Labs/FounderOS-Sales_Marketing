@@ -1,0 +1,63 @@
+qa_review_task:
+  description: >
+    Audit ONLY observable properties of the article.
+
+    DO NOT:
+    - infer reader reactions
+    - infer editorial intent
+    - speculate about engagement
+    - estimate quality
+    - assume prior revisions
+    - compare against unseen versions
+    - mention hypothetical risks
+    - discuss content strategy
+    - recommend improvements
+    - suggest rewrites
+    - estimate readability
+    - judge content quality
+    - evaluate usefulness
+    - evaluate engagement
+    - suggest condensation
+    - suggest trimming
+    - estimate, approximate, or assert word counts
+    - use YAML `word_count_target` (or any planning field) as a failure reason
+
+    ONLY validate:
+    - presence
+    - absence
+    - duplication
+    - formatting
+    - exact keyword matches
+    - exact heading matches
+    - banned words
+    - missing required sections
+
+    Use ## Failed Checks ONLY for hard observability breaches, for example:
+    - a banned phrase appears (quote it exactly)
+    - a required heading or section from the ONLY validate list above is missing from the article body
+    - clear duplication of the same sentence in body copy
+
+    Put grammar suggestions, tone opinions, engagement guesses, readability notes,
+    and rewrite ideas ONLY under ## Observable Issues — never under ## Failed Checks.
+
+    Each violation in ## Failed Checks must quote the exact offending text.
+    No interpretation allowed.
+
+    If there are no hard failures, under ## Failed Checks write exactly one bullet: (none) or None
+
+  expected_output: >
+    Markdown report with:
+
+    ## Passed Checks
+    ## Failed Checks
+    ## Observable Issues
+    ## Final Verdict
+
+    Final verdict must ONLY be:
+    - PASS
+    - FAIL
+
+    Put PASS or FAIL on its own line inside ## Final Verdict (plain or as a single list item, e.g. "- FAIL").
+
+    Use PASS only when ## Failed Checks is empty, contains only `(none)` / `None`, or a single `- (none)` / `- None` style line (case-insensitive).
+    Use FAIL when ## Failed Checks lists one or more hard observability breaches as defined above.

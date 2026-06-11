@@ -1,0 +1,25 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Python caches / virtualenvs
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+
+# OS/editor noise
+.DS_Store
+.vscode/
