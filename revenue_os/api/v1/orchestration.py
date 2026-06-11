@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
+    load_recent_orchestration_runs,
     run_orchestration,
 )
 from revenue_os.services.orchestration_runtime import backend_status
@@ -89,4 +90,12 @@ def orchestration_run(body: GTMRunRequest) -> dict:
     return {
         "ok": True,
         "result": run_orchestration(req),
+    }
+
+
+@router.get("/logs")
+def orchestration_logs(limit: int = 20) -> dict:
+    return {
+        "ok": True,
+        "runs": load_recent_orchestration_runs(limit=max(1, min(limit, 100))),
     }

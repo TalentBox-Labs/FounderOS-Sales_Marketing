@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from revenue_os.integrations.n8n import trigger_workflow
 from revenue_os.services.orchestration_runtime import (
@@ -30,6 +34,119 @@ class GTMOrchestrationRequest:
     run_prospecting: bool = True
     run_voice_qualification: bool = True
     run_meeting_booking: bool = True
+
+
+def _audit_dir() -> Path:
+    root = os.getenv("ORCHESTRATION_AUDIT_DIR", "").strip()
+    if root:
+        return Path(root)
+    return Path("output") / "marketing" / "orchestration_audit"
+
+
+def _event_ok(payload: Any) -> bool | None:
+    if not isinstance(payload, dict):
+        return None
+    if "ok" in payload and isinstance(payload["ok"], bool):
+        return payload["ok"]
+    if "status" in payload and isinstance(payload["status"], str):
+        return payload["status"].lower() == "ok"
+    if "triggered" in payload and isinstance(payload["triggered"], bool):
+        return payload["triggered"]
+    return None
+
+
+def _channel_from_key(key: str) -> str:
+    mapping = {
+        "content": "content",
+        "seo": "seo",
+        "email": "email",
+        "whatsapp": "whatsapp",
+        "prospecting": "prospecting",
+        "voice": "voice_qualification",
+        "booking": "meeting_booking",
+    }
+    prefix = (key or "").split("_", 1)[0]
+    return mapping.get(prefix, prefix or "unknown")
+
+
+def _persist_audit(req: GTMOrchestrationRequest, results: dict[str, Any]) -> dict[str, Any]:
+    run_id = uuid4().hex
+    ts = datetime.now(timezone.utc).isoformat()
+    audit_dir = _audit_dir()
+    audit_dir.mkdir(parents=True, exist_ok=True)
+
+    executions = results.get("executions", {})
+    events = []
+    for key, payload in executions.items():
+        events.append(
+            {
+                "run_id": run_id,
+                "timestamp": ts,
+                "channel": _channel_from_key(key),
+                "step": key,
+                "ok": _event_ok(payload),
+                "payload": payload,
+            }
+        )
+
+    run_record = {
+        "run_id": run_id,
+        "timestamp": ts,
+        "backend": req.backend,
+        "brand": req.brand,
+        "topic": req.topic,
+        "keyword": req.keyword,
+        "geo_target": req.geo_target or "global",
+        "funnel_stage": req.funnel_stage,
+        "audience": req.audience,
+        "results": results,
+        "events": events,
+    }
+
+    run_file = audit_dir / f"{run_id}.json"
+    runs_jsonl = audit_dir / "runs.jsonl"
+    channels_jsonl = audit_dir / "channels.jsonl"
+
+    run_file.write_text(json.dumps(run_record, ensure_ascii=True, indent=2), encoding="utf-8")
+    with runs_jsonl.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "run_id": run_id,
+            "timestamp": ts,
+            "backend": req.backend,
+            "brand": req.brand,
+            "keyword": req.keyword,
+            "geo_target": req.geo_target or "global",
+            "funnel_stage": req.funnel_stage,
+            "event_count": len(events),
+            "run_file": str(run_file),
+        }, ensure_ascii=True) + "\n")
+    with channels_jsonl.open("a", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=True) + "\n")
+
+    return {
+        "run_id": run_id,
+        "timestamp": ts,
+        "run_file": str(run_file),
+        "events_file": str(channels_jsonl),
+    }
+
+
+def load_recent_orchestration_runs(limit: int = 20) -> list[dict[str, Any]]:
+    runs_jsonl = _audit_dir() / "runs.jsonl"
+    if not runs_jsonl.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in runs_jsonl.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    rows.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    return rows[:limit]
 
 
 def build_strategy(req: GTMOrchestrationRequest) -> dict[str, Any]:
@@ -197,5 +314,12 @@ def run_orchestration(req: GTMOrchestrationRequest) -> dict[str, Any]:
         )
         results["executions"]["booking_backend"] = backend.run_task(task)
         results["executions"]["booking_n8n"] = _trigger_n8n("meeting-booking", shared_payload)
+
+    try:
+        results["audit"] = _persist_audit(req, results)
+    except Exception as exc:
+        results["audit"] = {
+            "error": str(exc),
+        }
 
     return results

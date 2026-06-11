@@ -67,6 +67,42 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-title">🧭 GTM Orchestration</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Plan and execute cross-channel workflows through Hermes/OpenClaw orchestration.
+      </p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Backend</label>
+          <select id="or-backend" style="width:100%">
+            <option value="hermes">Hermes {% if orchestration_status.hermes %}(configured){% else %}(not configured){% endif %}</option>
+            <option value="openclaw">OpenClaw {% if orchestration_status.openclaw %}(configured){% else %}(not configured){% endif %}</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Audience</label>
+          <input type="text" id="or-audience" value="recruiters and hiring managers" style="width:100%">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
+        <label><input type="checkbox" id="or-content" checked> Content</label>
+        <label><input type="checkbox" id="or-seo" checked> SEO/AEO</label>
+        <label><input type="checkbox" id="or-email" checked> Email</label>
+        <label><input type="checkbox" id="or-whatsapp" checked> WhatsApp</label>
+        <label><input type="checkbox" id="or-prospecting" checked> Prospecting</label>
+        <label><input type="checkbox" id="or-voice" checked> Voice Qualification</label>
+        <label><input type="checkbox" id="or-booking" checked> Meeting Booking</label>
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="orchestrationPlan()">Plan</button>
+        <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="orchestrationRun()">Run Orchestration</button>
+      </div>
+    </div>
+
     <!-- Publish Panel -->
     <div class="card">
       <div class="card-title">🚀 Publish to Channels</div>
@@ -139,6 +175,31 @@
               <td>
                 <a href="/marketing/run/{{ run.slug }}" class="btn btn-ghost btn-sm">View</a>
               </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if orchestration_runs %}
+    <div class="card">
+      <div class="card-title">🧾 Orchestration Audit Runs</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Timestamp</th><th>Backend</th><th>Brand</th><th>Keyword</th><th>GEO</th><th>Events</th>
+          </tr></thead>
+          <tbody>
+            {% for run in orchestration_runs %}
+            <tr>
+              <td style="font-size:11px;color:var(--text-muted)">{{ run.timestamp }}</td>
+              <td><span class="pill gray">{{ run.backend }}</span></td>
+              <td>{{ run.brand }}</td>
+              <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ run.keyword }}</td>
+              <td style="font-size:12px">{{ run.geo_target }}</td>
+              <td style="font-size:12px">{{ run.event_count }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -236,6 +297,78 @@ async function generateContent() {
   log(ok ? '✓ Generation complete' : `✗ Failed: ${res.detail || ''}`, ok ? 'ok' : 'err');
   showToast(ok ? '✓ Content generated' : '✗ Generation failed', ok);
   if (ok) setTimeout(() => location.reload(), 1200);
+}
+
+function orchestrationPayload() {
+  const brand   = document.querySelector('input[name=brand]:checked').value;
+  const topic   = document.getElementById('topic').value.trim();
+  const keyword = document.getElementById('keyword').value.trim();
+  const geo     = document.getElementById('geo').value.trim();
+  const funnel  = document.getElementById('funnel').value;
+  const audience = document.getElementById('or-audience').value.trim() || 'recruiters and hiring managers';
+
+  return {
+    backend: document.getElementById('or-backend').value,
+    brand,
+    topic,
+    keyword,
+    geo_target: geo,
+    funnel_stage: funnel,
+    audience,
+    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+    run_content: document.getElementById('or-content').checked,
+    run_seo: document.getElementById('or-seo').checked,
+    run_email: document.getElementById('or-email').checked,
+    run_whatsapp: document.getElementById('or-whatsapp').checked,
+    run_prospecting: document.getElementById('or-prospecting').checked,
+    run_voice_qualification: document.getElementById('or-voice').checked,
+    run_meeting_booking: document.getElementById('or-booking').checked,
+  };
+}
+
+async function orchestrationPlan() {
+  const payload = orchestrationPayload();
+  if (!payload.topic || !payload.keyword) {
+    showToast('Topic and keyword are required', false);
+    return;
+  }
+  log(`▶ Building orchestration plan via ${payload.backend}...`, 'info');
+  const res = await apiPost('/api/v1/orchestration/plan', payload);
+  if (res.ok === false) {
+    log(`✗ Plan failed: ${res.detail || 'unknown error'}`, 'err');
+    showToast('Plan failed', false);
+    return;
+  }
+  log(JSON.stringify(res.plan, null, 2), 'info');
+  showToast('Plan created');
+}
+
+async function orchestrationRun() {
+  const payload = orchestrationPayload();
+  if (!payload.topic || !payload.keyword) {
+    showToast('Topic and keyword are required', false);
+    return;
+  }
+  log(`▶ Running orchestration via ${payload.backend}...`, 'info');
+  const res = await apiPost('/api/v1/orchestration/run', payload);
+  if (res.ok === false) {
+    log(`✗ Run failed: ${res.detail || 'unknown error'}`, 'err');
+    showToast('Orchestration failed', false);
+    return;
+  }
+  const out = res.result || {};
+  log(`✓ Orchestration completed. backend_configured=${out.backend_configured}`, 'ok');
+  if (out.audit && out.audit.run_id) {
+    log(`Audit run id: ${out.audit.run_id}`, 'info');
+  }
+  if (out.executions) {
+    Object.entries(out.executions).forEach(([step, details]) => {
+      const isErr = details && details.error;
+      log(`${step}: ${JSON.stringify(details)}`, isErr ? 'err' : 'info');
+    });
+  }
+  showToast('Orchestration run completed', true);
+  setTimeout(() => location.reload(), 1200);
 }
 
 async function dryRun(channel) {

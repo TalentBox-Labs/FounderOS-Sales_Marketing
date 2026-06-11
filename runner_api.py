@@ -46,6 +46,13 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from revenue_os.services.go_to_market_orchestrator import (
+    GTMOrchestrationRequest,
+    build_strategy,
+    load_recent_orchestration_runs,
+    run_orchestration,
+)
+from revenue_os.services.orchestration_runtime import backend_status
 
 # Marketing integration (optional — only loads when needed)
 def _social_publisher():
@@ -497,7 +504,9 @@ def page_marketing(request: Request) -> HTMLResponse:
         "active_page":        "marketing",
         "active_week":        runtime.get("active_week", "—"),
         "runs":               _marketing_runs(),
+        "orchestration_runs": load_recent_orchestration_runs(limit=20),
         "integration_status": _marketing_integration_status(),
+        "orchestration_status": backend_status(),
     })
 
 
@@ -512,6 +521,109 @@ class MarketingRequest(BaseModel):
     instagram_image_url: str = ""
     confirmed:           bool = False
     channel:             str = "all"
+
+
+class OrchestrationRequest(BaseModel):
+    backend: str = "hermes"
+    brand: str = "workcrew"
+    topic: str = ""
+    keyword: str = ""
+    geo_target: str = ""
+    funnel_stage: str = "consideration"
+    audience: str = "recruiters and hiring managers"
+    channels: list[str] = Field(default_factory=lambda: ["blog", "linkedin", "instagram", "youtube", "email", "whatsapp"])
+    run_content: bool = True
+    run_seo: bool = True
+    run_email: bool = True
+    run_whatsapp: bool = True
+    run_prospecting: bool = True
+    run_voice_qualification: bool = True
+    run_meeting_booking: bool = True
+
+
+@app.get("/api/v1/orchestration/backends")
+def orchestration_backends_proxy(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    return {
+        "supported": ["hermes", "openclaw"],
+        "configured": backend_status(),
+    }
+
+
+@app.get("/api/v1/orchestration/logs")
+def orchestration_logs_proxy(
+    limit: int = 20,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    return {
+        "ok": True,
+        "runs": load_recent_orchestration_runs(limit=max(1, min(limit, 100))),
+    }
+
+
+@app.post("/api/v1/orchestration/plan")
+def orchestration_plan_proxy(
+    req: OrchestrationRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    if not req.topic or not req.keyword:
+        raise HTTPException(status_code=400, detail="topic and keyword are required")
+    plan_req = GTMOrchestrationRequest(
+        backend=req.backend,
+        brand=req.brand,
+        topic=req.topic,
+        keyword=req.keyword,
+        geo_target=req.geo_target,
+        funnel_stage=req.funnel_stage,
+        audience=req.audience,
+        channels=req.channels,
+        run_content=False,
+        run_seo=False,
+        run_email=False,
+        run_whatsapp=False,
+        run_prospecting=False,
+        run_voice_qualification=False,
+        run_meeting_booking=False,
+    )
+    return {
+        "ok": True,
+        "plan": build_strategy(plan_req),
+    }
+
+
+@app.post("/api/v1/orchestration/run")
+def orchestration_run_proxy(
+    req: OrchestrationRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    if not req.topic or not req.keyword:
+        raise HTTPException(status_code=400, detail="topic and keyword are required")
+    run_req = GTMOrchestrationRequest(
+        backend=req.backend,
+        brand=req.brand,
+        topic=req.topic,
+        keyword=req.keyword,
+        geo_target=req.geo_target,
+        funnel_stage=req.funnel_stage,
+        audience=req.audience,
+        channels=req.channels,
+        run_content=req.run_content,
+        run_seo=req.run_seo,
+        run_email=req.run_email,
+        run_whatsapp=req.run_whatsapp,
+        run_prospecting=req.run_prospecting,
+        run_voice_qualification=req.run_voice_qualification,
+        run_meeting_booking=req.run_meeting_booking,
+    )
+    return {
+        "ok": True,
+        "result": run_orchestration(run_req),
+    }
 
 
 @app.post("/marketing/generate")
