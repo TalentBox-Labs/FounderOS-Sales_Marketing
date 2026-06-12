@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Orchestration Run — {{ run_id }} — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Orchestration Run {{ run_id[:8] }}{% endblock %}
+{% block topbar_meta %}Per-channel execution audit and failure trace{% endblock %}
+
+{% block topbar_right %}
+  <a href="/marketing" class="btn btn-ghost btn-sm">← Back to Marketing</a>
+{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:24px;align-items:start">
+  <div>
+    <div class="card">
+      <div class="card-title">🧾 Run Summary</div>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><th style="width:180px">Run ID</th><td>{{ run.run_id }}</td></tr>
+            <tr><th>Timestamp</th><td>{{ run.timestamp }}</td></tr>
+            <tr><th>Backend</th><td>{{ run.backend }}</td></tr>
+            <tr><th>Brand</th><td>{{ run.brand }}</td></tr>
+            <tr><th>Keyword</th><td>{{ run.keyword }}</td></tr>
+            <tr><th>Topic</th><td>{{ run.topic }}</td></tr>
+            <tr><th>GEO</th><td>{{ run.geo_target }}</td></tr>
+            <tr><th>Funnel Stage</th><td>{{ run.funnel_stage }}</td></tr>
+            <tr><th>Audience</th><td>{{ run.audience }}</td></tr>
+            <tr><th>Audit File</th><td>{{ run.results.audit.run_file if run.results.audit and run.results.audit.run_file else '—' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📦 Execution Payload</div>
+      <pre style="background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-size:12px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;line-height:1.7;white-space:pre-wrap;max-height:60vh;overflow-y:auto;">{{ run.results | tojson(indent=2) }}</pre>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">🔎 Per-Channel Events</div>
+      {% if run.events %}
+      <div style="display:flex;flex-direction:column;gap:10px">
+        {% for event in run.events %}
+        <div style="padding:12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="pill {% if event.ok is sameas true %}green{% elif event.ok is sameas false %}red{% else %}gray{% endif %}">{{ event.channel }}</span>
+            <span style="font-size:12px;font-weight:500">{{ event.step }}</span>
+            <span style="font-size:11px;color:var(--text-muted);margin-left:auto">{{ event.timestamp }}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Run: {{ event.run_id }}</div>
+          <pre style="background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:240px;overflow-y:auto;">{{ event.payload | tojson(indent=2) }}</pre>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p style="color:var(--text-muted)">No per-channel events were recorded for this run.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-title">⚠️ Failures / Notes</div>
+      {% set failures = [] %}
+      {% for key, payload in run.results.executions.items() %}
+        {% if payload is mapping and (payload.error or payload.ok is sameas false or payload.status == 'not_configured') %}
+          {% set _ = failures.append((key, payload)) %}
+        {% endif %}
+      {% endfor %}
+      {% if failures %}
+        <div style="display:flex;flex-direction:column;gap:10px">
+          {% for key, payload in failures %}
+          <div style="padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08)">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="pill red">{{ key }}</span>
+              <span style="font-size:12px;font-weight:500">Issue detected</span>
+            </div>
+            <pre style="background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:180px;overflow-y:auto;">{{ payload | tojson(indent=2) }}</pre>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p style="color:var(--text-muted)">No failures were recorded in the execution payload.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

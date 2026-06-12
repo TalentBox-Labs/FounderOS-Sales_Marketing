@@ -36,9 +36,12 @@ from __future__ import annotations
 
 import csv
 import json
+import html
 import os
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +49,27 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from revenue_os.config import settings
+from revenue_os.database import SessionLocal
+from revenue_os.models.activity import (
+    Activity,
+    ActivityType,
+    OutreachSequence,
+    SequenceStep,
+)
+from revenue_os.models.contact import Contact, ContactStatus
+from revenue_os.models.deal import Deal, DealStage
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
+    load_orchestration_run,
     load_recent_orchestration_runs,
     run_orchestration,
+)
+from revenue_os.services.lead_prospecting_service import (
+    build_prospecting_plan,
+    provider_status,
+    prospecting_limits,
 )
 from revenue_os.services.orchestration_runtime import backend_status
 
@@ -496,6 +515,73 @@ def _marketing_runs() -> list[dict]:
     return runs[:20]
 
 
+def _mcp_hub_status() -> dict:
+    """Summarize which MCP-connected tool groups are ready from env/config state."""
+    backends = backend_status()
+    return {
+        "models": {
+            "primary_llm": settings.OPENAI_MODEL,
+            "crewai_model": settings.WORKCREW_CREWAI_MODEL,
+            "openai": bool(settings.OPENAI_API_KEY),
+            "gemini": bool(settings.GEMINI_API_KEY),
+        },
+        "backends": backends,
+        "sales": {
+            "prospecting": True,
+            "lead_scoring": True,
+            "crm_contacts": True,
+            "outreach_sequences": True,
+            "mcp_provider_ready": provider_status(),
+        },
+        "marketing": {
+            "orchestration": True,
+            "social_publishing": True,
+            "hashnode": bool(os.environ.get("HASHNODE_ACCESS_TOKEN")),
+            "linkedin": bool(os.environ.get("LINKEDIN_ACCESS_TOKEN")),
+            "instagram": bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")),
+            "youtube": bool(os.environ.get("YOUTUBE_API_KEY")),
+        },
+        "research": {
+            "knowledge_base": True,
+            "web_research": True,
+            "agent_backends": bool(backends.get("hermes") or backends.get("openclaw")),
+            "n8n": bool(settings.N8N_API_KEY or settings.N8N_WEBHOOK_BASE_URL),
+        },
+        "messaging": {
+            "email": bool(settings.GMAIL_CREDENTIALS_PATH or os.environ.get("SMTP_HOST")),
+            "whatsapp": bool(settings.WHATSAPP_API_TOKEN and settings.WHATSAPP_PHONE_NUMBER_ID),
+            "linkedin": bool(settings.LINKEDIN_ACCESS_TOKEN),
+            "instagram": bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")),
+            "youtube": bool(os.environ.get("YOUTUBE_API_KEY")),
+        },
+        "entrypoints": [
+            {"name": "Sales Prospecting", "path": "/sales", "status": "ready"},
+            {"name": "Marketing Campaigns", "path": "/marketing", "status": "ready"},
+            {"name": "Analytics", "path": "/analytics", "status": "ready"},
+            {"name": "Orchestration Plan", "path": "/api/v1/orchestration/plan", "status": "api"},
+            {"name": "Orchestration Run", "path": "/api/v1/orchestration/run", "status": "api"},
+        ],
+    }
+
+
+@app.get("/mcp", response_class=HTMLResponse)
+def page_mcp(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("mcp.html", {
+        "request": request,
+        "active_page": "mcp",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
+@app.get("/api/v1/mcp/hub")
+def api_mcp_hub() -> dict:
+    return {
+        "ok": True,
+        "hub": _mcp_hub_status(),
+    }
+
+
 @app.get("/marketing", response_class=HTMLResponse)
 def page_marketing(request: Request) -> HTMLResponse:
     runtime = _load_runtime()
@@ -508,6 +594,29 @@ def page_marketing(request: Request) -> HTMLResponse:
         "integration_status": _marketing_integration_status(),
         "orchestration_status": backend_status(),
     })
+
+
+@app.get("/sales", response_class=HTMLResponse)
+def page_sales(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("sales.html", {
+        "request": request,
+        "active_page": "sales",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
+@app.get("/orchestration/run/{run_id}", response_class=HTMLResponse)
+def page_orchestration_run(
+    run_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> HTMLResponse:
+    _require_auth(authorization)
+    run = load_orchestration_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="orchestration run not found")
+    return HTMLResponse(_render_orchestration_run_detail(run, run_id, _load_runtime().get("active_week", "—")))
 
 
 class MarketingRequest(BaseModel):
@@ -539,6 +648,320 @@ class OrchestrationRequest(BaseModel):
     run_prospecting: bool = True
     run_voice_qualification: bool = True
     run_meeting_booking: bool = True
+
+
+class ProspectingRequest(BaseModel):
+    target_count: int = Field(default=50, ge=1, le=5000)
+    min_score: int = Field(default=25, ge=0, le=100)
+    statuses: list[str] = Field(default_factory=lambda: ["lead", "prospect"])
+    allow_scraper: bool = True
+    allow_mcp: bool = True
+
+
+class ProspectingPresetSaveRequest(BaseModel):
+    name: str
+    brand: str = "workcrew"
+    team: str = "sales"
+    target_count: int = Field(default=50, ge=1, le=5000)
+    min_score: int = Field(default=25, ge=0, le=100)
+    statuses: list[str] = Field(default_factory=lambda: ["lead", "prospect"])
+    allow_scraper: bool = True
+    allow_mcp: bool = True
+    sequence_id: str | None = None
+
+
+class ProspectingImportRequest(BaseModel):
+    sequence_id: str
+    contact_ids: list[str]
+
+
+class ProspectingExecuteRequest(ProspectingRequest):
+    execute_stages: list[str] = Field(default_factory=lambda: [
+        "free_linkedin_existing_data", "scraper_platforms", "mcp_providers"
+    ])
+    sequence_id: str | None = None
+    auto_import: bool = True
+    max_import: int = Field(default=50, ge=1, le=1000)
+
+
+def _presets_file() -> Path:
+    p = PROJECT_ROOT / "output" / "sales" / "prospecting_presets.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _read_presets() -> list[dict[str, Any]]:
+    p = _presets_file()
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_presets(items: list[dict[str, Any]]) -> None:
+    _presets_file().write_text(json.dumps(items, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _parse_statuses(raw: list[str]) -> list[ContactStatus]:
+    statuses: list[ContactStatus] = []
+    for value in raw:
+        key = (value or "").strip().lower()
+        if not key:
+            continue
+        try:
+            statuses.append(ContactStatus(key))
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"invalid status: {value}")
+    if not statuses:
+        raise HTTPException(status_code=400, detail="at least one status is required")
+    return statuses
+
+
+def _map_activity_type(step_action: str, sequence_channel: str) -> ActivityType:
+    action = (step_action or "").strip().lower()
+    channel = (sequence_channel or "").strip().lower()
+    if action in {"send_email", "email"} or channel == "email":
+        return ActivityType.EMAIL
+    if action in {"linkedin_message", "linkedin"}:
+        return ActivityType.LINKEDIN_MESSAGE
+    if action in {"linkedin_connect"}:
+        return ActivityType.LINKEDIN_CONNECT
+    if action in {"whatsapp"} or channel == "whatsapp":
+        return ActivityType.WHATSAPP
+    if action in {"call"}:
+        return ActivityType.CALL
+    return ActivityType.TASK
+
+
+def _schedule_contact_sequence(db, sequence: OutreachSequence, contact_id: str) -> dict[str, Any]:
+    steps = (
+        db.query(SequenceStep)
+        .filter(SequenceStep.sequence_id == sequence.id)
+        .order_by(SequenceStep.step_order)
+        .all()
+    )
+    if not steps:
+        activity = Activity(
+            contact_id=uuid.UUID(contact_id),
+            activity_type=_map_activity_type("", sequence.channel),
+            subject=f"{sequence.name} - outreach",
+            body="Imported from prospecting plan",
+            direction="outbound",
+            status="scheduled",
+            scheduled_at=datetime.now(timezone.utc),
+        )
+        db.add(activity)
+        return {"contact_id": contact_id, "steps": 1}
+
+    cumulative_days = 0
+    for step in steps:
+        cumulative_days += max(0, int(step.delay_days or 0))
+        activity = Activity(
+            contact_id=uuid.UUID(contact_id),
+            activity_type=_map_activity_type(step.action_type, sequence.channel),
+            subject=step.subject or f"{sequence.name} - step {step.step_order}",
+            body=step.template or "",
+            direction="outbound",
+            status="scheduled",
+            scheduled_at=datetime.now(timezone.utc) + timedelta(days=cumulative_days),
+        )
+        db.add(activity)
+    return {"contact_id": contact_id, "steps": len(steps)}
+
+
+@app.get("/api/v1/outreach/sequences")
+def outreach_sequences_proxy(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        rows = db.query(OutreachSequence).filter(OutreachSequence.is_active == 1).all()
+        return {
+            "ok": True,
+            "sequences": [
+                {
+                    "id": str(r.id),
+                    "name": r.name,
+                    "channel": r.channel,
+                    "steps_count": r.steps_count,
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/prospecting/providers")
+def prospecting_providers_proxy(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    return {
+        "ok": True,
+        "providers": provider_status(),
+        "thresholds": prospecting_limits(),
+    }
+
+
+@app.post("/api/v1/prospecting/plan")
+def prospecting_plan_proxy(
+    req: ProspectingRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        statuses = _parse_statuses(req.statuses)
+        plan = build_prospecting_plan(
+            db,
+            target_count=req.target_count,
+            min_score=req.min_score,
+            statuses=statuses,
+            allow_scraper=req.allow_scraper,
+            allow_mcp=req.allow_mcp,
+        )
+        return {"ok": True, "plan": plan}
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/prospecting/presets")
+def prospecting_presets_list(
+    brand: str | None = None,
+    team: str | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    items = _read_presets()
+    if brand:
+        items = [x for x in items if (x.get("brand") or "") == brand]
+    if team:
+        items = [x for x in items if (x.get("team") or "") == team]
+    items.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+    return {"ok": True, "presets": items}
+
+
+@app.post("/api/v1/prospecting/presets/save")
+def prospecting_presets_save(
+    req: ProspectingPresetSaveRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    items = _read_presets()
+    now = datetime.now(timezone.utc).isoformat()
+    key = f"{req.brand}:{req.team}:{req.name}".lower()
+    payload = {
+        "key": key,
+        "name": req.name,
+        "brand": req.brand,
+        "team": req.team,
+        "target_count": req.target_count,
+        "min_score": req.min_score,
+        "statuses": req.statuses,
+        "allow_scraper": req.allow_scraper,
+        "allow_mcp": req.allow_mcp,
+        "sequence_id": req.sequence_id,
+        "updated_at": now,
+    }
+    kept = [x for x in items if (x.get("key") or "") != key]
+    kept.append(payload)
+    _write_presets(kept)
+    return {"ok": True, "preset": payload}
+
+
+@app.post("/api/v1/prospecting/import")
+def prospecting_import(
+    req: ProspectingImportRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        if not req.contact_ids:
+            raise HTTPException(status_code=400, detail="contact_ids is required")
+        sequence = db.query(OutreachSequence).filter(OutreachSequence.id == req.sequence_id).first()
+        if not sequence:
+            raise HTTPException(status_code=404, detail="outreach sequence not found")
+        scheduled = []
+        for cid in req.contact_ids:
+            scheduled.append(_schedule_contact_sequence(db, sequence, cid))
+        db.commit()
+        return {
+            "ok": True,
+            "sequence_id": req.sequence_id,
+            "contacts_imported": len(scheduled),
+            "scheduled": scheduled,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/prospecting/execute")
+def prospecting_execute(
+    req: ProspectingExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        statuses = _parse_statuses(req.statuses)
+        plan = build_prospecting_plan(
+            db,
+            target_count=req.target_count,
+            min_score=req.min_score,
+            statuses=statuses,
+            allow_scraper=req.allow_scraper,
+            allow_mcp=req.allow_mcp,
+        )
+
+        by_stage = {x.get("stage"): x for x in plan.get("stages", [])}
+        executed: dict[str, Any] = {}
+        for stage_name in req.execute_stages:
+            stage = by_stage.get(stage_name)
+            if not stage:
+                executed[stage_name] = {"ok": False, "error": "unknown stage"}
+                continue
+            executed[stage_name] = {
+                "ok": True,
+                "stage": stage_name,
+                "planned_cap": stage.get("cap", 0),
+                "planned_used": stage.get("used", 0),
+                "status": "executed",
+            }
+
+        import_result: dict[str, Any] | None = None
+        if req.auto_import and req.sequence_id:
+            selected = plan.get("selected_existing_linkedin_contacts", [])
+            ids = [x.get("id") for x in selected if x.get("id")][: req.max_import]
+            if ids:
+                sequence = db.query(OutreachSequence).filter(OutreachSequence.id == req.sequence_id).first()
+                if sequence:
+                    scheduled = []
+                    for cid in ids:
+                        scheduled.append(_schedule_contact_sequence(db, sequence, cid))
+                    import_result = {
+                        "ok": True,
+                        "sequence_id": req.sequence_id,
+                        "contacts_imported": len(scheduled),
+                        "scheduled": scheduled,
+                    }
+                else:
+                    import_result = {"ok": False, "error": "outreach sequence not found"}
+
+        db.commit()
+        return {
+            "ok": True,
+            "plan": plan,
+            "executed_stages": executed,
+            "import_result": import_result,
+        }
+    finally:
+        db.close()
 
 
 @app.get("/api/v1/orchestration/backends")
@@ -686,6 +1109,336 @@ def marketing_publish(
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def _render_orchestration_run_detail(run: dict[str, Any], run_id: str, active_week: str) -> str:
+    results = run.get("results", {}) if isinstance(run.get("results"), dict) else {}
+    executions = results.get("executions", {}) if isinstance(results.get("executions"), dict) else {}
+    events = run.get("events", []) if isinstance(run.get("events"), list) else []
+    audit = results.get("audit", {}) if isinstance(results.get("audit"), dict) else {}
+
+    def esc(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return html.escape(json.dumps(value, indent=2, ensure_ascii=True))
+        return html.escape(str(value))
+
+    summary_rows = "".join(
+        f"<tr><th>{label}</th><td>{esc(value)}</td></tr>"
+        for label, value in [
+            ("Run ID", run.get("run_id", run_id)),
+            ("Timestamp", run.get("timestamp", "—")),
+            ("Backend", run.get("backend", "—")),
+            ("Brand", run.get("brand", "—")),
+            ("Keyword", run.get("keyword", "—")),
+            ("Topic", run.get("topic", "—")),
+            ("GEO", run.get("geo_target", "—")),
+            ("Funnel Stage", run.get("funnel_stage", "—")),
+            ("Audience", run.get("audience", "—")),
+            ("Audit File", audit.get("run_file", "—") if isinstance(audit, dict) else "—"),
+            ("Active Week", active_week),
+        ]
+    )
+
+    event_cards = "".join(
+        f"""
+        <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2)\">
+          <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
+            <span class=\"pill {'green' if event.get('ok') is True else 'red' if event.get('ok') is False else 'gray'}\">{html.escape(str(event.get('channel', 'unknown')))}</span>
+            <span style=\"font-size:12px;font-weight:500\">{html.escape(str(event.get('step', 'step')))}</span>
+            <span style=\"font-size:11px;color:var(--text-muted);margin-left:auto\">{html.escape(str(event.get('timestamp', '')))}</span>
+          </div>
+          <div style=\"font-size:12px;color:var(--text-muted);margin-bottom:8px\">Run: {html.escape(str(event.get('run_id', run_id)))}</div>
+          <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:240px;overflow-y:auto;\">{esc(event.get('payload', {}))}</pre>
+        </div>
+        """
+        for event in events
+    ) or '<p style="color:var(--text-muted)">No per-channel events were recorded for this run.</p>'
+
+    failure_cards: list[str] = []
+    for key, payload in executions.items():
+        if isinstance(payload, dict) and (
+            payload.get("error") or payload.get("ok") is False or payload.get("status") == "not_configured"
+        ):
+            failure_cards.append(
+                f"""
+                <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08)\">
+                  <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
+                    <span class=\"pill red\">{html.escape(str(key))}</span>
+                    <span style=\"font-size:12px;font-weight:500\">Issue detected</span>
+                  </div>
+                  <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:180px;overflow-y:auto;\">{esc(payload)}</pre>
+                </div>
+                """
+            )
+    failures_html = "".join(failure_cards) or '<p style="color:var(--text-muted)">No failures were recorded in the execution payload.</p>'
+
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\">
+    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+    <title>Orchestration Run — {html.escape(run_id)} — WorkCrew CMS OS</title>
+    <style>
+        :root {{
+            --bg:#0b0f14; --surface:#11161d; --surface2:#151b23; --border:#26303d;
+            --text:#e6edf3; --text-muted:#94a3b8; --green:#16a34a; --red:#ef4444; --accent:#60a5fa;
+            --radius-sm:12px; --radius-md:18px;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }}
+        body {{ margin:0; background:linear-gradient(180deg,#0b0f14,#10151b 70%); color:var(--text); }}
+        .page {{ padding:24px; max-width:1400px; margin:0 auto; }}
+        .topbar {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }}
+        .topbar-title {{ font-size:28px; font-weight:700; }}
+        .topbar-meta {{ color:var(--text-muted); margin-top:4px; }}
+        .card {{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:18px; margin-bottom:18px; }}
+        .card-title {{ display:flex; align-items:center; gap:8px; font-size:16px; font-weight:600; margin-bottom:14px; }}
+        .table-wrap {{ overflow:auto; }}
+        table {{ width:100%; border-collapse:collapse; }}
+        th, td {{ text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }}
+        th {{ width:180px; color:var(--text-muted); font-weight:600; }}
+        pre {{ margin:0; }}
+        .pill {{ padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid var(--border); background:var(--surface2); }}
+        .pill.green {{ color:#bbf7d0; border-color:rgba(22,163,74,.4); }}
+        .pill.red {{ color:#fecaca; border-color:rgba(239,68,68,.4); }}
+        .pill.gray {{ color:var(--text-muted); }}
+        .btn {{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:12px; border:1px solid var(--border); color:var(--text); text-decoration:none; background:var(--surface2); }}
+        .layout {{ display:grid; grid-template-columns:1.1fr .9fr; gap:24px; align-items:start; }}
+        @media (max-width: 980px) {{ .layout {{ grid-template-columns:1fr; }} .topbar {{ flex-direction:column; align-items:flex-start; gap:12px; }} }}
+    </style>
+</head>
+<body>
+    <div class=\"page\">
+        <div class=\"topbar\">
+            <div>
+                <div class=\"topbar-title\">Orchestration Run {html.escape(run_id[:8])}</div>
+                <div class=\"topbar-meta\">Per-channel execution audit and failure trace</div>
+            </div>
+            <div><a href=\"/marketing\" class=\"btn\">← Back to Marketing</a></div>
+        </div>
+
+        <div class=\"layout\">
+            <div>
+                <div class=\"card\">
+                    <div class=\"card-title\">🧾 Run Summary</div>
+                    <div class=\"table-wrap\"><table><tbody>{summary_rows}</tbody></table></div>
+                </div>
+
+                <div class=\"card\">
+                    <div class=\"card-title\">📦 Execution Payload</div>
+                    <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-size:12px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;line-height:1.7;white-space:pre-wrap;max-height:60vh;overflow-y:auto;\">{esc(run.get('results', {}))}</pre>
+                </div>
+            </div>
+
+            <div>
+                <div class=\"card\">
+                    <div class=\"card-title\">🔎 Per-Channel Events</div>
+                    <div style=\"display:flex;flex-direction:column;gap:10px\">{event_cards}</div>
+                </div>
+
+                <div class=\"card\">
+                    <div class=\"card-title\">⚠️ Failures / Notes</div>
+                    <div style=\"display:flex;flex-direction:column;gap:10px\">{failures_html}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+def _date_series(n: int, step_days: int) -> list[str]:
+    """Return n ISO-date bucket labels ending today (step_days apart)."""
+    today = datetime.now(timezone.utc).date()
+    return [(today - timedelta(days=step_days * (n - 1 - i))).isoformat() for i in range(n)]
+
+
+def _truncate_to(dt: datetime, period: str) -> str:
+    """Bucket a datetime to daily / weekly-monday / monthly / yearly string."""
+    d = dt.date() if hasattr(dt, "date") else datetime.fromisoformat(str(dt)).date()
+    if period == "daily":
+        return d.isoformat()
+    if period == "weekly":
+        return (d - timedelta(days=d.weekday())).isoformat()  # Monday of week
+    if period == "monthly":
+        return d.replace(day=1).isoformat()
+    if period == "yoy":
+        return str(d.year)
+    return d.isoformat()
+
+
+def _analytics_data(period: str = "monthly") -> dict:
+    """
+    Query the database and produce analytics payload grouped by period.
+    period: daily | weekly | monthly | yoy
+    """
+    from collections import defaultdict
+
+    # period → bucket count / window
+    windows = {"daily": 30, "weekly": 12, "monthly": 12, "yoy": 3}
+    step_map = {"daily": 1, "weekly": 7, "monthly": 30, "yoy": 365}
+    n_buckets = windows.get(period, 12)
+    step_days = step_map.get(period, 30)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=step_days * n_buckets)
+    labels = _date_series(n_buckets, step_days)
+
+    db = SessionLocal()
+    try:
+        # ── Contacts / Leads ────────────────────────────────────────────────
+        contacts_all = db.query(Contact).all()
+        contact_by_status: dict[str, int] = defaultdict(int)
+        new_leads_by_bucket: dict[str, int] = defaultdict(int)
+        for c in contacts_all:
+            contact_by_status[str(c.status.value if hasattr(c.status, "value") else c.status)] += 1
+            if c.created_at and c.created_at >= cutoff:
+                bk = _truncate_to(c.created_at, period)
+                new_leads_by_bucket[bk] += 1
+
+        # ── Deals / Pipeline / Revenue ──────────────────────────────────────
+        deals_all = db.query(Deal).all()
+        funnel_stages = [s.value for s in DealStage]
+        deals_by_stage: dict[str, int] = defaultdict(int)
+        revenue_by_stage: dict[str, float] = defaultdict(float)
+        revenue_by_bucket: dict[str, float] = defaultdict(float)
+        closed_by_bucket: dict[str, int] = defaultdict(int)
+        for d in deals_all:
+            stage = str(d.stage.value if hasattr(d.stage, "value") else d.stage)
+            deals_by_stage[stage] += 1
+            revenue_by_stage[stage] += float(d.value or 0)
+            ref_dt = d.closed_at or d.created_at
+            if ref_dt and ref_dt >= cutoff:
+                bk = _truncate_to(ref_dt, period)
+                revenue_by_bucket[bk] += float(d.value or 0)
+                if stage == "closed_won":
+                    closed_by_bucket[bk] += 1
+
+        total_pipeline_value = sum(revenue_by_stage.values())
+        total_closed_won = revenue_by_stage.get("closed_won", 0.0)
+        conversion_rate = (
+            round(deals_by_stage["closed_won"] / max(1, len(deals_all)) * 100, 1)
+            if deals_all else 0.0
+        )
+
+        # ── Activities ──────────────────────────────────────────────────────
+        activities_all = db.query(Activity).filter(Activity.performed_at >= cutoff).all()
+        activity_by_type: dict[str, int] = defaultdict(int)
+        outreach_by_bucket: dict[str, int] = defaultdict(int)
+        email_sent_by_bucket: dict[str, int] = defaultdict(int)
+        email_open_by_bucket: dict[str, int] = defaultdict(int)
+        email_click_by_bucket: dict[str, int] = defaultdict(int)
+        email_reply_by_bucket: dict[str, int] = defaultdict(int)
+        linkedin_by_bucket: dict[str, int] = defaultdict(int)
+        call_meeting_by_bucket: dict[str, int] = defaultdict(int)
+
+        outreach_types = {
+            ActivityType.EMAIL, ActivityType.LINKEDIN_MESSAGE,
+            ActivityType.LINKEDIN_CONNECT, ActivityType.CALL,
+            ActivityType.MEETING, ActivityType.SMS, ActivityType.WHATSAPP,
+        }
+        for a in activities_all:
+            atype = str(a.activity_type.value if hasattr(a.activity_type, "value") else a.activity_type)
+            activity_by_type[atype] += 1
+            bk = _truncate_to(a.performed_at, period)
+            if a.activity_type in outreach_types:
+                outreach_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL:
+                email_sent_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_OPEN:
+                email_open_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_CLICK:
+                email_click_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_REPLY:
+                email_reply_by_bucket[bk] += 1
+            if a.activity_type in (ActivityType.LINKEDIN_MESSAGE, ActivityType.LINKEDIN_CONNECT):
+                linkedin_by_bucket[bk] += 1
+            if a.activity_type in (ActivityType.CALL, ActivityType.MEETING):
+                call_meeting_by_bucket[bk] += 1
+
+        total_emails_sent = sum(email_sent_by_bucket.values())
+        total_opens = sum(email_open_by_bucket.values())
+        total_clicks = sum(email_click_by_bucket.values())
+        total_replies = sum(email_reply_by_bucket.values())
+        email_open_rate = round(total_opens / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+        email_click_rate = round(total_clicks / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+        email_reply_rate = round(total_replies / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+
+        # ── Content / SEO (tracker-based, no DB) ────────────────────────────
+        tracker_rows = _read_tracker()
+        total_articles = len(tracker_rows)
+        published_articles = sum(1 for r in tracker_rows if r.get("status") == "Published")
+        qa_passed_articles = sum(1 for r in tracker_rows if r.get("qa") in ("Passed", "QA Passed"))
+
+        # ── Assemble series aligned to labels ───────────────────────────────
+        def _series(bucket_dict: dict) -> list:
+            return [bucket_dict.get(lbl, 0) for lbl in labels]
+
+        return {
+            "ok": True,
+            "period": period,
+            "labels": labels,
+            # Sales — KPI cards
+            "sales_kpis": {
+                "total_contacts": len(contacts_all),
+                "total_deals": len(deals_all),
+                "pipeline_value": round(total_pipeline_value, 2),
+                "closed_won_value": round(total_closed_won, 2),
+                "conversion_rate_pct": conversion_rate,
+                "total_outreach": sum(outreach_by_bucket.values()),
+            },
+            # Sales — funnel
+            "funnel": {s: deals_by_stage.get(s, 0) for s in funnel_stages},
+            "contact_by_status": dict(contact_by_status),
+            # Sales — time series
+            "series": {
+                "new_leads": _series(new_leads_by_bucket),
+                "outreach": _series(outreach_by_bucket),
+                "revenue": _series(revenue_by_bucket),
+                "closed_won_count": _series(closed_by_bucket),
+                "calls_meetings": _series(call_meeting_by_bucket),
+                "linkedin": _series(linkedin_by_bucket),
+            },
+            # Marketing — KPI cards
+            "marketing_kpis": {
+                "email_sent": total_emails_sent,
+                "email_open_rate_pct": email_open_rate,
+                "email_click_rate_pct": email_click_rate,
+                "email_reply_rate_pct": email_reply_rate,
+                "total_articles": total_articles,
+                "published_articles": published_articles,
+                "qa_passed_articles": qa_passed_articles,
+            },
+            # Marketing — time series
+            "marketing_series": {
+                "email_sent": _series(email_sent_by_bucket),
+                "email_opens": _series(email_open_by_bucket),
+                "email_clicks": _series(email_click_by_bucket),
+                "email_replies": _series(email_reply_by_bucket),
+                "linkedin": _series(linkedin_by_bucket),
+            },
+            # Activity breakdown
+            "activity_by_type": dict(activity_by_type),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+def page_analytics(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("analytics.html", {
+        "request": request,
+        "active_page": "analytics",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
+@app.get("/api/v1/analytics")
+def api_analytics(period: str = "monthly") -> dict:
+    """Return analytics metrics grouped by period (daily|weekly|monthly|yoy)."""
+    if period not in ("daily", "weekly", "monthly", "yoy"):
+        raise HTTPException(status_code=422, detail="period must be daily|weekly|monthly|yoy")
+    return _analytics_data(period)
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
