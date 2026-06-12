@@ -19,6 +19,48 @@
   <div>
     <div class="card">
       <div class="card-title">⚡ Action Hub</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Brand</label>
+          <select id="mcp-brand" style="width:100%">
+            <option value="workcrew">WorkCrew</option>
+            <option value="hirestack">HireStack</option>
+            <option value="founder">Founder</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Week</label>
+          <input id="mcp-week" type="text" placeholder="W01" style="width:100%">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Topic</label>
+          <input id="mcp-topic" type="text" value="CRM growth" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Keyword</label>
+          <input id="mcp-keyword" type="text" value="crm automation" style="width:100%">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">GEO Target</label>
+          <input id="mcp-geo" type="text" value="global" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Funnel Stage</label>
+          <select id="mcp-funnel" style="width:100%">
+            <option value="awareness">Awareness</option>
+            <option value="consideration" selected>Consideration</option>
+            <option value="decision">Decision</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Publish Status Path</label>
+        <input id="mcp-status-path" type="text" placeholder="output/marketing/workcrew/.../08_Publish_Status.json" style="width:100%">
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
           <div style="font-size:13px;font-weight:600;margin-bottom:8px">Sales</div>
@@ -53,6 +95,7 @@
           </div>
         </div>
       </div>
+      <div id="mcp-action-log" class="log-box" style="min-height:180px;margin-top:14px"><span style="color:var(--text-dim)">Action output will appear here.</span></div>
     </div>
 
     <div class="card">
@@ -90,6 +133,19 @@
 {% block extra_js %}
 <script>
 let mcpHub = null;
+
+function mcpLog(msg, cls='') {
+  const box = document.getElementById('mcp-action-log');
+  if (!box) return;
+  if (box.children.length === 1 && box.textContent.includes('Action output will appear here.')) {
+    box.innerHTML = '';
+  }
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
 
 function pill(label, ready) {
   return `<span class="pill ${ready ? 'green' : 'gray'}">${label}: ${ready ? 'ready' : 'off'}</span>`;
@@ -186,15 +242,18 @@ function renderHub(data) {
 }
 
 function mcpPayload() {
+  const week = (document.getElementById('mcp-week').value || '').trim().toUpperCase() || null;
   return {
     backend: 'hermes',
-    brand: 'workcrew',
-    topic: 'CRM growth',
-    keyword: 'crm automation',
-    geo_target: 'global',
-    funnel_stage: 'consideration',
+    brand: document.getElementById('mcp-brand').value,
+    topic: (document.getElementById('mcp-topic').value || '').trim(),
+    keyword: (document.getElementById('mcp-keyword').value || '').trim(),
+    geo_target: (document.getElementById('mcp-geo').value || '').trim(),
+    funnel_stage: document.getElementById('mcp-funnel').value,
     audience: 'sales and marketing operators',
     channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+    week,
+    status_path: (document.getElementById('mcp-status-path').value || '').trim(),
     target_count: 50,
     min_score: 25,
     statuses: ['lead', 'prospect'],
@@ -227,101 +286,133 @@ async function postMcp(path, payload) {
 }
 
 async function runSalesPlan() {
+  const base = mcpPayload();
   const data = await postMcp('/api/v1/prospecting/plan', {
-    target_count: 50,
-    min_score: 25,
-    statuses: ['lead', 'prospect'],
-    allow_scraper: true,
-    allow_mcp: true,
+    target_count: base.target_count,
+    min_score: base.min_score,
+    statuses: base.statuses,
+    allow_scraper: base.allow_scraper,
+    allow_mcp: base.allow_mcp,
   });
-  salesLog(`sales plan: ${data.plan?.selected_existing_linkedin_contacts?.length || 0} leads`, 'ok');
+  mcpLog(`sales plan: ${data.plan?.selected_existing_linkedin_contacts?.length || 0} leads`, 'ok');
   showToast('Sales plan generated', true);
   return data;
 }
 
 async function runSalesExecute() {
+  const base = mcpPayload();
   const data = await postMcp('/api/v1/prospecting/execute', {
-    target_count: 50,
-    min_score: 25,
-    statuses: ['lead', 'prospect'],
-    allow_scraper: true,
-    allow_mcp: true,
-    execute_stages: ['free_linkedin_existing_data', 'scraper_platforms', 'mcp_providers'],
-    auto_import: true,
-    max_import: 50,
+    target_count: base.target_count,
+    min_score: base.min_score,
+    statuses: base.statuses,
+    allow_scraper: base.allow_scraper,
+    allow_mcp: base.allow_mcp,
+    execute_stages: base.execute_stages,
+    auto_import: false,
+    max_import: base.max_import,
     sequence_id: null,
   });
-  salesLog(`sales execute: ${Object.keys(data.executed_stages || {}).length} stages`, 'ok');
+  mcpLog(`sales execute: ${Object.keys(data.executed_stages || {}).length} stages`, 'ok');
   showToast('Sales execute completed', true);
   return data;
 }
 
 async function runMarketingGenerate() {
+  const base = mcpPayload();
   const data = await postMcp('/marketing/generate', {
-    brand: 'workcrew',
-    topic: 'CRM growth',
-    keyword: 'crm automation',
-    geo: 'global',
-    funnel: 'consideration',
+    brand: base.brand,
+    topic: base.topic,
+    keyword: base.keyword,
+    geo: base.geo_target,
+    funnel: base.funnel_stage,
     output_root: null,
   });
+  mcpLog(`marketing generate: ${data.ok ? 'ok' : 'failed'}`, data.ok ? 'ok' : 'err');
   showToast(data.ok ? 'Marketing generated' : 'Marketing generation failed', !!data.ok);
   return data;
 }
 
 async function runMarketingDryRun() {
+  const base = mcpPayload();
+  if (!base.status_path) {
+    showToast('Publish status path is required for dry run', false);
+    return;
+  }
   const data = await postMcp('/marketing/dry-run', {
-    brand: 'workcrew',
-    topic: 'CRM growth',
-    keyword: 'crm automation',
-    geo: 'global',
-    funnel: 'consideration',
-    status_path: 'output/marketing/workcrew/sample/08_Publish_Status.json',
+    brand: base.brand,
+    topic: base.topic,
+    keyword: base.keyword,
+    geo: base.geo_target,
+    funnel: base.funnel_stage,
+    status_path: base.status_path,
   });
+  mcpLog(`marketing dry run: loaded ${base.status_path}`, 'ok');
   showToast(data.hashnode ? 'Marketing dry run loaded' : 'Marketing dry run checked', true);
   return data;
 }
 
 async function runMarketingPublish() {
-  showToast('Marketing publish requires a real publish status file and confirmation; open Marketing page for the full flow.', true);
-  return { ok: true };
+  const base = mcpPayload();
+  if (!base.status_path) {
+    showToast('Publish status path is required for publish', false);
+    return;
+  }
+  const data = await postMcp('/marketing/publish', {
+    brand: base.brand,
+    topic: base.topic,
+    keyword: base.keyword,
+    geo: base.geo_target,
+    funnel: base.funnel_stage,
+    status_path: base.status_path,
+    instagram_image_url: '',
+    confirmed: true,
+  });
+  mcpLog(`marketing publish: ${Object.keys(data || {}).length} channel results`, 'ok');
+  showToast('Marketing publish triggered', true);
+  return data;
 }
 
 async function runOrchestrationPlan() {
+  const base = mcpPayload();
   const data = await postMcp('/api/v1/orchestration/plan', {
-    backend: 'hermes',
-    brand: 'workcrew',
-    topic: 'CRM growth',
-    keyword: 'crm automation',
-    geo_target: 'global',
-    funnel_stage: 'consideration',
-    audience: 'sales and marketing operators',
-    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+    backend: base.backend,
+    brand: base.brand,
+    topic: base.topic,
+    keyword: base.keyword,
+    geo_target: base.geo_target,
+    funnel_stage: base.funnel_stage,
+    audience: base.audience,
+    channels: base.channels,
   });
+  mcpLog(`orchestration plan: ${base.topic} / ${base.keyword}`, 'ok');
   showToast('Orchestration plan generated', true);
   return data;
 }
 
 async function runOrchestrationRun() {
+  const base = mcpPayload();
   const data = await postMcp('/api/v1/orchestration/run', {
-    backend: 'hermes',
-    brand: 'workcrew',
-    topic: 'CRM growth',
-    keyword: 'crm automation',
-    geo_target: 'global',
-    funnel_stage: 'consideration',
-    audience: 'sales and marketing operators',
-    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+    backend: base.backend,
+    brand: base.brand,
+    topic: base.topic,
+    keyword: base.keyword,
+    geo_target: base.geo_target,
+    funnel_stage: base.funnel_stage,
+    audience: base.audience,
+    channels: base.channels,
   });
+  mcpLog(`orchestration run: ${base.topic} / ${base.keyword}`, 'ok');
   showToast('Orchestration run started', true);
   return data;
 }
 
 async function runContentGeneration() {
+  const base = mcpPayload();
   const data = await postMcp('/generate', {
-    week: null,
-    topic: 'CRM growth',
+    week: base.week,
+    topic: base.topic,
   });
+  mcpLog(`content generation: week=${base.week || 'current'} topic=${base.topic}`, data.ok ? 'ok' : 'err');
   showToast(data.ok ? 'Content generation run' : 'Content generation failed', !!data.ok);
   return data;
 }

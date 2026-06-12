@@ -23,6 +23,13 @@ def test_mcp_template_contains_hub_sections() -> None:
     assert "Action Hub" in text
     assert "Plan Prospecting" in text
     assert "Generate" in text
+    assert 'id="mcp-brand"' in text
+    assert 'id="mcp-topic"' in text
+    assert 'id="mcp-keyword"' in text
+    assert 'id="mcp-week"' in text
+    assert 'id="mcp-status-path"' in text
+    assert 'id="mcp-action-log"' in text
+    assert "function mcpLog" in text
     assert "/api/v1/mcp/hub" in text
 
 
