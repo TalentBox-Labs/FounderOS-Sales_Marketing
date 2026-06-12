@@ -28,8 +28,15 @@ def test_mcp_template_contains_hub_sections() -> None:
     assert 'id="mcp-keyword"' in text
     assert 'id="mcp-week"' in text
     assert 'id="mcp-status-path"' in text
+    assert 'id="mcp-sequence"' in text
+    assert 'id="mcp-max-import"' in text
+    assert 'id="mcp-auto-import"' in text
     assert 'id="mcp-action-log"' in text
+    assert 'id="mcp-action-result"' in text
     assert "function mcpLog" in text
+    assert "function loadMcpSequences" in text
+    assert "function importSalesPlanLeads" in text
+    assert "Import Planned Leads" in text
     assert "/api/v1/mcp/hub" in text
 
 

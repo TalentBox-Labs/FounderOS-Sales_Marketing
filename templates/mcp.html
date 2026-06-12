@@ -61,12 +61,31 @@
         <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Publish Status Path</label>
         <input id="mcp-status-path" type="text" placeholder="output/marketing/workcrew/.../08_Publish_Status.json" style="width:100%">
       </div>
+      <div style="display:grid;grid-template-columns:1.4fr .8fr .8fr;gap:10px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Outreach Sequence</label>
+          <select id="mcp-sequence" style="width:100%">
+            <option value="">No sequence selected</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Max Import</label>
+          <input id="mcp-max-import" type="number" min="1" max="1000" value="50" style="width:100%">
+        </div>
+        <div style="display:flex;align-items:end">
+          <label style="font-size:12px;color:var(--text-muted);display:flex;gap:8px;align-items:center;height:34px">
+            <input id="mcp-auto-import" type="checkbox" checked>
+            Auto import
+          </label>
+        </div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
           <div style="font-size:13px;font-weight:600;margin-bottom:8px">Sales</div>
           <div style="display:flex;flex-wrap:wrap;gap:8px">
             <button class="btn btn-primary btn-sm" onclick="runSalesPlan()">Plan Prospecting</button>
             <button class="btn btn-ghost btn-sm" onclick="runSalesExecute()">Execute Prospecting</button>
+            <button class="btn btn-ghost btn-sm" onclick="importSalesPlanLeads()">Import Planned Leads</button>
             <button class="btn btn-ghost btn-sm" onclick="window.location.href='/sales'">Open Sales Page</button>
           </div>
         </div>
@@ -96,6 +115,7 @@
         </div>
       </div>
       <div id="mcp-action-log" class="log-box" style="min-height:180px;margin-top:14px"><span style="color:var(--text-dim)">Action output will appear here.</span></div>
+      <div id="mcp-action-result" style="margin-top:14px"></div>
     </div>
 
     <div class="card">
@@ -133,6 +153,18 @@
 {% block extra_js %}
 <script>
 let mcpHub = null;
+let mcpSequences = [];
+let mcpLastSalesPlan = null;
+
+function renderActionResult(title, payload) {
+  const box = document.getElementById('mcp-action-result');
+  if (!box) return;
+  const pretty = JSON.stringify(payload, null, 2);
+  box.innerHTML = `
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${title}</div>
+    <pre style="background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow:auto;white-space:pre-wrap;max-height:320px">${pretty}</pre>
+  `;
+}
 
 function mcpLog(msg, cls='') {
   const box = document.getElementById('mcp-action-log');
@@ -243,6 +275,7 @@ function renderHub(data) {
 
 function mcpPayload() {
   const week = (document.getElementById('mcp-week').value || '').trim().toUpperCase() || null;
+  const maxImport = Number(document.getElementById('mcp-max-import').value || '50');
   return {
     backend: 'hermes',
     brand: document.getElementById('mcp-brand').value,
@@ -267,9 +300,30 @@ function mcpPayload() {
     run_voice_qualification: true,
     run_meeting_booking: true,
     execute_stages: ['free_linkedin_existing_data', 'scraper_platforms', 'mcp_providers'],
-    auto_import: true,
-    max_import: 50,
+    auto_import: document.getElementById('mcp-auto-import').checked,
+    max_import: maxImport,
+    sequence_id: document.getElementById('mcp-sequence').value || null,
   };
+}
+
+async function loadMcpSequences() {
+  try {
+    const r = await fetch('/api/v1/outreach/sequences');
+    const data = await r.json();
+    const rows = Array.isArray(data.sequences) ? data.sequences : [];
+    mcpSequences = rows;
+    const sel = document.getElementById('mcp-sequence');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">No sequence selected</option>';
+    rows.forEach(row => {
+      const opt = document.createElement('option');
+      opt.value = row.id;
+      opt.textContent = `${row.name} (${row.channel}, ${row.steps_count} steps)`;
+      sel.appendChild(opt);
+    });
+  } catch (err) {
+    mcpLog(`sequence load failed: ${err.message || err}`, 'err');
+  }
 }
 
 async function postMcp(path, payload) {
@@ -294,8 +348,38 @@ async function runSalesPlan() {
     allow_scraper: base.allow_scraper,
     allow_mcp: base.allow_mcp,
   });
+  mcpLastSalesPlan = data.plan || null;
   mcpLog(`sales plan: ${data.plan?.selected_existing_linkedin_contacts?.length || 0} leads`, 'ok');
+  renderActionResult('Sales Plan Result', data);
   showToast('Sales plan generated', true);
+  return data;
+}
+
+async function importSalesPlanLeads() {
+  const base = mcpPayload();
+  if (!base.sequence_id) {
+    showToast('Select an outreach sequence first', false);
+    return;
+  }
+  if (!mcpLastSalesPlan) {
+    showToast('Run a sales plan first', false);
+    return;
+  }
+  const ids = (mcpLastSalesPlan.selected_existing_linkedin_contacts || [])
+    .map(item => item.id)
+    .filter(Boolean)
+    .slice(0, base.max_import);
+  if (!ids.length) {
+    showToast('No planned leads available to import', false);
+    return;
+  }
+  const data = await postMcp('/api/v1/prospecting/import', {
+    sequence_id: base.sequence_id,
+    contact_ids: ids,
+  });
+  mcpLog(`sales import: ${data.contacts_imported || 0} contacts`, 'ok');
+  renderActionResult('Sales Import Result', data);
+  showToast('Planned leads imported', true);
   return data;
 }
 
@@ -308,11 +392,13 @@ async function runSalesExecute() {
     allow_scraper: base.allow_scraper,
     allow_mcp: base.allow_mcp,
     execute_stages: base.execute_stages,
-    auto_import: false,
+    auto_import: base.auto_import,
     max_import: base.max_import,
-    sequence_id: null,
+    sequence_id: base.sequence_id,
   });
+  mcpLastSalesPlan = data.plan || null;
   mcpLog(`sales execute: ${Object.keys(data.executed_stages || {}).length} stages`, 'ok');
+  renderActionResult('Sales Execute Result', data);
   showToast('Sales execute completed', true);
   return data;
 }
@@ -328,6 +414,7 @@ async function runMarketingGenerate() {
     output_root: null,
   });
   mcpLog(`marketing generate: ${data.ok ? 'ok' : 'failed'}`, data.ok ? 'ok' : 'err');
+  renderActionResult('Marketing Generate Result', data);
   showToast(data.ok ? 'Marketing generated' : 'Marketing generation failed', !!data.ok);
   return data;
 }
@@ -347,6 +434,7 @@ async function runMarketingDryRun() {
     status_path: base.status_path,
   });
   mcpLog(`marketing dry run: loaded ${base.status_path}`, 'ok');
+  renderActionResult('Marketing Dry Run Result', data);
   showToast(data.hashnode ? 'Marketing dry run loaded' : 'Marketing dry run checked', true);
   return data;
 }
@@ -368,6 +456,7 @@ async function runMarketingPublish() {
     confirmed: true,
   });
   mcpLog(`marketing publish: ${Object.keys(data || {}).length} channel results`, 'ok');
+  renderActionResult('Marketing Publish Result', data);
   showToast('Marketing publish triggered', true);
   return data;
 }
@@ -385,6 +474,7 @@ async function runOrchestrationPlan() {
     channels: base.channels,
   });
   mcpLog(`orchestration plan: ${base.topic} / ${base.keyword}`, 'ok');
+  renderActionResult('Orchestration Plan Result', data);
   showToast('Orchestration plan generated', true);
   return data;
 }
@@ -402,6 +492,7 @@ async function runOrchestrationRun() {
     channels: base.channels,
   });
   mcpLog(`orchestration run: ${base.topic} / ${base.keyword}`, 'ok');
+  renderActionResult('Orchestration Run Result', data);
   showToast('Orchestration run started', true);
   return data;
 }
@@ -413,6 +504,7 @@ async function runContentGeneration() {
     topic: base.topic,
   });
   mcpLog(`content generation: week=${base.week || 'current'} topic=${base.topic}`, data.ok ? 'ok' : 'err');
+  renderActionResult('Content Generation Result', data);
   showToast(data.ok ? 'Content generation run' : 'Content generation failed', !!data.ok);
   return data;
 }
@@ -427,6 +519,9 @@ async function refreshMcpHub() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => refreshMcpHub());
+document.addEventListener('DOMContentLoaded', async () => {
+  await refreshMcpHub();
+  await loadMcpSequences();
+});
 </script>
 {% endblock %}
