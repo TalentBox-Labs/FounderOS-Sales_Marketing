@@ -18,6 +18,44 @@
 <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:20px">
   <div>
     <div class="card">
+      <div class="card-title">⚡ Action Hub</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Sales</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="runSalesPlan()">Plan Prospecting</button>
+            <button class="btn btn-ghost btn-sm" onclick="runSalesExecute()">Execute Prospecting</button>
+            <button class="btn btn-ghost btn-sm" onclick="window.location.href='/sales'">Open Sales Page</button>
+          </div>
+        </div>
+        <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Marketing</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="runMarketingGenerate()">Generate</button>
+            <button class="btn btn-ghost btn-sm" onclick="runMarketingDryRun()">Dry Run</button>
+            <button class="btn btn-ghost btn-sm" onclick="runMarketingPublish()">Publish</button>
+            <button class="btn btn-ghost btn-sm" onclick="window.location.href='/marketing'">Open Marketing</button>
+          </div>
+        </div>
+        <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Orchestration</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="runOrchestrationPlan()">Plan</button>
+            <button class="btn btn-ghost btn-sm" onclick="runOrchestrationRun()">Run</button>
+            <button class="btn btn-ghost btn-sm" onclick="window.location.href='/analytics'">Open Analytics</button>
+          </div>
+        </div>
+        <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Content / Research</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="runContentGeneration()">Generate Content</button>
+            <button class="btn btn-ghost btn-sm" onclick="window.location.href='/'">Open Dashboard</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-title">🧭 Capability Map</div>
       <div id="mcp-groups" style="display:grid;grid-template-columns:1fr 1fr;gap:14px"></div>
     </div>
@@ -145,6 +183,147 @@ function renderHub(data) {
     sectionCard('Instagram', [pill('Configured', !!messaging.instagram), pill('Publishing', !!marketing.instagram)]),
     sectionCard('YouTube', [pill('Configured', !!messaging.youtube), pill('Publishing', !!marketing.youtube)]),
   ].join('');
+}
+
+function mcpPayload() {
+  return {
+    backend: 'hermes',
+    brand: 'workcrew',
+    topic: 'CRM growth',
+    keyword: 'crm automation',
+    geo_target: 'global',
+    funnel_stage: 'consideration',
+    audience: 'sales and marketing operators',
+    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+    target_count: 50,
+    min_score: 25,
+    statuses: ['lead', 'prospect'],
+    allow_scraper: true,
+    allow_mcp: true,
+    run_content: true,
+    run_seo: true,
+    run_email: true,
+    run_whatsapp: true,
+    run_prospecting: true,
+    run_voice_qualification: true,
+    run_meeting_booking: true,
+    execute_stages: ['free_linkedin_existing_data', 'scraper_platforms', 'mcp_providers'],
+    auto_import: true,
+    max_import: 50,
+  };
+}
+
+async function postMcp(path, payload) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await r.json();
+  if (!r.ok || data.ok === false) {
+    throw new Error(data.detail || data.error || `Request failed (${r.status})`);
+  }
+  return data;
+}
+
+async function runSalesPlan() {
+  const data = await postMcp('/api/v1/prospecting/plan', {
+    target_count: 50,
+    min_score: 25,
+    statuses: ['lead', 'prospect'],
+    allow_scraper: true,
+    allow_mcp: true,
+  });
+  salesLog(`sales plan: ${data.plan?.selected_existing_linkedin_contacts?.length || 0} leads`, 'ok');
+  showToast('Sales plan generated', true);
+  return data;
+}
+
+async function runSalesExecute() {
+  const data = await postMcp('/api/v1/prospecting/execute', {
+    target_count: 50,
+    min_score: 25,
+    statuses: ['lead', 'prospect'],
+    allow_scraper: true,
+    allow_mcp: true,
+    execute_stages: ['free_linkedin_existing_data', 'scraper_platforms', 'mcp_providers'],
+    auto_import: true,
+    max_import: 50,
+    sequence_id: null,
+  });
+  salesLog(`sales execute: ${Object.keys(data.executed_stages || {}).length} stages`, 'ok');
+  showToast('Sales execute completed', true);
+  return data;
+}
+
+async function runMarketingGenerate() {
+  const data = await postMcp('/marketing/generate', {
+    brand: 'workcrew',
+    topic: 'CRM growth',
+    keyword: 'crm automation',
+    geo: 'global',
+    funnel: 'consideration',
+    output_root: null,
+  });
+  showToast(data.ok ? 'Marketing generated' : 'Marketing generation failed', !!data.ok);
+  return data;
+}
+
+async function runMarketingDryRun() {
+  const data = await postMcp('/marketing/dry-run', {
+    brand: 'workcrew',
+    topic: 'CRM growth',
+    keyword: 'crm automation',
+    geo: 'global',
+    funnel: 'consideration',
+    status_path: 'output/marketing/workcrew/sample/08_Publish_Status.json',
+  });
+  showToast(data.hashnode ? 'Marketing dry run loaded' : 'Marketing dry run checked', true);
+  return data;
+}
+
+async function runMarketingPublish() {
+  showToast('Marketing publish requires a real publish status file and confirmation; open Marketing page for the full flow.', true);
+  return { ok: true };
+}
+
+async function runOrchestrationPlan() {
+  const data = await postMcp('/api/v1/orchestration/plan', {
+    backend: 'hermes',
+    brand: 'workcrew',
+    topic: 'CRM growth',
+    keyword: 'crm automation',
+    geo_target: 'global',
+    funnel_stage: 'consideration',
+    audience: 'sales and marketing operators',
+    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+  });
+  showToast('Orchestration plan generated', true);
+  return data;
+}
+
+async function runOrchestrationRun() {
+  const data = await postMcp('/api/v1/orchestration/run', {
+    backend: 'hermes',
+    brand: 'workcrew',
+    topic: 'CRM growth',
+    keyword: 'crm automation',
+    geo_target: 'global',
+    funnel_stage: 'consideration',
+    audience: 'sales and marketing operators',
+    channels: ['blog', 'linkedin', 'instagram', 'youtube', 'email', 'whatsapp'],
+  });
+  showToast('Orchestration run started', true);
+  return data;
+}
+
+async function runContentGeneration() {
+  const data = await postMcp('/generate', {
+    week: null,
+    topic: 'CRM growth',
+  });
+  showToast(data.ok ? 'Content generation run' : 'Content generation failed', !!data.ok);
+  return data;
 }
 
 async function refreshMcpHub() {

@@ -20,6 +20,9 @@ def test_mcp_template_contains_hub_sections() -> None:
     assert "MCP Hub" in text
     assert "Capability Map" in text
     assert "Messaging Channels" in text
+    assert "Action Hub" in text
+    assert "Plan Prospecting" in text
+    assert "Generate" in text
     assert "/api/v1/mcp/hub" in text
 
 
@@ -61,7 +64,12 @@ def test_mcp_hub_api_reports_configured_integrations(
     assert hub["marketing"]["youtube"] is True
     assert hub["messaging"]["whatsapp"] is True
     assert hub["messaging"]["email"] is True
-    assert len(hub["entrypoints"]) >= 4
+    entrypoints = {ep["name"]: ep["path"] for ep in hub["entrypoints"]}
+    assert entrypoints["Content Generation"] == "/generate"
+    assert entrypoints["Marketing Generate"] == "/marketing/generate"
+    assert entrypoints["Marketing Publish"] == "/marketing/publish"
+    assert entrypoints["Prospecting Execute"] == "/api/v1/prospecting/execute"
+    assert len(entrypoints) >= 8
 
 
 def test_mcp_hub_groups_include_sales_marketing_research_and_messaging(

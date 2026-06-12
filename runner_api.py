@@ -558,8 +558,14 @@ def _mcp_hub_status() -> dict:
             {"name": "Sales Prospecting", "path": "/sales", "status": "ready"},
             {"name": "Marketing Campaigns", "path": "/marketing", "status": "ready"},
             {"name": "Analytics", "path": "/analytics", "status": "ready"},
+            {"name": "Content Generation", "path": "/generate", "status": "api"},
+            {"name": "Marketing Generate", "path": "/marketing/generate", "status": "api"},
+            {"name": "Marketing Dry Run", "path": "/marketing/dry-run", "status": "api"},
+            {"name": "Marketing Publish", "path": "/marketing/publish", "status": "api"},
             {"name": "Orchestration Plan", "path": "/api/v1/orchestration/plan", "status": "api"},
             {"name": "Orchestration Run", "path": "/api/v1/orchestration/run", "status": "api"},
+            {"name": "Prospecting Plan", "path": "/api/v1/prospecting/plan", "status": "api"},
+            {"name": "Prospecting Execute", "path": "/api/v1/prospecting/execute", "status": "api"},
         ],
     }
 
