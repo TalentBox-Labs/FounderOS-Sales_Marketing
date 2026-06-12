@@ -49,6 +49,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from revenue_os.config import settings
 from revenue_os.database import SessionLocal
 from revenue_os.models.activity import (
     Activity,
@@ -512,6 +513,73 @@ def _marketing_runs() -> list[dict]:
         except Exception:
             pass
     return runs[:20]
+
+
+def _mcp_hub_status() -> dict:
+    """Summarize which MCP-connected tool groups are ready from env/config state."""
+    backends = backend_status()
+    return {
+        "models": {
+            "primary_llm": settings.OPENAI_MODEL,
+            "crewai_model": settings.WORKCREW_CREWAI_MODEL,
+            "openai": bool(settings.OPENAI_API_KEY),
+            "gemini": bool(settings.GEMINI_API_KEY),
+        },
+        "backends": backends,
+        "sales": {
+            "prospecting": True,
+            "lead_scoring": True,
+            "crm_contacts": True,
+            "outreach_sequences": True,
+            "mcp_provider_ready": provider_status(),
+        },
+        "marketing": {
+            "orchestration": True,
+            "social_publishing": True,
+            "hashnode": bool(os.environ.get("HASHNODE_ACCESS_TOKEN")),
+            "linkedin": bool(os.environ.get("LINKEDIN_ACCESS_TOKEN")),
+            "instagram": bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")),
+            "youtube": bool(os.environ.get("YOUTUBE_API_KEY")),
+        },
+        "research": {
+            "knowledge_base": True,
+            "web_research": True,
+            "agent_backends": bool(backends.get("hermes") or backends.get("openclaw")),
+            "n8n": bool(settings.N8N_API_KEY or settings.N8N_WEBHOOK_BASE_URL),
+        },
+        "messaging": {
+            "email": bool(settings.GMAIL_CREDENTIALS_PATH or os.environ.get("SMTP_HOST")),
+            "whatsapp": bool(settings.WHATSAPP_API_TOKEN and settings.WHATSAPP_PHONE_NUMBER_ID),
+            "linkedin": bool(settings.LINKEDIN_ACCESS_TOKEN),
+            "instagram": bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")),
+            "youtube": bool(os.environ.get("YOUTUBE_API_KEY")),
+        },
+        "entrypoints": [
+            {"name": "Sales Prospecting", "path": "/sales", "status": "ready"},
+            {"name": "Marketing Campaigns", "path": "/marketing", "status": "ready"},
+            {"name": "Analytics", "path": "/analytics", "status": "ready"},
+            {"name": "Orchestration Plan", "path": "/api/v1/orchestration/plan", "status": "api"},
+            {"name": "Orchestration Run", "path": "/api/v1/orchestration/run", "status": "api"},
+        ],
+    }
+
+
+@app.get("/mcp", response_class=HTMLResponse)
+def page_mcp(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("mcp.html", {
+        "request": request,
+        "active_page": "mcp",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
+@app.get("/api/v1/mcp/hub")
+def api_mcp_hub() -> dict:
+    return {
+        "ok": True,
+        "hub": _mcp_hub_status(),
+    }
 
 
 @app.get("/marketing", response_class=HTMLResponse)

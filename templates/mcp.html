@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}MCP Hub — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}MCP Hub{% endblock %}
+{% block topbar_meta %}Unified model and tool integration surface for sales, marketing, research, messaging, and video{% endblock %}
+
+{% block topbar_right %}
+  <button class="btn btn-ghost btn-sm" onclick="refreshMcpHub()">Refresh Hub</button>
+{% endblock %}
+
+{% block content %}
+<div class="stats-row" style="margin-bottom:24px">
+  <div class="stat-card"><div class="stat-label">Ready Groups</div><div id="mcp-ready-groups" class="stat-val">—</div><div class="stat-sub">sales / marketing / research / messaging</div></div>
+  <div class="stat-card"><div class="stat-label">Ready Channels</div><div id="mcp-ready-channels" class="stat-val">—</div><div class="stat-sub">LinkedIn, Instagram, YouTube, email, WhatsApp</div></div>
+  <div class="stat-card"><div class="stat-label">Model Stack</div><div id="mcp-model-stack" class="stat-val" style="font-size:18px">—</div><div class="stat-sub">primary LLM + CrewAI</div></div>
+  <div class="stat-card"><div class="stat-label">Backends</div><div id="mcp-backends" class="stat-val">—</div><div class="stat-sub">Hermes / OpenClaw</div></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1.1fr .9fr;gap:20px">
+  <div>
+    <div class="card">
+      <div class="card-title">🧭 Capability Map</div>
+      <div id="mcp-groups" style="display:grid;grid-template-columns:1fr 1fr;gap:14px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧰 Entry Points</div>
+      <div id="mcp-entrypoints" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">🤖 Model & Integration Readiness</div>
+      <div id="mcp-models" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📡 Messaging Channels</div>
+      <div id="mcp-channels" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📝 Notes</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.7">
+        This hub surfaces the existing CMS OS integrations, not fake placeholders. Sales planning, marketing orchestration, research backends, and publishing channels are shown with their real readiness state so operators can see what is available right now and what still needs credentials.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let mcpHub = null;
+
+function pill(label, ready) {
+  return `<span class="pill ${ready ? 'green' : 'gray'}">${label}: ${ready ? 'ready' : 'off'}</span>`;
+}
+
+function sectionCard(title, items) {
+  return `
+    <div style="padding:14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:600">${title}</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${items.join('')}</div>
+    </div>
+  `;
+}
+
+function renderHub(data) {
+  const hub = data.hub || {};
+  mcpHub = hub;
+
+  const models = hub.models || {};
+  const backends = hub.backends || {};
+  const sales = hub.sales || {};
+  const marketing = hub.marketing || {};
+  const research = hub.research || {};
+  const messaging = hub.messaging || {};
+
+  const groupCards = [
+    sectionCard('Sales', [
+      pill('Prospecting', !!sales.prospecting),
+      pill('Lead Scoring', !!sales.lead_scoring),
+      pill('CRM Contacts', !!sales.crm_contacts),
+      pill('Sequences', !!sales.outreach_sequences),
+    ]),
+    sectionCard('Marketing', [
+      pill('Orchestration', !!marketing.orchestration),
+      pill('Publishing', !!marketing.social_publishing),
+      pill('Hashnode', !!marketing.hashnode),
+      pill('LinkedIn', !!marketing.linkedin),
+      pill('Instagram', !!marketing.instagram),
+      pill('YouTube', !!marketing.youtube),
+    ]),
+    sectionCard('Research', [
+      pill('Knowledge Base', !!research.knowledge_base),
+      pill('Web Research', !!research.web_research),
+      pill('Agent Backends', !!research.agent_backends),
+      pill('n8n', !!research.n8n),
+    ]),
+    sectionCard('Messaging', [
+      pill('Email', !!messaging.email),
+      pill('WhatsApp', !!messaging.whatsapp),
+      pill('LinkedIn', !!messaging.linkedin),
+      pill('Instagram', !!messaging.instagram),
+      pill('YouTube', !!messaging.youtube),
+    ]),
+  ];
+  document.getElementById('mcp-groups').innerHTML = groupCards.join('');
+
+  const modelList = [
+    `Primary LLM: <strong>${models.primary_llm || '—'}</strong>`,
+    `CrewAI model: <strong>${models.crewai_model || '—'}</strong>`,
+    pill('OpenAI', !!models.openai),
+    pill('Gemini', !!models.gemini),
+    pill('Hermes backend', !!backends.hermes),
+    pill('OpenClaw backend', !!backends.openclaw),
+  ];
+  document.getElementById('mcp-models').innerHTML = modelList.map(item => typeof item === 'string' && item.startsWith('<') ? item : `<div style="font-size:12px;color:var(--text-muted)">${item}</div>`).join('');
+
+  const entrypoints = (hub.entrypoints || []).map(ep => `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">${ep.name}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${ep.path}</div>
+      </div>
+      <span class="pill ${ep.status === 'ready' ? 'green' : 'gray'}">${ep.status}</span>
+    </div>
+  `).join('');
+  document.getElementById('mcp-entrypoints').innerHTML = entrypoints;
+
+  const readyGroups = [sales, marketing, research, messaging].filter(group => Object.values(group || {}).some(Boolean)).length;
+  document.getElementById('mcp-ready-groups').textContent = `${readyGroups}/4`;
+  const readyChannels = [messaging.email, messaging.whatsapp, messaging.linkedin, messaging.instagram, messaging.youtube].filter(Boolean).length;
+  document.getElementById('mcp-ready-channels').textContent = String(readyChannels);
+  document.getElementById('mcp-model-stack').textContent = `${models.primary_llm || '—'} · ${models.crewai_model || '—'}`;
+  document.getElementById('mcp-backends').textContent = `${backends.hermes ? 'Hermes' : '—'} / ${backends.openclaw ? 'OpenClaw' : '—'}`;
+
+  document.getElementById('mcp-channels').innerHTML = [
+    sectionCard('Email', [pill('Configured', !!messaging.email), pill('CRM-ready', !!sales.outreach_sequences)]),
+    sectionCard('WhatsApp', [pill('Configured', !!messaging.whatsapp), pill('Outbound', !!sales.prospecting)]),
+    sectionCard('LinkedIn', [pill('Configured', !!messaging.linkedin), pill('Prospecting', !!sales.lead_scoring), pill('Publishing', !!marketing.linkedin)]),
+    sectionCard('Instagram', [pill('Configured', !!messaging.instagram), pill('Publishing', !!marketing.instagram)]),
+    sectionCard('YouTube', [pill('Configured', !!messaging.youtube), pill('Publishing', !!marketing.youtube)]),
+  ].join('');
+}
+
+async function refreshMcpHub() {
+  try {
+    const r = await fetch('/api/v1/mcp/hub');
+    const data = await r.json();
+    renderHub(data);
+  } catch (err) {
+    showToast('MCP hub load failed: ' + err.message, false);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => refreshMcpHub());
+</script>
+{% endblock %}
