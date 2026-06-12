@@ -36,6 +36,13 @@ def test_mcp_template_contains_hub_sections() -> None:
     assert "function mcpLog" in text
     assert "function loadMcpSequences" in text
     assert "function importSalesPlanLeads" in text
+    assert "MCP Presets" in text
+    assert 'id="mcp-preset-load"' in text
+    assert 'id="mcp-preset-name"' in text
+    assert "function saveMcpPreset" in text
+    assert "function loadMcpPreset" in text
+    assert "function deleteMcpPreset" in text
+    assert "MCP_PRESETS_KEY" in text
     assert "Import Planned Leads" in text
     assert "/api/v1/mcp/hub" in text
 

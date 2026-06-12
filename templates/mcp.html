@@ -18,6 +18,28 @@
 <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:20px">
   <div>
     <div class="card">
+      <div class="card-title">💾 MCP Presets</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Load Saved Config</label>
+          <select id="mcp-preset-load" style="width:100%" onchange="loadMcpPreset()">
+            <option value="">— New configuration —</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Preset Name</label>
+          <input id="mcp-preset-name" type="text" placeholder="My campaign" style="width:100%">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="btn btn-primary btn-sm" onclick="saveMcpPreset()">Save Current Config</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteMcpPreset()">Delete Selected</button>
+        <button class="btn btn-ghost btn-sm" onclick="listMcpPresets()">Show All</button>
+      </div>
+      <div id="mcp-presets-list" style="font-size:11px;color:var(--text-muted);max-height:120px;overflow-y:auto"></div>
+    </div>
+
+    <div class="card">
       <div class="card-title">⚡ Action Hub</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
         <div>
@@ -155,6 +177,126 @@
 let mcpHub = null;
 let mcpSequences = [];
 let mcpLastSalesPlan = null;
+const MCP_PRESETS_KEY = 'mcp_action_presets';
+
+function getMcpPresets() {
+  try {
+    const stored = localStorage.getItem(MCP_PRESETS_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch (err) {
+    mcpLog(`preset load error: ${err.message}`, 'err');
+    return {};
+  }
+}
+
+function setMcpPresets(presets) {
+  try {
+    localStorage.setItem(MCP_PRESETS_KEY, JSON.stringify(presets));
+  } catch (err) {
+    mcpLog(`preset save error: ${err.message}`, 'err');
+  }
+}
+
+function saveMcpPreset() {
+  const name = (document.getElementById('mcp-preset-name').value || '').trim();
+  if (!name) {
+    showToast('Enter a preset name', false);
+    return;
+  }
+  const config = {
+    brand: document.getElementById('mcp-brand').value,
+    week: document.getElementById('mcp-week').value,
+    topic: document.getElementById('mcp-topic').value,
+    keyword: document.getElementById('mcp-keyword').value,
+    geo: document.getElementById('mcp-geo').value,
+    funnel: document.getElementById('mcp-funnel').value,
+    status_path: document.getElementById('mcp-status-path').value,
+    sequence: document.getElementById('mcp-sequence').value,
+    max_import: document.getElementById('mcp-max-import').value,
+    auto_import: document.getElementById('mcp-auto-import').checked,
+  };
+  const presets = getMcpPresets();
+  presets[name] = { ...config, saved_at: new Date().toISOString() };
+  setMcpPresets(presets);
+  mcpLog(`preset saved: ${name}`, 'ok');
+  showToast(`Saved as "${name}"`, true);
+  updateMcpPresetList();
+}
+
+function loadMcpPreset() {
+  const sel = document.getElementById('mcp-preset-load');
+  const name = sel.value;
+  if (!name) return;
+  const presets = getMcpPresets();
+  const cfg = presets[name];
+  if (!cfg) {
+    showToast('Preset not found', false);
+    return;
+  }
+  document.getElementById('mcp-brand').value = cfg.brand || 'workcrew';
+  document.getElementById('mcp-week').value = cfg.week || '';
+  document.getElementById('mcp-topic').value = cfg.topic || '';
+  document.getElementById('mcp-keyword').value = cfg.keyword || '';
+  document.getElementById('mcp-geo').value = cfg.geo || 'global';
+  document.getElementById('mcp-funnel').value = cfg.funnel || 'consideration';
+  document.getElementById('mcp-status-path').value = cfg.status_path || '';
+  document.getElementById('mcp-sequence').value = cfg.sequence || '';
+  document.getElementById('mcp-max-import').value = cfg.max_import || '50';
+  document.getElementById('mcp-auto-import').checked = cfg.auto_import !== false;
+  mcpLog(`loaded preset: ${name}`, 'ok');
+  showToast(`Loaded "${name}"`, true);
+}
+
+function deleteMcpPreset() {
+  const sel = document.getElementById('mcp-preset-load');
+  const name = sel.value;
+  if (!name) {
+    showToast('Select a preset to delete', false);
+    return;
+  }
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  const presets = getMcpPresets();
+  delete presets[name];
+  setMcpPresets(presets);
+  mcpLog(`preset deleted: ${name}`, 'ok');
+  showToast(`Deleted "${name}"`, true);
+  updateMcpPresetList();
+}
+
+function updateMcpPresetList() {
+  const presets = getMcpPresets();
+  const names = Object.keys(presets).sort();
+  const sel = document.getElementById('mcp-preset-load');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— New configuration —</option>';
+  names.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+  const list = document.getElementById('mcp-presets-list');
+  if (names.length === 0) {
+    list.innerHTML = '<div style="padding:8px">No presets saved yet.</div>';
+  } else {
+    list.innerHTML = '<div style="padding:8px">' + names.map(n => {
+      const cfg = presets[n];
+      const date = cfg.saved_at ? new Date(cfg.saved_at).toLocaleDateString() : '';
+      return `<div>${n} <span style="color:var(--text-dim)">(${cfg.topic} / ${cfg.keyword} — ${date})</span></div>`;
+    }).join('') + '</div>';
+  }
+}
+
+function listMcpPresets() {
+  updateMcpPresetList();
+  const list = document.getElementById('mcp-presets-list');
+  if (list.style.display === 'none') {
+    list.style.display = 'block';
+  } else {
+    list.style.display = list.style.display === 'none' ? 'block' : 'none';
+  }
+}
 
 function renderActionResult(title, payload) {
   const box = document.getElementById('mcp-action-result');
@@ -522,6 +664,7 @@ async function refreshMcpHub() {
 document.addEventListener('DOMContentLoaded', async () => {
   await refreshMcpHub();
   await loadMcpSequences();
+  updateMcpPresetList();
 });
 </script>
 {% endblock %}
