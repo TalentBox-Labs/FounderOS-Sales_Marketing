@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+{% block title %}Analytics — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Analytics Dashboard{% endblock %}
+{% block topbar_meta %}Sales & Marketing performance — daily, weekly, monthly, year-on-year{% endblock %}
+
+{% block topbar_right %}
+  <div style="display:flex;gap:8px;align-items:center">
+    <select id="period-select" onchange="loadAnalytics()" style="padding:5px 10px;font-size:12px">
+      <option value="daily">Daily (30 days)</option>
+      <option value="weekly">Weekly (12 weeks)</option>
+      <option value="monthly" selected>Monthly (12 months)</option>
+      <option value="yoy">Year-on-Year (3 years)</option>
+    </select>
+    <button class="btn btn-ghost btn-sm" onclick="loadAnalytics()">Refresh</button>
+  </div>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+<!-- ░ Sales KPI Row ──────────────────────────────────────────────────────── -->
+<div style="margin-bottom:8px;font-size:12px;color:var(--text-muted);letter-spacing:.08em;text-transform:uppercase;font-weight:600">Sales</div>
+<div id="sales-kpi-row" class="stats-row" style="margin-bottom:24px">
+  <div class="stat-card"><div class="stat-label">Total Contacts</div><div id="kpi-contacts" class="stat-val">—</div><div class="stat-sub">in CRM</div></div>
+  <div class="stat-card"><div class="stat-label">Pipeline Deals</div><div id="kpi-deals" class="stat-val">—</div><div class="stat-sub">across all stages</div></div>
+  <div class="stat-card"><div class="stat-label">Pipeline Value</div><div id="kpi-pipeline-value" class="stat-val" style="color:var(--accent)">—</div><div class="stat-sub">all open deals</div></div>
+  <div class="stat-card"><div class="stat-label">Closed Won</div><div id="kpi-closed-won" class="stat-val" style="color:var(--green)">—</div><div class="stat-sub">closed deals revenue</div></div>
+  <div class="stat-card"><div class="stat-label">Conversion Rate</div><div id="kpi-conversion" class="stat-val" style="color:var(--amber)">—</div><div class="stat-sub">deals → closed won</div></div>
+  <div class="stat-card"><div class="stat-label">Total Outreach</div><div id="kpi-outreach" class="stat-val">—</div><div class="stat-sub">activities in period</div></div>
+</div>
+
+<!-- ░ Sales Charts Row 1 ─────────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📈 New Leads & Outreach over Time</div>
+    <canvas id="chart-outreach" height="180"></canvas>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">💰 Revenue & Closed-Won Deals</div>
+    <canvas id="chart-revenue" height="180"></canvas>
+  </div>
+</div>
+
+<!-- ░ Sales Charts Row 2 ─────────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:20px;margin-bottom:24px">
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">🔻 Sales Funnel (Deals by Stage)</div>
+    <canvas id="chart-funnel" height="210"></canvas>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📊 Contact Status Split</div>
+    <canvas id="chart-contact-status" height="210"></canvas>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📞 Calls, Meetings & LinkedIn</div>
+    <canvas id="chart-calls" height="210"></canvas>
+  </div>
+</div>
+
+<!-- ░ Marketing KPI Row ──────────────────────────────────────────────────── -->
+<div style="margin-bottom:8px;font-size:12px;color:var(--text-muted);letter-spacing:.08em;text-transform:uppercase;font-weight:600">Marketing</div>
+<div id="marketing-kpi-row" class="stats-row" style="margin-bottom:24px">
+  <div class="stat-card"><div class="stat-label">Emails Sent</div><div id="kpi-email-sent" class="stat-val">—</div><div class="stat-sub">in selected period</div></div>
+  <div class="stat-card"><div class="stat-label">Open Rate</div><div id="kpi-open-rate" class="stat-val" style="color:var(--accent)">—</div><div class="stat-sub">email opens</div></div>
+  <div class="stat-card"><div class="stat-label">Click Rate</div><div id="kpi-click-rate" class="stat-val" style="color:var(--blue)">—</div><div class="stat-sub">links clicked</div></div>
+  <div class="stat-card"><div class="stat-label">Reply Rate</div><div id="kpi-reply-rate" class="stat-val" style="color:var(--green)">—</div><div class="stat-sub">replies received</div></div>
+  <div class="stat-card"><div class="stat-label">Content Published</div><div id="kpi-published" class="stat-val" style="color:var(--amber)">—</div><div class="stat-sub">of <span id="kpi-total-articles">—</span> total</div></div>
+  <div class="stat-card"><div class="stat-label">QA Passed</div><div id="kpi-qa" class="stat-val" style="color:var(--green)">—</div><div class="stat-sub">articles in backlog</div></div>
+</div>
+
+<!-- ░ Marketing Charts Row 1 ────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:20px">
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📧 Email Outreach Performance</div>
+    <canvas id="chart-email" height="180"></canvas>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📬 Email Engagement Rates</div>
+    <canvas id="chart-email-rates" height="180"></canvas>
+  </div>
+</div>
+
+<!-- ░ Marketing Charts Row 2 ────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">🔗 LinkedIn Activity over Time</div>
+    <canvas id="chart-linkedin" height="180"></canvas>
+  </div>
+  <div class="card" style="margin-bottom:0">
+    <div class="card-title">📰 SEO & Content — Activity Breakdown</div>
+    <canvas id="chart-activity-types" height="180"></canvas>
+  </div>
+</div>
+
+<!-- ░ Analytics Activity Log ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">🔎 Page Tracking &amp; Channel Overview</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Social / LinkedIn</div>
+      <div id="channel-linkedin" style="font-size:24px;font-weight:700">—</div>
+      <div style="font-size:11px;color:var(--text-muted)">messages &amp; connects in period</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Calls &amp; Meetings</div>
+      <div id="channel-calls" style="font-size:24px;font-weight:700">—</div>
+      <div style="font-size:11px;color:var(--text-muted)">recorded in CRM</div>
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">All CRM Activities</div>
+      <div id="channel-all-activities" style="font-size:24px;font-weight:700">—</div>
+      <div style="font-size:11px;color:var(--text-muted)">total in period</div>
+    </div>
+  </div>
+  <div style="margin-top:16px;font-size:11px;color:var(--text-dim)">
+    Note: Social media impression tracking and SEO page-view analytics require a connected integration (e.g. Google Analytics, Posthog, or LinkedIn Insights). When connected, those metrics will appear here automatically.
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Palette ──────────────────────────────────────────────────────────────────
+const C = {
+  accent:  '#5b6ef5',
+  green:   '#22c55e',
+  amber:   '#f59e0b',
+  red:     '#ef4444',
+  blue:    '#3b82f6',
+  purple:  '#a855f7',
+  teal:    '#14b8a6',
+  rose:    '#f43f5e',
+  muted:   '#6b7280',
+};
+const A20 = (c) => c + '33';
+const A50 = (c) => c + '80';
+
+const CHART_DEFAULTS = {
+  backgroundColor: 'transparent',
+  font: { family: 'Inter, -apple-system, sans-serif', size: 11 },
+  color: '#6b7280',
+};
+Chart.defaults.backgroundColor = CHART_DEFAULTS.backgroundColor;
+Chart.defaults.font.family = CHART_DEFAULTS.font.family;
+Chart.defaults.font.size = CHART_DEFAULTS.font.size;
+Chart.defaults.color = CHART_DEFAULTS.color;
+Chart.defaults.scale.grid.color = '#242840';
+Chart.defaults.scale.grid.drawTicks = false;
+Chart.defaults.plugins.legend.labels.boxWidth = 12;
+Chart.defaults.plugins.legend.labels.padding = 14;
+
+let charts = {};
+
+function destroyCharts() {
+  Object.values(charts).forEach(c => c && c.destroy());
+  charts = {};
+}
+
+function fmt(n, type) {
+  if (type === 'currency') {
+    if (n >= 1000000) return `$${(n / 1000000).toFixed(1)}M`;
+    if (n >= 1000) return `$${(n / 1000).toFixed(1)}K`;
+    return `$${n.toFixed(0)}`;
+  }
+  if (type === 'pct') return `${n}%`;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+function baseLineOpts(labels) {
+  return {
+    type: 'line',
+    data: { labels },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } },
+        y: { beginAtZero: true, ticks: { maxTicksLimit: 6 } },
+      },
+    },
+  };
+}
+
+function line(id, labels, datasets) {
+  const cfg = baseLineOpts(labels);
+  cfg.data.datasets = datasets;
+  return new Chart(document.getElementById(id), cfg);
+}
+
+function bar(id, labels, datasets, stacked = false) {
+  return new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { stacked, ticks: { maxTicksLimit: 8 } },
+        y: { stacked, beginAtZero: true, ticks: { maxTicksLimit: 6 } },
+      },
+    },
+  });
+}
+
+function doughnut(id, labels, data, colors) {
+  return new Chart(document.getElementById(id), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderColor: '#141720', borderWidth: 3, hoverOffset: 6 }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'right' },
+        tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${ctx.parsed}` } },
+      },
+    },
+  });
+}
+
+function renderCharts(d) {
+  destroyCharts();
+  const lbl = d.labels;
+  const s = d.series;
+  const ms = d.marketing_series;
+
+  // 1. New leads + outreach
+  charts.outreach = line('chart-outreach', lbl, [
+    { label: 'New Leads', data: s.new_leads, borderColor: C.accent, backgroundColor: A20(C.accent), fill: true, tension: .35 },
+    { label: 'Outreach Actions', data: s.outreach, borderColor: C.amber, backgroundColor: A20(C.amber), fill: false, tension: .35 },
+  ]);
+
+  // 2. Revenue + closed deals (dual axis)
+  charts.revenue = new Chart(document.getElementById('chart-revenue'), {
+    type: 'bar',
+    data: {
+      labels: lbl,
+      datasets: [
+        { label: 'Revenue ($)', type: 'bar', data: s.revenue, backgroundColor: A50(C.green), borderColor: C.green, borderWidth: 1.5, yAxisID: 'y' },
+        { label: 'Closed Won (count)', type: 'line', data: s.closed_won_count, borderColor: C.accent, backgroundColor: A20(C.accent), yAxisID: 'y2', tension: .35, fill: false },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } },
+        y: { beginAtZero: true, ticks: { callback: (v) => fmt(v, 'currency'), maxTicksLimit: 5 }, title: { display: true, text: 'Revenue' } },
+        y2: { position: 'right', beginAtZero: true, ticks: { maxTicksLimit: 5 }, title: { display: true, text: 'Closed Won' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+
+  // 3. Funnel — horizontal bar
+  const funnelStages = Object.keys(d.funnel);
+  const funnelValues = funnelStages.map(k => d.funnel[k]);
+  const funnelColors = [C.accent, C.blue, C.purple, C.amber, C.green, C.red, C.teal, C.rose, C.muted, C.muted, C.muted, C.muted];
+  charts.funnel = new Chart(document.getElementById('chart-funnel'), {
+    type: 'bar',
+    data: {
+      labels: funnelStages,
+      datasets: [{ label: 'Deals', data: funnelValues, backgroundColor: funnelColors.slice(0, funnelStages.length), borderRadius: 4 }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { maxTicksLimit: 6 } },
+        y: { ticks: { font: { size: 11 } } },
+      },
+    },
+  });
+
+  // 4. Contact status doughnut
+  const cKeys = Object.keys(d.contact_by_status);
+  const cVals = cKeys.map(k => d.contact_by_status[k]);
+  const cColors = [C.accent, C.blue, C.green, C.amber, C.purple, C.teal, C.rose].slice(0, cKeys.length);
+  charts.contactStatus = doughnut('chart-contact-status', cKeys, cVals, cColors);
+
+  // 5. Calls + meetings + LinkedIn
+  charts.calls = bar('chart-calls', lbl, [
+    { label: 'Calls & Meetings', data: s.calls_meetings, backgroundColor: A50(C.blue), borderColor: C.blue, borderWidth: 1.5 },
+    { label: 'LinkedIn', data: s.linkedin, backgroundColor: A50(C.accent), borderColor: C.accent, borderWidth: 1.5 },
+  ], true);
+
+  // 6. Email performance
+  charts.email = bar('chart-email', lbl, [
+    { label: 'Sent', data: ms.email_sent, backgroundColor: A50(C.blue), borderColor: C.blue, borderWidth: 1 },
+    { label: 'Opens', data: ms.email_opens, backgroundColor: A50(C.accent), borderColor: C.accent, borderWidth: 1 },
+    { label: 'Clicks', data: ms.email_clicks, backgroundColor: A50(C.teal), borderColor: C.teal, borderWidth: 1 },
+    { label: 'Replies', data: ms.email_replies, backgroundColor: A50(C.green), borderColor: C.green, borderWidth: 1 },
+  ]);
+
+  // 7. Email rate line chart
+  const mkpis = d.marketing_kpis;
+  charts.emailRates = new Chart(document.getElementById('chart-email-rates'), {
+    type: 'bar',
+    data: {
+      labels: ['Open Rate', 'Click Rate', 'Reply Rate'],
+      datasets: [{
+        label: '%',
+        data: [mkpis.email_open_rate_pct, mkpis.email_click_rate_pct, mkpis.email_reply_rate_pct],
+        backgroundColor: [A50(C.accent), A50(C.teal), A50(C.green)],
+        borderColor: [C.accent, C.teal, C.green],
+        borderWidth: 2, borderRadius: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } },
+      },
+    },
+  });
+
+  // 8. LinkedIn line
+  charts.linkedin = line('chart-linkedin', lbl, [
+    { label: 'LinkedIn Activities', data: ms.linkedin, borderColor: C.accent, backgroundColor: A20(C.accent), fill: true, tension: .35 },
+  ]);
+
+  // 9. Activity breakdown doughnut
+  const atKeys = Object.keys(d.activity_by_type);
+  const atVals = atKeys.map(k => d.activity_by_type[k]);
+  const atColors = [C.accent, C.blue, C.green, C.amber, C.purple, C.teal, C.rose, C.red, C.muted, C.muted].slice(0, atKeys.length);
+  charts.activityTypes = doughnut('chart-activity-types', atKeys, atVals, atColors);
+}
+
+function updateKpis(d) {
+  const sk = d.sales_kpis;
+  const mk = d.marketing_kpis;
+
+  document.getElementById('kpi-contacts').textContent = fmt(sk.total_contacts);
+  document.getElementById('kpi-deals').textContent = fmt(sk.total_deals);
+  document.getElementById('kpi-pipeline-value').textContent = fmt(sk.pipeline_value, 'currency');
+  document.getElementById('kpi-closed-won').textContent = fmt(sk.closed_won_value, 'currency');
+  document.getElementById('kpi-conversion').textContent = fmt(sk.conversion_rate_pct, 'pct');
+  document.getElementById('kpi-outreach').textContent = fmt(sk.total_outreach);
+
+  document.getElementById('kpi-email-sent').textContent = fmt(mk.email_sent);
+  document.getElementById('kpi-open-rate').textContent = fmt(mk.email_open_rate_pct, 'pct');
+  document.getElementById('kpi-click-rate').textContent = fmt(mk.email_click_rate_pct, 'pct');
+  document.getElementById('kpi-reply-rate').textContent = fmt(mk.email_reply_rate_pct, 'pct');
+  document.getElementById('kpi-published').textContent = fmt(mk.published_articles);
+  document.getElementById('kpi-total-articles').textContent = mk.total_articles;
+  document.getElementById('kpi-qa').textContent = fmt(mk.qa_passed_articles);
+
+  // Channel overview counts
+  const s = d.series;
+  const liTot = (s.linkedin || []).reduce((a, v) => a + v, 0);
+  const callsTot = (s.calls_meetings || []).reduce((a, v) => a + v, 0);
+  const allAct = Object.values(d.activity_by_type).reduce((a, v) => a + v, 0);
+  document.getElementById('channel-linkedin').textContent = fmt(liTot);
+  document.getElementById('channel-calls').textContent = fmt(callsTot);
+  document.getElementById('channel-all-activities').textContent = fmt(allAct);
+}
+
+async function loadAnalytics() {
+  const period = document.getElementById('period-select').value;
+  try {
+    const r = await fetch(`/api/v1/analytics?period=${period}`);
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.detail || 'api error');
+    updateKpis(d);
+    renderCharts(d);
+  } catch (err) {
+    console.error('Analytics load error:', err);
+    showToast('Analytics load failed: ' + err.message, false);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => loadAnalytics());
+</script>
+{% endblock %}

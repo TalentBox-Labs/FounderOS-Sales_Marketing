@@ -116,3 +116,12 @@ def test_orchestration_run_with_mocked_backend_and_audit_persistence(
     assert logs["ok"] is True
     assert len(logs["runs"]) >= 1
     assert logs["runs"][0]["run_id"] == audit["run_id"]
+
+    from runner_api import app as cms_app
+
+    with TestClient(cms_app) as cms_client:
+        detail = cms_client.get(f"/orchestration/run/{audit['run_id']}")
+    assert detail.status_code == 200
+    assert audit["run_id"] in detail.text
+    assert "Per-Channel Events" in detail.text
+    assert "seo_backend" in detail.text

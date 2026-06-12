@@ -1,0 +1,531 @@
+{% extends "base.html" %}
+{% block title %}Sales Prospecting — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Sales Prospecting{% endblock %}
+{% block topbar_meta %}Plan, filter, import and execute stage-wise lead sourcing workflows{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:420px 1fr;gap:24px;align-items:start">
+  <div>
+    <div class="card">
+      <div class="card-title">🧩 Planning Inputs</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Brand</label>
+          <select id="sales-brand" style="width:100%">
+            <option value="workcrew">WorkCrew</option>
+            <option value="hirestack">HireStack</option>
+            <option value="founder">Founder</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Team</label>
+          <input id="sales-team" type="text" value="sales" style="width:100%">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Target Count</label>
+          <input id="sales-target" type="number" min="1" max="5000" value="50" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Min Score</label>
+          <input id="sales-min-score" type="number" min="0" max="100" value="25" style="width:100%">
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Statuses</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;font-size:12px">
+        <label><input id="sales-st-lead" type="checkbox" checked> Lead</label>
+        <label><input id="sales-st-prospect" type="checkbox" checked> Prospect</label>
+        <label><input id="sales-st-qualified" type="checkbox"> Qualified</label>
+        <label><input id="sales-st-customer" type="checkbox"> Customer</label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
+        <label><input id="sales-allow-scraper" type="checkbox" checked> Allow scraper stage</label>
+        <label><input id="sales-allow-mcp" type="checkbox" checked> Allow MCP stage</label>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button id="sales-plan-btn" class="btn btn-primary" style="flex:1;justify-content:center" onclick="buildSalesPlan()">Build Plan</button>
+        <button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="refreshProviders()">Refresh Providers</button>
+      </div>
+
+      <div id="sales-provider-badges" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <div id="sales-plan-summary" style="margin-top:10px;font-size:12px;color:var(--text-muted)">No plan built yet.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">💾 Saved Presets</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="sales-preset-name" type="text" placeholder="Preset name" style="width:100%">
+        <button class="btn btn-ghost" onclick="saveSalesPreset()">Save</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-ghost btn-sm" onclick="loadSalesPresets()">Reload Presets</button>
+      </div>
+      <div id="sales-preset-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📬 Outreach Import & Execute</div>
+      <div style="margin-bottom:8px">
+        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Outreach Sequence</label>
+        <select id="sales-sequence" style="width:100%"></select>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="importSelectedLeads()">Import Selected Leads</button>
+        <button class="btn btn-ghost btn-sm" onclick="executeStage('free_linkedin_existing_data')">Execute Free Stage</button>
+        <button class="btn btn-ghost btn-sm" onclick="executeStage('scraper_platforms')">Execute Scraper Stage</button>
+        <button class="btn btn-ghost btn-sm" onclick="executeStage('mcp_providers')">Execute MCP Stage</button>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">📊 Stage Allocation</div>
+      <div id="sales-stage-wrap" style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:12px;color:var(--text-muted)">Build a plan to view stage allocation.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🔎 Lead Filters & Sort</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <input id="lead-filter-designation" type="text" placeholder="Designation contains..." style="width:100%">
+        <select id="lead-filter-status" style="width:100%">
+          <option value="">All Statuses</option>
+          <option value="lead">Lead</option>
+          <option value="prospect">Prospect</option>
+          <option value="qualified">Qualified</option>
+          <option value="customer">Customer</option>
+        </select>
+        <select id="lead-filter-source" style="width:100%">
+          <option value="">All Sources</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="manual">Manual</option>
+          <option value="import">Import</option>
+          <option value="outreach">Outreach</option>
+        </select>
+        <select id="lead-sort" style="width:100%">
+          <option value="score_desc">Score: high → low</option>
+          <option value="score_asc">Score: low → high</option>
+          <option value="name_asc">Name: A → Z</option>
+          <option value="name_desc">Name: Z → A</option>
+          <option value="designation_asc">Designation: A → Z</option>
+        </select>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="applyLeadFiltersAndSort()">Apply</button>
+        <button class="btn btn-ghost btn-sm" onclick="clearLeadFilters()">Clear</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleSelectAllLeads(true)">Select All</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleSelectAllLeads(false)">Clear Selection</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧲 Selected Leads (Plan Results)</div>
+      <div id="sales-leads-meta" style="font-size:12px;color:var(--text-muted);margin-bottom:8px">No leads loaded.</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="sales-select-all" onclick="selectAllFromHeader()"></th>
+              <th>Name</th><th>Designation</th><th>Status</th><th>Source</th><th>Score</th><th>LinkedIn</th>
+            </tr>
+          </thead>
+          <tbody id="sales-leads-body">
+            <tr><td colspan="7" style="font-size:12px;color:var(--text-muted)">Build plan to load leads.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button id="sales-show-more" class="btn btn-ghost btn-sm" style="display:none" onclick="showMoreSalesLeads()">Show More</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📟 Sales Activity Log</div>
+      <div id="sales-log" class="log-box" style="min-height:260px"><span style="color:var(--text-dim)">Sales operations log will appear here.</span></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let salesPlan = null;
+let salesLeadsRaw = [];
+let salesLeadsView = [];
+let salesLeadCursor = 0;
+const salesLeadBatch = 50;
+const selectedLeadIds = new Set();
+
+function salesLog(msg, cls='') {
+  const box = document.getElementById('sales-log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function salesStatuses() {
+  const out = [];
+  if (document.getElementById('sales-st-lead').checked) out.push('lead');
+  if (document.getElementById('sales-st-prospect').checked) out.push('prospect');
+  if (document.getElementById('sales-st-qualified').checked) out.push('qualified');
+  if (document.getElementById('sales-st-customer').checked) out.push('customer');
+  return out;
+}
+
+function salesPlanPayload() {
+  return {
+    target_count: Number(document.getElementById('sales-target').value || '50'),
+    min_score: Number(document.getElementById('sales-min-score').value || '25'),
+    statuses: salesStatuses(),
+    allow_scraper: document.getElementById('sales-allow-scraper').checked,
+    allow_mcp: document.getElementById('sales-allow-mcp').checked,
+  };
+}
+
+function setPlanLoading(isLoading) {
+  const btn = document.getElementById('sales-plan-btn');
+  btn.disabled = isLoading;
+  btn.textContent = isLoading ? 'Building...' : 'Build Plan';
+}
+
+async function refreshProviders() {
+  try {
+    const res = await fetch('/api/v1/prospecting/providers');
+    const data = await res.json();
+    const providers = data.providers || {};
+    const badges = document.getElementById('sales-provider-badges');
+    badges.innerHTML = [
+      `<span class="pill ${providers.scraper ? 'green' : 'gray'}">scraper: ${providers.scraper ? 'ready' : 'off'}</span>`,
+      `<span class="pill ${providers.apollo_mcp ? 'green' : 'gray'}">apollo: ${providers.apollo_mcp ? 'ready' : 'off'}</span>`,
+      `<span class="pill ${providers.linkedin_sales_navigator_mcp ? 'green' : 'gray'}">sales-nav: ${providers.linkedin_sales_navigator_mcp ? 'ready' : 'off'}</span>`,
+    ].join('');
+  } catch (err) {
+    salesLog(`providers refresh failed: ${err}`, 'err');
+  }
+}
+
+function renderStageAllocation(plan) {
+  const wrap = document.getElementById('sales-stage-wrap');
+  const stages = plan.stages || [];
+  if (!stages.length) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">No stages in plan response.</div>';
+    return;
+  }
+  wrap.innerHTML = '';
+  stages.forEach(s => {
+    const card = document.createElement('div');
+    const pct = Number(s.cap || 0) > 0 ? Math.round((Number(s.used || 0) / Number(s.cap)) * 100) : 0;
+    card.style.padding = '10px';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = 'var(--radius-sm)';
+    card.style.background = 'var(--surface2)';
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="pill gray">${s.stage || 'stage'}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto">${s.used || 0}/${s.cap || 0}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${s.note || ''}</div>
+      <div style="height:8px;background:var(--surface);border-radius:999px;overflow:hidden">
+        <div style="height:8px;width:${Math.min(100, Math.max(0, pct))}%;background:var(--accent)"></div>
+      </div>
+    `;
+    wrap.appendChild(card);
+  });
+}
+
+function leadMatchesFilters(lead) {
+  const d = (document.getElementById('lead-filter-designation').value || '').trim().toLowerCase();
+  const st = (document.getElementById('lead-filter-status').value || '').trim().toLowerCase();
+  const src = (document.getElementById('lead-filter-source').value || '').trim().toLowerCase();
+
+  if (d && !String(lead.designation || '').toLowerCase().includes(d)) return false;
+  if (st && String(lead.status || '').toLowerCase() !== st) return false;
+  if (src && String(lead.source || '').toLowerCase() !== src) return false;
+  return true;
+}
+
+function sortLeads(items) {
+  const mode = document.getElementById('lead-sort').value;
+  const arr = [...items];
+  arr.sort((a, b) => {
+    if (mode === 'score_asc') return Number(a.lead_score || 0) - Number(b.lead_score || 0);
+    if (mode === 'score_desc') return Number(b.lead_score || 0) - Number(a.lead_score || 0);
+    if (mode === 'name_desc') return String(b.name || '').localeCompare(String(a.name || ''));
+    if (mode === 'designation_asc') return String(a.designation || '').localeCompare(String(b.designation || ''));
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+  return arr;
+}
+
+function resetLeadTable(message) {
+  const tbody = document.getElementById('sales-leads-body');
+  tbody.innerHTML = `<tr><td colspan="7" style="font-size:12px;color:var(--text-muted)">${message}</td></tr>`;
+  document.getElementById('sales-show-more').style.display = 'none';
+  salesLeadCursor = 0;
+}
+
+function renderLeadRowsAppend() {
+  const tbody = document.getElementById('sales-leads-body');
+  const batch = salesLeadsView.slice(salesLeadCursor, salesLeadCursor + salesLeadBatch);
+  if (salesLeadCursor === 0) tbody.innerHTML = '';
+  batch.forEach(lead => {
+    const id = String(lead.id || '');
+    const checked = selectedLeadIds.has(id) ? 'checked' : '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" data-lead-id="${id}" ${checked} onchange="toggleLeadSelection('${id}', this.checked)"></td>
+      <td style="font-size:12px">${lead.name || ''}</td>
+      <td style="font-size:12px">${lead.designation || ''}</td>
+      <td><span class="pill gray" style="font-size:10px">${lead.status || ''}</span></td>
+      <td><span class="pill gray" style="font-size:10px">${lead.source || ''}</span></td>
+      <td style="font-size:12px">${Number(lead.lead_score || 0)}</td>
+      <td style="font-size:12px">${lead.linkedin_url ? `<a href="${lead.linkedin_url}" target="_blank" rel="noopener">Profile</a>` : '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  salesLeadCursor += batch.length;
+  document.getElementById('sales-show-more').style.display = salesLeadCursor < salesLeadsView.length ? 'inline-flex' : 'none';
+}
+
+function showMoreSalesLeads() {
+  renderLeadRowsAppend();
+}
+
+function toggleLeadSelection(id, checked) {
+  if (!id) return;
+  if (checked) selectedLeadIds.add(id);
+  else selectedLeadIds.delete(id);
+  document.getElementById('sales-leads-meta').textContent = `${salesLeadsView.length} leads shown · ${selectedLeadIds.size} selected`;
+}
+
+function toggleSelectAllLeads(checked) {
+  const boxes = document.querySelectorAll('#sales-leads-body input[type="checkbox"][data-lead-id]');
+  boxes.forEach(b => {
+    b.checked = checked;
+    const id = b.getAttribute('data-lead-id') || '';
+    if (!id) return;
+    if (checked) selectedLeadIds.add(id);
+    else selectedLeadIds.delete(id);
+  });
+  document.getElementById('sales-leads-meta').textContent = `${salesLeadsView.length} leads shown · ${selectedLeadIds.size} selected`;
+}
+
+function selectAllFromHeader() {
+  const checked = document.getElementById('sales-select-all').checked;
+  toggleSelectAllLeads(checked);
+}
+
+function clearLeadFilters() {
+  document.getElementById('lead-filter-designation').value = '';
+  document.getElementById('lead-filter-status').value = '';
+  document.getElementById('lead-filter-source').value = '';
+  document.getElementById('lead-sort').value = 'score_desc';
+  applyLeadFiltersAndSort();
+}
+
+function applyLeadFiltersAndSort() {
+  salesLeadsView = sortLeads(salesLeadsRaw.filter(leadMatchesFilters));
+  salesLeadCursor = 0;
+  if (!salesLeadsView.length) {
+    resetLeadTable('No leads match current filters.');
+    document.getElementById('sales-leads-meta').textContent = `0 leads shown · ${selectedLeadIds.size} selected`;
+    return;
+  }
+  renderLeadRowsAppend();
+  document.getElementById('sales-leads-meta').textContent = `${salesLeadsView.length} leads shown · ${selectedLeadIds.size} selected`;
+}
+
+async function buildSalesPlan() {
+  const payload = salesPlanPayload();
+  if (!payload.statuses.length) {
+    showToast('Select at least one status', false);
+    return;
+  }
+  setPlanLoading(true);
+  salesLog(`building plan target=${payload.target_count} min_score=${payload.min_score}`, 'info');
+  try {
+    const res = await apiPost('/api/v1/prospecting/plan', payload);
+    if (!res.ok || !res.plan) {
+      showToast('Plan build failed', false);
+      salesLog(`plan failed: ${res.detail || 'unknown error'}`, 'err');
+      return;
+    }
+    salesPlan = res.plan;
+    renderStageAllocation(res.plan);
+    salesLeadsRaw = Array.isArray(res.plan.selected_existing_linkedin_contacts) ? res.plan.selected_existing_linkedin_contacts : [];
+    applyLeadFiltersAndSort();
+    const thresholds = res.plan.thresholds || {};
+    document.getElementById('sales-plan-summary').innerHTML = `target <strong>${res.plan.target_count || 0}</strong> · unfilled <strong>${res.plan.unfilled_after_limits || 0}</strong> · scale step <strong>${thresholds.scale_step || 0}</strong>`;
+    showToast('Sales plan ready', true);
+    salesLog(`plan ready: unfilled=${res.plan.unfilled_after_limits || 0}`, 'ok');
+  } catch (err) {
+    showToast('Plan request failed', false);
+    salesLog(`plan request failed: ${err}`, 'err');
+  } finally {
+    setPlanLoading(false);
+  }
+}
+
+async function loadOutreachSequences() {
+  try {
+    const r = await fetch('/api/v1/outreach/sequences');
+    const data = await r.json();
+    const sel = document.getElementById('sales-sequence');
+    sel.innerHTML = '';
+    const rows = Array.isArray(data.sequences) ? data.sequences : [];
+    if (!rows.length) {
+      sel.innerHTML = '<option value="">No active sequences found</option>';
+      return;
+    }
+    rows.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.name} (${s.channel}, ${s.steps_count} steps)`;
+      sel.appendChild(opt);
+    });
+  } catch (err) {
+    salesLog(`sequence load failed: ${err}`, 'err');
+  }
+}
+
+async function saveSalesPreset() {
+  const name = (document.getElementById('sales-preset-name').value || '').trim();
+  if (!name) {
+    showToast('Preset name is required', false);
+    return;
+  }
+  const body = {
+    name,
+    brand: document.getElementById('sales-brand').value,
+    team: (document.getElementById('sales-team').value || 'sales').trim(),
+    ...salesPlanPayload(),
+    sequence_id: document.getElementById('sales-sequence').value || null,
+  };
+  const res = await apiPost('/api/v1/prospecting/presets/save', body);
+  if (!res.ok) {
+    showToast('Preset save failed', false);
+    return;
+  }
+  showToast('Preset saved', true);
+  loadSalesPresets();
+}
+
+function applyPreset(preset) {
+  document.getElementById('sales-brand').value = preset.brand || 'workcrew';
+  document.getElementById('sales-team').value = preset.team || 'sales';
+  document.getElementById('sales-target').value = preset.target_count || 50;
+  document.getElementById('sales-min-score').value = preset.min_score || 25;
+
+  const statuses = new Set(preset.statuses || []);
+  document.getElementById('sales-st-lead').checked = statuses.has('lead');
+  document.getElementById('sales-st-prospect').checked = statuses.has('prospect');
+  document.getElementById('sales-st-qualified').checked = statuses.has('qualified');
+  document.getElementById('sales-st-customer').checked = statuses.has('customer');
+  document.getElementById('sales-allow-scraper').checked = !!preset.allow_scraper;
+  document.getElementById('sales-allow-mcp').checked = !!preset.allow_mcp;
+  if (preset.sequence_id) document.getElementById('sales-sequence').value = preset.sequence_id;
+  showToast(`Preset loaded: ${preset.name}`, true);
+}
+
+async function loadSalesPresets() {
+  const brand = document.getElementById('sales-brand').value;
+  const team = (document.getElementById('sales-team').value || '').trim();
+  const q = `?brand=${encodeURIComponent(brand)}&team=${encodeURIComponent(team)}`;
+  try {
+    const r = await fetch(`/api/v1/prospecting/presets${q}`);
+    const data = await r.json();
+    const list = document.getElementById('sales-preset-list');
+    const rows = Array.isArray(data.presets) ? data.presets : [];
+    if (!rows.length) {
+      list.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">No presets for current brand/team.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    rows.forEach(p => {
+      const row = document.createElement('div');
+      row.style.padding = '10px';
+      row.style.border = '1px solid var(--border)';
+      row.style.borderRadius = 'var(--radius-sm)';
+      row.style.background = 'var(--surface2)';
+      row.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="font-size:12px;font-weight:500">${p.name}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-left:auto">${(p.updated_at || '').slice(0, 19)}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">target ${p.target_count} · min ${p.min_score} · statuses ${(p.statuses || []).join(', ')}</div>
+      `;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-ghost btn-sm';
+      btn.style.marginTop = '8px';
+      btn.textContent = 'Apply';
+      btn.onclick = () => applyPreset(p);
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  } catch (err) {
+    salesLog(`preset load failed: ${err}`, 'err');
+  }
+}
+
+async function importSelectedLeads() {
+  const sequence_id = document.getElementById('sales-sequence').value;
+  if (!sequence_id) {
+    showToast('Select an outreach sequence', false);
+    return;
+  }
+  const ids = Array.from(selectedLeadIds);
+  if (!ids.length) {
+    showToast('Select at least one lead', false);
+    return;
+  }
+  const res = await apiPost('/api/v1/prospecting/import', { sequence_id, contact_ids: ids });
+  if (!res.ok) {
+    showToast('Import failed', false);
+    salesLog(`import failed: ${res.detail || res.error || 'unknown error'}`, 'err');
+    return;
+  }
+  showToast(`Imported ${res.contacts_imported} contacts into sequence`, true);
+  salesLog(`import success: contacts=${res.contacts_imported} activities=${res.scheduled ? res.scheduled.length : 0}`, 'ok');
+}
+
+async function executeStage(stageName) {
+  const sequence_id = document.getElementById('sales-sequence').value || null;
+  const payload = {
+    ...salesPlanPayload(),
+    execute_stages: [stageName],
+    sequence_id,
+    auto_import: stageName === 'free_linkedin_existing_data',
+    max_import: 200,
+  };
+  const res = await apiPost('/api/v1/prospecting/execute', payload);
+  if (!res.ok) {
+    showToast('Execute failed', false);
+    salesLog(`execute failed (${stageName}): ${res.detail || 'unknown error'}`, 'err');
+    return;
+  }
+  const stage = (res.executed_stages || {})[stageName] || {};
+  const imported = res.import_result || null;
+  showToast(`Executed ${stageName}`, true);
+  salesLog(`executed ${stageName}: planned_used=${stage.planned_used || 0}`, 'ok');
+  if (imported && imported.ok) {
+    salesLog(`auto-imported ${imported.contacts_imported} contacts`, 'ok');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await refreshProviders();
+  await loadOutreachSequences();
+  await loadSalesPresets();
+});
+</script>
+{% endblock %}

@@ -103,6 +103,44 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-title">🎯 Sales CRM Prospecting Plan</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+        Free-first lead sourcing: existing LinkedIn data, then scraper platforms, then MCP providers.
+      </p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Target Count</label>
+          <input type="number" id="pros-target-count" min="1" max="5000" value="50" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:6px">Min Lead Score</label>
+          <input type="number" id="pros-min-score" min="0" max="100" value="25" style="width:100%">
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Statuses</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;font-size:12px">
+        <label><input type="checkbox" id="pros-status-lead" checked> Lead</label>
+        <label><input type="checkbox" id="pros-status-prospect" checked> Prospect</label>
+        <label><input type="checkbox" id="pros-status-qualified"> Qualified</label>
+        <label><input type="checkbox" id="pros-status-customer"> Customer</label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12px">
+        <label><input type="checkbox" id="pros-allow-scraper" checked> Allow Scraper Stage</label>
+        <label><input type="checkbox" id="pros-allow-mcp" checked> Allow MCP Stage</label>
+      </div>
+
+      <button id="pros-plan-btn" class="btn btn-primary" style="width:100%;justify-content:center" onclick="runProspectingPlan()">
+        Build Prospecting Plan
+      </button>
+
+      <div id="pros-summary" style="margin-top:12px;font-size:12px;color:var(--text-muted)"></div>
+      <div id="pros-stage-wrap" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
     <!-- Publish Panel -->
     <div class="card">
       <div class="card-title">🚀 Publish to Channels</div>
@@ -189,7 +227,7 @@
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Timestamp</th><th>Backend</th><th>Brand</th><th>Keyword</th><th>GEO</th><th>Events</th>
+            <th>Timestamp</th><th>Backend</th><th>Brand</th><th>Keyword</th><th>GEO</th><th>Events</th><th>Action</th>
           </tr></thead>
           <tbody>
             {% for run in orchestration_runs %}
@@ -200,6 +238,7 @@
               <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ run.keyword }}</td>
               <td style="font-size:12px">{{ run.geo_target }}</td>
               <td style="font-size:12px">{{ run.event_count }}</td>
+              <td><a href="/orchestration/run/{{ run.run_id }}" class="btn btn-ghost btn-sm">View</a></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -216,6 +255,28 @@
       </div>
       <div id="mkt-log" class="log-box" style="min-height:380px">
         <span style="color:var(--text-dim)">Generation output will stream here…</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🧲 Selected Leads (Free Stage)</div>
+      <div id="pros-leads-meta" style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+        Build a prospecting plan to load leads.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Designation</th><th>Status</th><th>Source</th><th>Score</th><th>LinkedIn</th>
+            </tr>
+          </thead>
+          <tbody id="pros-leads-body">
+            <tr><td colspan="6" style="font-size:12px;color:var(--text-muted)">No plan loaded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button id="pros-show-more" class="btn btn-ghost btn-sm" style="display:none" onclick="showMoreProspectingLeads()">Show More</button>
       </div>
     </div>
 
@@ -273,6 +334,10 @@ function log(msg, cls='') {
   box.scrollTop = box.scrollHeight;
 }
 function clearLog() { document.getElementById('mkt-log').innerHTML = ''; }
+
+let prospectingLeadRows = [];
+let prospectingLeadCursor = 0;
+const prospectingLeadBatch = 50;
 
 async function generateContent() {
   const brand   = document.querySelector('input[name=brand]:checked').value;
@@ -369,6 +434,167 @@ async function orchestrationRun() {
   }
   showToast('Orchestration run completed', true);
   setTimeout(() => location.reload(), 1200);
+}
+
+function prospectingStatuses() {
+  const statuses = [];
+  if (document.getElementById('pros-status-lead').checked) statuses.push('lead');
+  if (document.getElementById('pros-status-prospect').checked) statuses.push('prospect');
+  if (document.getElementById('pros-status-qualified').checked) statuses.push('qualified');
+  if (document.getElementById('pros-status-customer').checked) statuses.push('customer');
+  return statuses;
+}
+
+function prospectingPayload() {
+  const target = Number(document.getElementById('pros-target-count').value || '50');
+  const minScore = Number(document.getElementById('pros-min-score').value || '25');
+  return {
+    target_count: target,
+    min_score: minScore,
+    statuses: prospectingStatuses(),
+    allow_scraper: document.getElementById('pros-allow-scraper').checked,
+    allow_mcp: document.getElementById('pros-allow-mcp').checked,
+  };
+}
+
+function setProspectingLoading(isLoading) {
+  const btn = document.getElementById('pros-plan-btn');
+  btn.disabled = isLoading;
+  btn.textContent = isLoading ? 'Building...' : 'Build Prospecting Plan';
+}
+
+function renderProspectingStages(plan) {
+  const wrap = document.getElementById('pros-stage-wrap');
+  wrap.innerHTML = '';
+  const providers = plan.providers || {};
+  const thresholds = plan.thresholds || {};
+
+  const badges = document.createElement('div');
+  badges.style.display = 'flex';
+  badges.style.flexWrap = 'wrap';
+  badges.style.gap = '8px';
+  badges.innerHTML = [
+    `<span class="pill ${providers.scraper ? 'green' : 'gray'}">scraper: ${providers.scraper ? 'ready' : 'off'}</span>`,
+    `<span class="pill ${providers.apollo_mcp ? 'green' : 'gray'}">apollo_mcp: ${providers.apollo_mcp ? 'ready' : 'off'}</span>`,
+    `<span class="pill ${providers.linkedin_sales_navigator_mcp ? 'green' : 'gray'}">sales_nav_mcp: ${providers.linkedin_sales_navigator_mcp ? 'ready' : 'off'}</span>`,
+  ].join('');
+  wrap.appendChild(badges);
+
+  (plan.stages || []).forEach(stage => {
+    const card = document.createElement('div');
+    card.style.padding = '10px';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = 'var(--radius-sm)';
+    card.style.background = 'var(--surface2)';
+    const pct = stage.cap > 0 ? Math.round((stage.used / stage.cap) * 100) : 0;
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span class="pill gray">${stage.stage}</span>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:auto">${stage.used}/${stage.cap}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${stage.note || ''}</div>
+      <div style="height:8px;background:var(--surface);border-radius:999px;overflow:hidden">
+        <div style="height:8px;width:${Math.min(100, Math.max(0, pct))}%;background:var(--accent)"></div>
+      </div>
+    `;
+    wrap.appendChild(card);
+  });
+
+  const summary = document.getElementById('pros-summary');
+  const unfilled = Number(plan.unfilled_after_limits || 0);
+  const msg = (plan.scale_recommendation && plan.scale_recommendation.message) || '';
+  summary.innerHTML = `
+    target: <strong>${plan.target_count || 0}</strong> ·
+    unfilled: <strong>${unfilled}</strong> ·
+    scale step: <strong>${thresholds.scale_step || 0}</strong><br>
+    ${msg}
+  `;
+}
+
+function resetProspectingLeads() {
+  prospectingLeadRows = [];
+  prospectingLeadCursor = 0;
+  document.getElementById('pros-leads-body').innerHTML = '<tr><td colspan="6" style="font-size:12px;color:var(--text-muted)">No leads selected.</td></tr>';
+  document.getElementById('pros-show-more').style.display = 'none';
+}
+
+function appendProspectingLeadRows() {
+  const tbody = document.getElementById('pros-leads-body');
+  if (prospectingLeadCursor === 0) tbody.innerHTML = '';
+  const next = prospectingLeadRows.slice(prospectingLeadCursor, prospectingLeadCursor + prospectingLeadBatch);
+  next.forEach(lead => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:12px">${lead.name || ''}</td>
+      <td style="font-size:12px">${lead.designation || ''}</td>
+      <td><span class="pill gray" style="font-size:10px">${lead.status || ''}</span></td>
+      <td><span class="pill gray" style="font-size:10px">${lead.source || ''}</span></td>
+      <td style="font-size:12px">${Number(lead.lead_score || 0)}</td>
+      <td style="font-size:12px">${lead.linkedin_url ? `<a href="${lead.linkedin_url}" target="_blank" rel="noopener">Profile</a>` : '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  prospectingLeadCursor += next.length;
+  document.getElementById('pros-show-more').style.display = prospectingLeadCursor < prospectingLeadRows.length ? 'inline-flex' : 'none';
+}
+
+function showMoreProspectingLeads() {
+  appendProspectingLeadRows();
+}
+
+function renderProspectingLeads(plan) {
+  const leads = Array.isArray(plan.selected_existing_linkedin_contacts) ? plan.selected_existing_linkedin_contacts : [];
+  prospectingLeadRows = leads;
+  prospectingLeadCursor = 0;
+  const meta = document.getElementById('pros-leads-meta');
+  meta.textContent = `Loaded ${leads.length} leads from free LinkedIn stage.`;
+  if (!leads.length) {
+    resetProspectingLeads();
+    return;
+  }
+  appendProspectingLeadRows();
+}
+
+async function runProspectingPlan() {
+  const payload = prospectingPayload();
+  if (!payload.statuses.length) {
+    showToast('Select at least one status', false);
+    return;
+  }
+  if (payload.target_count < 1 || payload.target_count > 5000) {
+    showToast('Target count must be between 1 and 5000', false);
+    return;
+  }
+  if (payload.min_score < 0 || payload.min_score > 100) {
+    showToast('Min score must be between 0 and 100', false);
+    return;
+  }
+
+  setProspectingLoading(true);
+  log(`▶ Building prospecting plan (target=${payload.target_count}, min_score=${payload.min_score})`, 'info');
+  try {
+    const res = await apiPost('/api/v1/prospecting/plan', payload);
+    if (res.ok === false || !res.plan) {
+      log(`✗ Prospecting plan failed: ${res.detail || 'unknown error'}`, 'err');
+      showToast('Prospecting plan failed', false);
+      return;
+    }
+
+    renderProspectingStages(res.plan);
+    renderProspectingLeads(res.plan);
+
+    if (Number(res.plan.unfilled_after_limits || 0) > 0) {
+      showToast('Plan built with unfilled capacity; enable/configure later stages to scale.', false);
+    } else {
+      showToast('Prospecting plan ready', true);
+    }
+    log(`✓ Prospecting plan ready. unfilled=${res.plan.unfilled_after_limits || 0}`, 'ok');
+  } catch (err) {
+    log(`✗ Prospecting plan request error: ${err}`, 'err');
+    showToast('Prospecting request failed', false);
+  } finally {
+    setProspectingLoading(false);
+  }
 }
 
 async function dryRun(channel) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,6 +27,14 @@ def test_health_returns_ok(client: TestClient) -> None:
     assert data["status"] == "ok"
     assert "project_root" in data
     assert "python" in data
+
+
+def test_sales_page_contains_prospecting_panel(client: TestClient) -> None:
+    template_path = Path(__file__).resolve().parent.parent / "templates" / "sales.html"
+    text = template_path.read_text(encoding="utf-8")
+    assert "Sales Prospecting" in text
+    assert "Build Plan" in text
+    assert "Saved Presets" in text
 
 
 def test_run_pipeline_no_week_only_main_py(client: TestClient) -> None:
