@@ -40,6 +40,8 @@ import html
 import os
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +49,25 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from revenue_os.database import SessionLocal
+from revenue_os.models.activity import (
+    Activity,
+    ActivityType,
+    OutreachSequence,
+    SequenceStep,
+)
+from revenue_os.models.contact import ContactStatus
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
     load_orchestration_run,
     load_recent_orchestration_runs,
     run_orchestration,
+)
+from revenue_os.services.lead_prospecting_service import (
+    build_prospecting_plan,
+    provider_status,
+    prospecting_limits,
 )
 from revenue_os.services.orchestration_runtime import backend_status
 
@@ -512,6 +527,16 @@ def page_marketing(request: Request) -> HTMLResponse:
     })
 
 
+@app.get("/sales", response_class=HTMLResponse)
+def page_sales(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("sales.html", {
+        "request": request,
+        "active_page": "sales",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
 @app.get("/orchestration/run/{run_id}", response_class=HTMLResponse)
 def page_orchestration_run(
     run_id: str,
@@ -554,6 +579,320 @@ class OrchestrationRequest(BaseModel):
     run_prospecting: bool = True
     run_voice_qualification: bool = True
     run_meeting_booking: bool = True
+
+
+class ProspectingRequest(BaseModel):
+    target_count: int = Field(default=50, ge=1, le=5000)
+    min_score: int = Field(default=25, ge=0, le=100)
+    statuses: list[str] = Field(default_factory=lambda: ["lead", "prospect"])
+    allow_scraper: bool = True
+    allow_mcp: bool = True
+
+
+class ProspectingPresetSaveRequest(BaseModel):
+    name: str
+    brand: str = "workcrew"
+    team: str = "sales"
+    target_count: int = Field(default=50, ge=1, le=5000)
+    min_score: int = Field(default=25, ge=0, le=100)
+    statuses: list[str] = Field(default_factory=lambda: ["lead", "prospect"])
+    allow_scraper: bool = True
+    allow_mcp: bool = True
+    sequence_id: str | None = None
+
+
+class ProspectingImportRequest(BaseModel):
+    sequence_id: str
+    contact_ids: list[str]
+
+
+class ProspectingExecuteRequest(ProspectingRequest):
+    execute_stages: list[str] = Field(default_factory=lambda: [
+        "free_linkedin_existing_data", "scraper_platforms", "mcp_providers"
+    ])
+    sequence_id: str | None = None
+    auto_import: bool = True
+    max_import: int = Field(default=50, ge=1, le=1000)
+
+
+def _presets_file() -> Path:
+    p = PROJECT_ROOT / "output" / "sales" / "prospecting_presets.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _read_presets() -> list[dict[str, Any]]:
+    p = _presets_file()
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_presets(items: list[dict[str, Any]]) -> None:
+    _presets_file().write_text(json.dumps(items, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _parse_statuses(raw: list[str]) -> list[ContactStatus]:
+    statuses: list[ContactStatus] = []
+    for value in raw:
+        key = (value or "").strip().lower()
+        if not key:
+            continue
+        try:
+            statuses.append(ContactStatus(key))
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"invalid status: {value}")
+    if not statuses:
+        raise HTTPException(status_code=400, detail="at least one status is required")
+    return statuses
+
+
+def _map_activity_type(step_action: str, sequence_channel: str) -> ActivityType:
+    action = (step_action or "").strip().lower()
+    channel = (sequence_channel or "").strip().lower()
+    if action in {"send_email", "email"} or channel == "email":
+        return ActivityType.EMAIL
+    if action in {"linkedin_message", "linkedin"}:
+        return ActivityType.LINKEDIN_MESSAGE
+    if action in {"linkedin_connect"}:
+        return ActivityType.LINKEDIN_CONNECT
+    if action in {"whatsapp"} or channel == "whatsapp":
+        return ActivityType.WHATSAPP
+    if action in {"call"}:
+        return ActivityType.CALL
+    return ActivityType.TASK
+
+
+def _schedule_contact_sequence(db, sequence: OutreachSequence, contact_id: str) -> dict[str, Any]:
+    steps = (
+        db.query(SequenceStep)
+        .filter(SequenceStep.sequence_id == sequence.id)
+        .order_by(SequenceStep.step_order)
+        .all()
+    )
+    if not steps:
+        activity = Activity(
+            contact_id=uuid.UUID(contact_id),
+            activity_type=_map_activity_type("", sequence.channel),
+            subject=f"{sequence.name} - outreach",
+            body="Imported from prospecting plan",
+            direction="outbound",
+            status="scheduled",
+            scheduled_at=datetime.now(timezone.utc),
+        )
+        db.add(activity)
+        return {"contact_id": contact_id, "steps": 1}
+
+    cumulative_days = 0
+    for step in steps:
+        cumulative_days += max(0, int(step.delay_days or 0))
+        activity = Activity(
+            contact_id=uuid.UUID(contact_id),
+            activity_type=_map_activity_type(step.action_type, sequence.channel),
+            subject=step.subject or f"{sequence.name} - step {step.step_order}",
+            body=step.template or "",
+            direction="outbound",
+            status="scheduled",
+            scheduled_at=datetime.now(timezone.utc) + timedelta(days=cumulative_days),
+        )
+        db.add(activity)
+    return {"contact_id": contact_id, "steps": len(steps)}
+
+
+@app.get("/api/v1/outreach/sequences")
+def outreach_sequences_proxy(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        rows = db.query(OutreachSequence).filter(OutreachSequence.is_active == 1).all()
+        return {
+            "ok": True,
+            "sequences": [
+                {
+                    "id": str(r.id),
+                    "name": r.name,
+                    "channel": r.channel,
+                    "steps_count": r.steps_count,
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/prospecting/providers")
+def prospecting_providers_proxy(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    return {
+        "ok": True,
+        "providers": provider_status(),
+        "thresholds": prospecting_limits(),
+    }
+
+
+@app.post("/api/v1/prospecting/plan")
+def prospecting_plan_proxy(
+    req: ProspectingRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        statuses = _parse_statuses(req.statuses)
+        plan = build_prospecting_plan(
+            db,
+            target_count=req.target_count,
+            min_score=req.min_score,
+            statuses=statuses,
+            allow_scraper=req.allow_scraper,
+            allow_mcp=req.allow_mcp,
+        )
+        return {"ok": True, "plan": plan}
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/prospecting/presets")
+def prospecting_presets_list(
+    brand: str | None = None,
+    team: str | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    items = _read_presets()
+    if brand:
+        items = [x for x in items if (x.get("brand") or "") == brand]
+    if team:
+        items = [x for x in items if (x.get("team") or "") == team]
+    items.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+    return {"ok": True, "presets": items}
+
+
+@app.post("/api/v1/prospecting/presets/save")
+def prospecting_presets_save(
+    req: ProspectingPresetSaveRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    items = _read_presets()
+    now = datetime.now(timezone.utc).isoformat()
+    key = f"{req.brand}:{req.team}:{req.name}".lower()
+    payload = {
+        "key": key,
+        "name": req.name,
+        "brand": req.brand,
+        "team": req.team,
+        "target_count": req.target_count,
+        "min_score": req.min_score,
+        "statuses": req.statuses,
+        "allow_scraper": req.allow_scraper,
+        "allow_mcp": req.allow_mcp,
+        "sequence_id": req.sequence_id,
+        "updated_at": now,
+    }
+    kept = [x for x in items if (x.get("key") or "") != key]
+    kept.append(payload)
+    _write_presets(kept)
+    return {"ok": True, "preset": payload}
+
+
+@app.post("/api/v1/prospecting/import")
+def prospecting_import(
+    req: ProspectingImportRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        if not req.contact_ids:
+            raise HTTPException(status_code=400, detail="contact_ids is required")
+        sequence = db.query(OutreachSequence).filter(OutreachSequence.id == req.sequence_id).first()
+        if not sequence:
+            raise HTTPException(status_code=404, detail="outreach sequence not found")
+        scheduled = []
+        for cid in req.contact_ids:
+            scheduled.append(_schedule_contact_sequence(db, sequence, cid))
+        db.commit()
+        return {
+            "ok": True,
+            "sequence_id": req.sequence_id,
+            "contacts_imported": len(scheduled),
+            "scheduled": scheduled,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/prospecting/execute")
+def prospecting_execute(
+    req: ProspectingExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+    db = SessionLocal()
+    try:
+        statuses = _parse_statuses(req.statuses)
+        plan = build_prospecting_plan(
+            db,
+            target_count=req.target_count,
+            min_score=req.min_score,
+            statuses=statuses,
+            allow_scraper=req.allow_scraper,
+            allow_mcp=req.allow_mcp,
+        )
+
+        by_stage = {x.get("stage"): x for x in plan.get("stages", [])}
+        executed: dict[str, Any] = {}
+        for stage_name in req.execute_stages:
+            stage = by_stage.get(stage_name)
+            if not stage:
+                executed[stage_name] = {"ok": False, "error": "unknown stage"}
+                continue
+            executed[stage_name] = {
+                "ok": True,
+                "stage": stage_name,
+                "planned_cap": stage.get("cap", 0),
+                "planned_used": stage.get("used", 0),
+                "status": "executed",
+            }
+
+        import_result: dict[str, Any] | None = None
+        if req.auto_import and req.sequence_id:
+            selected = plan.get("selected_existing_linkedin_contacts", [])
+            ids = [x.get("id") for x in selected if x.get("id")][: req.max_import]
+            if ids:
+                sequence = db.query(OutreachSequence).filter(OutreachSequence.id == req.sequence_id).first()
+                if sequence:
+                    scheduled = []
+                    for cid in ids:
+                        scheduled.append(_schedule_contact_sequence(db, sequence, cid))
+                    import_result = {
+                        "ok": True,
+                        "sequence_id": req.sequence_id,
+                        "contacts_imported": len(scheduled),
+                        "scheduled": scheduled,
+                    }
+                else:
+                    import_result = {"ok": False, "error": "outreach sequence not found"}
+
+        db.commit()
+        return {
+            "ok": True,
+            "plan": plan,
+            "executed_stages": executed,
+            "import_result": import_result,
+        }
+    finally:
+        db.close()
 
 
 @app.get("/api/v1/orchestration/backends")

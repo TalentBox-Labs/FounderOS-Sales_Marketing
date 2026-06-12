@@ -29,11 +29,12 @@ def test_health_returns_ok(client: TestClient) -> None:
     assert "python" in data
 
 
-def test_marketing_page_contains_prospecting_panel(client: TestClient) -> None:
-    template_path = Path(__file__).resolve().parent.parent / "templates" / "marketing.html"
+def test_sales_page_contains_prospecting_panel(client: TestClient) -> None:
+    template_path = Path(__file__).resolve().parent.parent / "templates" / "sales.html"
     text = template_path.read_text(encoding="utf-8")
-    assert "Sales CRM Prospecting Plan" in text
-    assert "Build Prospecting Plan" in text
+    assert "Sales Prospecting" in text
+    assert "Build Plan" in text
+    assert "Saved Presets" in text
 
 
 def test_run_pipeline_no_week_only_main_py(client: TestClient) -> None:
