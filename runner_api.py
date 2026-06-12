@@ -56,7 +56,8 @@ from revenue_os.models.activity import (
     OutreachSequence,
     SequenceStep,
 )
-from revenue_os.models.contact import ContactStatus
+from revenue_os.models.contact import Contact, ContactStatus
+from revenue_os.models.deal import Deal, DealStage
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
@@ -1175,6 +1176,201 @@ def _render_orchestration_run_detail(run: dict[str, Any], run_id: str, active_we
     </div>
 </body>
 </html>"""
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+def _date_series(n: int, step_days: int) -> list[str]:
+    """Return n ISO-date bucket labels ending today (step_days apart)."""
+    today = datetime.now(timezone.utc).date()
+    return [(today - timedelta(days=step_days * (n - 1 - i))).isoformat() for i in range(n)]
+
+
+def _truncate_to(dt: datetime, period: str) -> str:
+    """Bucket a datetime to daily / weekly-monday / monthly / yearly string."""
+    d = dt.date() if hasattr(dt, "date") else datetime.fromisoformat(str(dt)).date()
+    if period == "daily":
+        return d.isoformat()
+    if period == "weekly":
+        return (d - timedelta(days=d.weekday())).isoformat()  # Monday of week
+    if period == "monthly":
+        return d.replace(day=1).isoformat()
+    if period == "yoy":
+        return str(d.year)
+    return d.isoformat()
+
+
+def _analytics_data(period: str = "monthly") -> dict:
+    """
+    Query the database and produce analytics payload grouped by period.
+    period: daily | weekly | monthly | yoy
+    """
+    from collections import defaultdict
+
+    # period → bucket count / window
+    windows = {"daily": 30, "weekly": 12, "monthly": 12, "yoy": 3}
+    step_map = {"daily": 1, "weekly": 7, "monthly": 30, "yoy": 365}
+    n_buckets = windows.get(period, 12)
+    step_days = step_map.get(period, 30)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=step_days * n_buckets)
+    labels = _date_series(n_buckets, step_days)
+
+    db = SessionLocal()
+    try:
+        # ── Contacts / Leads ────────────────────────────────────────────────
+        contacts_all = db.query(Contact).all()
+        contact_by_status: dict[str, int] = defaultdict(int)
+        new_leads_by_bucket: dict[str, int] = defaultdict(int)
+        for c in contacts_all:
+            contact_by_status[str(c.status.value if hasattr(c.status, "value") else c.status)] += 1
+            if c.created_at and c.created_at >= cutoff:
+                bk = _truncate_to(c.created_at, period)
+                new_leads_by_bucket[bk] += 1
+
+        # ── Deals / Pipeline / Revenue ──────────────────────────────────────
+        deals_all = db.query(Deal).all()
+        funnel_stages = [s.value for s in DealStage]
+        deals_by_stage: dict[str, int] = defaultdict(int)
+        revenue_by_stage: dict[str, float] = defaultdict(float)
+        revenue_by_bucket: dict[str, float] = defaultdict(float)
+        closed_by_bucket: dict[str, int] = defaultdict(int)
+        for d in deals_all:
+            stage = str(d.stage.value if hasattr(d.stage, "value") else d.stage)
+            deals_by_stage[stage] += 1
+            revenue_by_stage[stage] += float(d.value or 0)
+            ref_dt = d.closed_at or d.created_at
+            if ref_dt and ref_dt >= cutoff:
+                bk = _truncate_to(ref_dt, period)
+                revenue_by_bucket[bk] += float(d.value or 0)
+                if stage == "closed_won":
+                    closed_by_bucket[bk] += 1
+
+        total_pipeline_value = sum(revenue_by_stage.values())
+        total_closed_won = revenue_by_stage.get("closed_won", 0.0)
+        conversion_rate = (
+            round(deals_by_stage["closed_won"] / max(1, len(deals_all)) * 100, 1)
+            if deals_all else 0.0
+        )
+
+        # ── Activities ──────────────────────────────────────────────────────
+        activities_all = db.query(Activity).filter(Activity.performed_at >= cutoff).all()
+        activity_by_type: dict[str, int] = defaultdict(int)
+        outreach_by_bucket: dict[str, int] = defaultdict(int)
+        email_sent_by_bucket: dict[str, int] = defaultdict(int)
+        email_open_by_bucket: dict[str, int] = defaultdict(int)
+        email_click_by_bucket: dict[str, int] = defaultdict(int)
+        email_reply_by_bucket: dict[str, int] = defaultdict(int)
+        linkedin_by_bucket: dict[str, int] = defaultdict(int)
+        call_meeting_by_bucket: dict[str, int] = defaultdict(int)
+
+        outreach_types = {
+            ActivityType.EMAIL, ActivityType.LINKEDIN_MESSAGE,
+            ActivityType.LINKEDIN_CONNECT, ActivityType.CALL,
+            ActivityType.MEETING, ActivityType.SMS, ActivityType.WHATSAPP,
+        }
+        for a in activities_all:
+            atype = str(a.activity_type.value if hasattr(a.activity_type, "value") else a.activity_type)
+            activity_by_type[atype] += 1
+            bk = _truncate_to(a.performed_at, period)
+            if a.activity_type in outreach_types:
+                outreach_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL:
+                email_sent_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_OPEN:
+                email_open_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_CLICK:
+                email_click_by_bucket[bk] += 1
+            if a.activity_type == ActivityType.EMAIL_REPLY:
+                email_reply_by_bucket[bk] += 1
+            if a.activity_type in (ActivityType.LINKEDIN_MESSAGE, ActivityType.LINKEDIN_CONNECT):
+                linkedin_by_bucket[bk] += 1
+            if a.activity_type in (ActivityType.CALL, ActivityType.MEETING):
+                call_meeting_by_bucket[bk] += 1
+
+        total_emails_sent = sum(email_sent_by_bucket.values())
+        total_opens = sum(email_open_by_bucket.values())
+        total_clicks = sum(email_click_by_bucket.values())
+        total_replies = sum(email_reply_by_bucket.values())
+        email_open_rate = round(total_opens / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+        email_click_rate = round(total_clicks / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+        email_reply_rate = round(total_replies / max(1, total_emails_sent) * 100, 1) if total_emails_sent else 0.0
+
+        # ── Content / SEO (tracker-based, no DB) ────────────────────────────
+        tracker_rows = _read_tracker()
+        total_articles = len(tracker_rows)
+        published_articles = sum(1 for r in tracker_rows if r.get("status") == "Published")
+        qa_passed_articles = sum(1 for r in tracker_rows if r.get("qa") in ("Passed", "QA Passed"))
+
+        # ── Assemble series aligned to labels ───────────────────────────────
+        def _series(bucket_dict: dict) -> list:
+            return [bucket_dict.get(lbl, 0) for lbl in labels]
+
+        return {
+            "ok": True,
+            "period": period,
+            "labels": labels,
+            # Sales — KPI cards
+            "sales_kpis": {
+                "total_contacts": len(contacts_all),
+                "total_deals": len(deals_all),
+                "pipeline_value": round(total_pipeline_value, 2),
+                "closed_won_value": round(total_closed_won, 2),
+                "conversion_rate_pct": conversion_rate,
+                "total_outreach": sum(outreach_by_bucket.values()),
+            },
+            # Sales — funnel
+            "funnel": {s: deals_by_stage.get(s, 0) for s in funnel_stages},
+            "contact_by_status": dict(contact_by_status),
+            # Sales — time series
+            "series": {
+                "new_leads": _series(new_leads_by_bucket),
+                "outreach": _series(outreach_by_bucket),
+                "revenue": _series(revenue_by_bucket),
+                "closed_won_count": _series(closed_by_bucket),
+                "calls_meetings": _series(call_meeting_by_bucket),
+                "linkedin": _series(linkedin_by_bucket),
+            },
+            # Marketing — KPI cards
+            "marketing_kpis": {
+                "email_sent": total_emails_sent,
+                "email_open_rate_pct": email_open_rate,
+                "email_click_rate_pct": email_click_rate,
+                "email_reply_rate_pct": email_reply_rate,
+                "total_articles": total_articles,
+                "published_articles": published_articles,
+                "qa_passed_articles": qa_passed_articles,
+            },
+            # Marketing — time series
+            "marketing_series": {
+                "email_sent": _series(email_sent_by_bucket),
+                "email_opens": _series(email_open_by_bucket),
+                "email_clicks": _series(email_click_by_bucket),
+                "email_replies": _series(email_reply_by_bucket),
+                "linkedin": _series(linkedin_by_bucket),
+            },
+            # Activity breakdown
+            "activity_by_type": dict(activity_by_type),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+def page_analytics(request: Request) -> HTMLResponse:
+    runtime = _load_runtime()
+    return templates.TemplateResponse("analytics.html", {
+        "request": request,
+        "active_page": "analytics",
+        "active_week": runtime.get("active_week", "—"),
+    })
+
+
+@app.get("/api/v1/analytics")
+def api_analytics(period: str = "monthly") -> dict:
+    """Return analytics metrics grouped by period (daily|weekly|monthly|yoy)."""
+    if period not in ("daily", "weekly", "monthly", "yoy"):
+        raise HTTPException(status_code=422, detail="period must be daily|weekly|monthly|yoy")
+    return _analytics_data(period)
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
