@@ -35,10 +35,16 @@ class Settings:
         PROJECT_ROOT / "data" / "chroma_db"
     )
 
-    # Auth (future)
+    # Auth
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")
+    )
+
+    # Outreach
+    FOUNDER_NAME: str = os.getenv("FOUNDER_NAME", "Founder")
+    TRACKING_DOMAIN: str = os.getenv(
+        "TRACKING_DOMAIN", "http://localhost:8000"
     )
 
     # External integrations

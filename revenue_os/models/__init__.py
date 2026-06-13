@@ -45,6 +45,7 @@ from revenue_os.models.automation import (
     WorkflowStep,
 )
 from revenue_os.models.user import User
+from revenue_os.models.sequence_enrollment import SequenceEnrollment
 
 __all__ = [
     "Company",
@@ -85,4 +86,5 @@ __all__ = [
     "WorkflowExecution",
     "WorkflowStep",
     "User",
+    "SequenceEnrollment",
 ]

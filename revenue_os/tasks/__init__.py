@@ -24,5 +24,14 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    beat_schedule={},
+    beat_schedule={
+        "process-outreach-sequences": {
+            "task": "revenue_os.tasks.outreach.process_outreach_sequences",
+            "schedule": 1800.0,
+        },
+        "sync-gmail-inbox": {
+            "task": "revenue_os.tasks.email_sync.sync_gmail_inbox",
+            "schedule": 300.0,
+        },
+    },
 )

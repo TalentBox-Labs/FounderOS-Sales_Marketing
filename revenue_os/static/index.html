@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Revenue OS — Command Center</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Inter', sans-serif; background: #0f1117; color: #e1e4ea; }
@@ -66,6 +67,7 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
     <a onclick="showPage('contacts')">Contacts</a>
     <a onclick="showPage('deals')">Deals</a>
     <a onclick="showPage('outreach')">Outreach</a>
+    <a onclick="showPage('campaigns')">Campaigns</a>
     <a onclick="showPage('prospecting')">Prospecting</a>
     <a onclick="showPage('orchestration')">Orchestration</a>
     <a onclick="showPage('search')">Search</a>
@@ -95,6 +97,57 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 <div class="main" id="page-outreach" style="display:none">
   <div class="header"><h2>Outreach Sequences</h2></div>
   <table><thead><tr><th>Name</th><th>Channel</th><th>Steps</th><th>Active</th></tr></thead><tbody id="sequencesTable"></tbody></table>
+</div>
+
+<div class="main" id="page-campaigns" style="display:none">
+  <div class="header"><h2>Campaigns</h2></div>
+
+  <div class="card" style="margin-bottom:24px">
+    <h3 style="font-size:16px;font-weight:600;margin-bottom:12px">Compose Email</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="form-group"><label>Contact</label><select id="composeContact"></select></div>
+      <div class="form-group"><label>Angle</label>
+        <select id="composeAngle">
+          <option value="">Auto</option>
+          <option value="trigger_event">Trigger Event</option>
+          <option value="pain_point">Pain Point</option>
+          <option value="social_proof">Social Proof</option>
+          <option value="warm_intro">Warm Intro</option>
+          <option value="competitor_mention">Competitor Mention</option>
+          <option value="content_gate">Content Gate</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Product (optional)</label><input id="composeProduct" placeholder="e.g. AI recruiting platform"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="generatePreview()">Generate Preview</button>
+      <button class="btn btn-outline" id="sendBtn" style="display:none" onclick="sendComposed()">Send Email</button>
+    </div>
+    <div id="previewArea" style="display:none;margin-top:16px;padding:16px;background:#0f1117;border-radius:8px;border:1px solid #262a36">
+      <div style="font-size:13px;color:#6b7280;margin-bottom:4px">Subject:</div>
+      <div id="previewSubject" style="font-weight:600;margin-bottom:8px"></div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:4px">Hook:</div>
+      <div id="previewHook" style="margin-bottom:8px;font-style:italic"></div>
+      <div id="previewBody" style="font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:8px"></div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:4px">CTA:</div>
+      <div id="previewCta" style="font-weight:500;color:#3b82f6"></div>
+      <div id="previewProfile" style="margin-top:8px;font-size:12px;color:#6b7280"></div>
+    </div>
+  </div>
+
+  <div class="grid" id="campaignSummary"></div>
+  <h3 class="section-title">Recent Campaigns</h3>
+  <table><thead><tr><th>Name</th><th>Sent</th><th>Opened</th><th>Open Rate</th><th>Replied</th><th>Reply Rate</th><th>Deals Won</th></tr></thead><tbody id="campaignsTable"></tbody></table>
+  <h3 class="section-title">Hook Performance</h3>
+  <table><thead><tr><th>Subject / Hook</th><th>Sent</th><th>Open Rate</th><th>Reply Rate</th></tr></thead><tbody id="hookTable"></tbody></table>
+  <h3 class="section-title">Pipeline Funnel</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div><canvas id="funnelChart" height="200"></canvas></div>
+    <div><canvas id="revenueChart" height="200"></canvas></div>
+  </div>
+  <table><thead><tr><th>Stage</th><th>Deals</th><th>Total Value</th></tr></thead><tbody id="funnelTable"></tbody></table>
+  <h3 class="section-title">Lead Sources</h3>
+  <table><thead><tr><th>Source</th><th>Total</th><th>Converted</th><th>Conversion Rate</th></tr></thead><tbody id="leadSourceTable"></tbody></table>
 </div>
 
 <div class="main" id="page-search" style="display:none">
@@ -243,6 +296,7 @@ function showPage(name) {
   if (name === 'contacts') loadContacts();
   if (name === 'deals') loadDeals();
   if (name === 'outreach') loadSequences();
+  if (name === 'campaigns') loadCampaigns();
   if (name === 'prospecting') { loadProspectingInfo(); document.getElementById('prospectingPlan').innerHTML = ''; }
   if (name === 'orchestration') { loadOrchestrationInfo(); loadOrchestrationLogs(); }
 }
@@ -362,6 +416,188 @@ async function createDeal() {
   closeModal('dealModal');
   showToast('Deal created');
   loadDeals();
+}
+
+/* ── Campaigns ── */
+let _funnelChart = null;
+let _revenueChart = null;
+
+async function loadCampaigns() {
+  const summary = await api('GET', '/reports/outreach-summary');
+  if (summary) {
+    document.getElementById('campaignSummary').innerHTML = [
+      { label: 'Sent (30d)', value: summary.total_sent || 0, cls: '' },
+      { label: 'Open Rate', value: `${summary.open_rate || 0}%`, cls: summary.open_rate > 30 ? 'green' : 'yellow' },
+      { label: 'Reply Rate', value: `${summary.reply_rate || 0}%`, cls: summary.reply_rate > 15 ? 'green' : 'yellow' },
+      { label: 'New Contacts', value: summary.new_contacts || 0, cls: '' },
+      { label: 'Converted', value: summary.converted_to_customers || 0, cls: 'green' },
+    ].map(k => `<div class="card"><div class="label">${k.label}</div><div class="value ${k.cls}">${k.value}</div></div>`).join('');
+  }
+
+  const campaigns = await api('GET', '/reports/campaigns');
+  const cbody = document.getElementById('campaignsTable');
+  if (campaigns && campaigns.length) {
+    cbody.innerHTML = campaigns.map(c =>
+      `<tr>
+        <td><strong>${c.name}</strong></td>
+        <td>${c.sent}</td>
+        <td>${c.opened}</td>
+        <td>${c.open_rate}%</td>
+        <td>${c.replied}</td>
+        <td>${c.reply_rate}%</td>
+        <td>${c.deals_won}</td>
+      </tr>`
+    ).join('');
+  } else {
+    cbody.innerHTML = '<tr><td colspan="7">No campaigns yet</td></tr>';
+  }
+
+  const hooks = await api('GET', '/reports/hook-performance');
+  const hbody = document.getElementById('hookTable');
+  if (hooks && hooks.length) {
+    hbody.innerHTML = hooks.map(h =>
+      `<tr>
+        <td>${h.subject}</td>
+        <td>${h.sent}</td>
+        <td>${h.open_rate}%</td>
+        <td>${h.reply_rate}%</td>
+      </tr>`
+    ).join('');
+  } else {
+    hbody.innerHTML = '<tr><td colspan="4">No hook data yet</td></tr>';
+  }
+
+  const funnel = await api('GET', '/reports/pipeline-funnel');
+  const fbody = document.getElementById('funnelTable');
+  if (funnel && funnel.length) {
+    fbody.innerHTML = funnel.map(s =>
+      `<tr>
+        <td><span class="status-badge">${s.stage}</span></td>
+        <td>${s.count}</td>
+        <td>$${(s.total_value || 0).toLocaleString()}</td>
+      </tr>`
+    ).join('');
+    renderFunnelChart(funnel);
+  } else {
+    fbody.innerHTML = '<tr><td colspan="3">No pipeline data</td></tr>';
+  }
+
+  const sources = await api('GET', '/reports/lead-sources');
+  const sbody = document.getElementById('leadSourceTable');
+  if (sources && sources.length) {
+    sbody.innerHTML = sources.map(s =>
+      `<tr>
+        <td>${s.source}</td>
+        <td>${s.total}</td>
+        <td>${s.converted}</td>
+        <td>${s.conversion_rate}%</td>
+      </tr>`
+    ).join('');
+  } else {
+    sbody.innerHTML = '<tr><td colspan="4">No lead source data</td></tr>';
+  }
+
+  // Load revenue trend for chart
+  const revenue = await api('GET', '/reports/revenue-trend');
+  if (revenue && revenue.length) {
+    renderRevenueChart(revenue);
+  }
+
+  // Populate contact selector
+  populateContactSelector();
+}
+
+function renderFunnelChart(data) {
+  const ctx = document.getElementById('funnelChart').getContext('2d');
+  if (_funnelChart) _funnelChart.destroy();
+  _funnelChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.stage),
+      datasets: [{
+        label: 'Deals',
+        data: data.map(d => d.count),
+        backgroundColor: ['#3b82f6','#22c55e','#eab308','#f97316','#22c55e','#ef4444'],
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+    }
+  });
+}
+
+function renderRevenueChart(data) {
+  const ctx = document.getElementById('revenueChart').getContext('2d');
+  if (_revenueChart) _revenueChart.destroy();
+  _revenueChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.month),
+      datasets: [
+        { label: 'Revenue', data: data.map(d => d.revenue), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3, yAxisID: 'y' },
+        { label: 'Deals', data: data.map(d => d.deals), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, yAxisID: 'y1' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#9ca3af' } } },
+      scales: {
+        y: { beginAtZero: true, position: 'left', ticks: { color: '#6b7280' } },
+        y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#6b7280' } },
+      }
+    }
+  });
+}
+
+async function populateContactSelector() {
+  const data = await api('GET', '/contacts?limit=200');
+  const sel = document.getElementById('composeContact');
+  sel.innerHTML = '<option value="">Select contact...</option>';
+  if (data && data.length) {
+    sel.innerHTML += data.map(c =>
+      `<option value="${c.id}">${c.full_name || `${c.first_name} ${c.last_name}`} (${c.email || ''})</option>`
+    ).join('');
+  }
+}
+
+let _previewData = null;
+
+async function generatePreview() {
+  const contactId = document.getElementById('composeContact').value;
+  if (!contactId) { showToast('Select a contact first', 'error'); return; }
+  const body = {
+    contact_id: contactId,
+    angle: document.getElementById('composeAngle').value || null,
+    product_description: document.getElementById('composeProduct').value || null,
+  };
+  const result = await api('POST', '/outreach/preview', body);
+  if (!result) return;
+  _previewData = { ...result, contact_id: contactId };
+  document.getElementById('previewSubject').textContent = result.subject;
+  document.getElementById('previewHook').textContent = result.hook;
+  document.getElementById('previewBody').textContent = result.body;
+  document.getElementById('previewCta').textContent = result.cta;
+  document.getElementById('previewProfile').innerHTML =
+    `To: ${result.profile_summary.name} (${result.profile_summary.title}) @ ${result.profile_summary.company} | Angle: ${result.angle_used}`;
+  document.getElementById('previewArea').style.display = 'block';
+  document.getElementById('sendBtn').style.display = 'inline-flex';
+}
+
+async function sendComposed() {
+  if (!_previewData) return;
+  const body = {
+    contact_id: _previewData.contact_id,
+    angle: document.getElementById('composeAngle').value || null,
+    product_description: document.getElementById('composeProduct').value || null,
+  };
+  const result = await api('POST', '/outreach/send', body);
+  if (!result) return;
+  showToast('Email sent!');
+  document.getElementById('sendBtn').style.display = 'none';
+  document.getElementById('previewArea').style.display = 'none';
+  _previewData = null;
 }
 
 /* ── Prospecting ── */

@@ -7,9 +7,11 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from revenue_os.api.v1 import v1_router
+from revenue_os.api.v1.outreach import tracking_router
 from revenue_os.database import engine, get_db
 from revenue_os.integrations.webhooks import router as webhooks_router
 from revenue_os.models.base import Base
+from revenue_os.models import *  # noqa: register all models with metadata before create_all
 from revenue_os.services.revenue_intelligence import get_dashboard_stats
 
 app = FastAPI(
@@ -28,6 +30,7 @@ app.add_middleware(
 
 app.include_router(v1_router)
 app.include_router(webhooks_router)
+app.include_router(tracking_router)
 
 static_dir = Path(__file__).resolve().parent / "static"
 
