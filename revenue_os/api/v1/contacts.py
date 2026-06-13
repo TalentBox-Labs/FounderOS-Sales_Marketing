@@ -93,6 +93,56 @@ def list_contacts(
     return query.offset(skip).limit(limit).all()
 
 
+@router.get("/{contact_id}/timeline")
+def contact_timeline(
+    contact_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    from revenue_os.models.activity import Activity
+    from revenue_os.models.activity import EmailActivity
+
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    activities = (
+        db.query(Activity)
+        .filter(Activity.contact_id == contact_id)
+        .order_by(Activity.performed_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    results = []
+    for a in activities:
+        item = {
+            "id": str(a.id),
+            "type": a.activity_type.value,
+            "subject": a.subject,
+            "body": a.body[:500] if a.body else None,
+            "direction": a.direction,
+            "status": a.status,
+            "performed_at": a.performed_at.isoformat() if a.performed_at else None,
+        }
+        if a.activity_type.value in ("email", "email_open", "email_click", "email_reply"):
+            ea = (
+                db.query(EmailActivity)
+                .filter(EmailActivity.activity_id == a.id)
+                .first()
+            )
+            if ea:
+                item["email"] = {
+                    "message_id": ea.message_id,
+                    "from": ea.from_address,
+                    "to": ea.to_addresses,
+                    "opened_at": ea.opened_at.isoformat() if ea.opened_at else None,
+                    "clicked_at": ea.clicked_at.isoformat() if ea.clicked_at else None,
+                }
+        results.append(item)
+    return results
+
+
 @router.get("/search")
 def search_contacts(
     q: str = Query(..., min_length=1),

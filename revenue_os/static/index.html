@@ -86,7 +86,7 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 
 <div class="main" id="page-contacts" style="display:none">
   <div class="header"><h2>Contacts</h2><button class="btn btn-primary" onclick="openContactModal()">+ Add Contact</button></div>
-  <table><thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Status</th><th>Score</th></tr></thead><tbody id="contactsTable"></tbody></table>
+  <table><thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Status</th><th>Score</th></tr></thead><tbody id="contactsTable" style="cursor:pointer"></tbody></table>
 </div>
 
 <div class="main" id="page-deals" style="display:none">
@@ -137,7 +137,7 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 
   <div class="grid" id="campaignSummary"></div>
   <h3 class="section-title">Recent Campaigns</h3>
-  <table><thead><tr><th>Name</th><th>Sent</th><th>Opened</th><th>Open Rate</th><th>Replied</th><th>Reply Rate</th><th>Deals Won</th></tr></thead><tbody id="campaignsTable"></tbody></table>
+  <table><thead><tr><th>Name</th><th>Sent</th><th>Opened</th><th>Open Rate</th><th>Replied</th><th>Reply Rate</th><th>Deals Won</th></tr></thead><tbody id="campaignsTable" style="cursor:pointer"></tbody></table>
   <h3 class="section-title">Hook Performance</h3>
   <table><thead><tr><th>Subject / Hook</th><th>Sent</th><th>Open Rate</th><th>Reply Rate</th></tr></thead><tbody id="hookTable"></tbody></table>
   <h3 class="section-title">Pipeline Funnel</h3>
@@ -241,6 +241,24 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
   </div>
 </div>
 
+<div class="modal" id="contactDetailModal">
+  <div class="modal-content" style="width:640px">
+    <h3 id="contactDetailName">Contact</h3>
+    <div id="contactDetailInfo" style="font-size:13px;color:#6b7280;margin-bottom:12px"></div>
+    <h4 style="font-size:14px;font-weight:600;margin-bottom:8px">Activity Timeline</h4>
+    <div id="contactTimeline" style="max-height:400px;overflow-y:auto"></div>
+    <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('contactDetailModal')">Close</button></div>
+  </div>
+</div>
+
+<div class="modal" id="campaignDetailModal">
+  <div class="modal-content" style="width:640px">
+    <h3 id="campaignDetailName">Campaign Enrollments</h3>
+    <div id="campaignEnrollments" style="max-height:400px;overflow-y:auto"></div>
+    <div class="form-actions"><button class="btn btn-outline" onclick="closeModal('campaignDetailModal')">Close</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -331,7 +349,7 @@ async function loadContacts() {
   if (!data) return;
   const tbody = document.getElementById('contactsTable');
   tbody.innerHTML = data.map(c =>
-    `<tr>
+    `<tr onclick="openContactDetail('${c.id}')">
       <td><strong>${c.full_name || `${c.first_name} ${c.last_name}`}</strong></td>
       <td>${c.email || ''}</td>
       <td>${c.designation || ''}</td>
@@ -438,7 +456,7 @@ async function loadCampaigns() {
   const cbody = document.getElementById('campaignsTable');
   if (campaigns && campaigns.length) {
     cbody.innerHTML = campaigns.map(c =>
-      `<tr>
+      `<tr onclick="openCampaignDetail('${encodeURIComponent(c.name)}')">
         <td><strong>${c.name}</strong></td>
         <td>${c.sent}</td>
         <td>${c.opened}</td>
@@ -598,6 +616,66 @@ async function sendComposed() {
   document.getElementById('sendBtn').style.display = 'none';
   document.getElementById('previewArea').style.display = 'none';
   _previewData = null;
+}
+
+/* ── Contact Detail Modal ── */
+async function openContactDetail(contactId) {
+  const [contact, timeline] = await Promise.all([
+    api('GET', `/contacts/${contactId}`),
+    api('GET', `/contacts/${contactId}/timeline?limit=100`),
+  ]);
+  if (!contact) return;
+  document.getElementById('contactDetailName').textContent = contact.full_name || `${contact.first_name} ${contact.last_name}`;
+  document.getElementById('contactDetailInfo').innerHTML =
+    `Email: ${contact.email || '—'} | Designation: ${contact.designation || '—'} | Status: ${contact.status} | Score: ${contact.lead_score}`;
+  const container = document.getElementById('contactTimeline');
+  if (!timeline || timeline.length === 0) {
+    container.innerHTML = '<p style="color:#6b7280;font-size:13px">No activity yet</p>';
+  } else {
+    container.innerHTML = timeline.map(a => {
+      const dir = a.direction === 'inbound' ? '←' : '→';
+      const extra = a.email ? ` <span style="color:#6b7280;font-size:11px">opened: ${a.email.opened_at ? 'yes' : 'no'} | clicked: ${a.email.clicked_at ? 'yes' : 'no'}</span>` : '';
+      return `<div class="card" style="margin-bottom:6px;padding:12px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#6b7280;margin-bottom:4px">
+          <span><span class="status-badge">${a.type}</span> ${dir} ${a.status}</span>
+          <span>${a.performed_at ? new Date(a.performed_at).toLocaleString() : ''}</span>
+        </div>
+        <div style="font-size:13px;font-weight:500">${a.subject || ''}</div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:2px">${(a.body || '').slice(0, 200)}${extra}</div>
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('contactDetailModal').classList.add('open');
+}
+
+/* ── Campaign Detail Modal ── */
+async function openCampaignDetail(campaignName) {
+  document.getElementById('campaignDetailName').textContent = `Campaign: ${campaignName}`;
+  // Find the sequence by name (fuzzy match the subject prefix)
+  const sequences = await api('GET', '/outreach/sequences');
+  if (!sequences || sequences.length === 0) {
+    document.getElementById('campaignEnrollments').innerHTML = '<p style="color:#6b7280;font-size:13px">No sequences found</p>';
+    document.getElementById('campaignDetailModal').classList.add('open');
+    return;
+  }
+  const seq = sequences.find(s => s.name === campaignName) || sequences[0];
+  const enrollments = await api('GET', `/outreach/sequences/${seq.id}/enrollments`);
+  const container = document.getElementById('campaignEnrollments');
+  if (!enrollments || enrollments.length === 0) {
+    container.innerHTML = '<p style="color:#6b7280;font-size:13px">No enrolled contacts yet</p>';
+  } else {
+    container.innerHTML = `<table><thead><tr><th>Contact</th><th>Email</th><th>Status</th><th>Step</th><th>Channel</th><th>Started</th></tr></thead><tbody>
+      ${enrollments.map(e => `<tr>
+        <td><strong>${e.contact_name || e.contact_id}</strong></td>
+        <td>${e.contact_email || ''}</td>
+        <td><span class="status-badge">${e.status}</span></td>
+        <td>${e.current_step}</td>
+        <td>${e.channel}</td>
+        <td>${e.started_at ? new Date(e.started_at).toLocaleDateString() : ''}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  }
+  document.getElementById('campaignDetailModal').classList.add('open');
 }
 
 /* ── Prospecting ── */

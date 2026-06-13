@@ -186,6 +186,55 @@ class LinkedInPublisher:
 
         return _post_json(f"{self.API}/ugcPosts", payload, self._headers())
 
+    def send_message(
+        self,
+        *,
+        recipient_urn: str,
+        message: str,
+        confirmed: bool = False,
+        dry_run: bool = False,
+    ) -> dict:
+        """
+        Send a LinkedIn DM via the LinkedIn Messages API.
+
+        NOTE: LinkedIn's Messages API (part of the Communication API) requires
+        special developer access approval. This endpoint will work only after:
+          1. Your app is approved for the `rw_messages` scope.
+          2. You have a valid LinkedIn Access Token with that scope.
+          3. The recipient is a 1st-degree connection.
+
+        Without approved access, LinkedIn returns a 403 Forbidden.
+
+        Args:
+            recipient_urn: The LinkedIn URN of the recipient (e.g. "urn:li:person:abc123").
+            message: The message text (up to 2000 characters).
+            confirmed: Must be True to actually send.
+            dry_run: If True, returns a preview without sending.
+        """
+        if dry_run:
+            return {
+                "dry_run": True,
+                "to": recipient_urn,
+                "chars": len(message),
+            }
+
+        if not confirmed:
+            raise RuntimeError("LinkedIn DM requires confirmed=True.")
+
+        # The LinkedIn Communication API endpoint for sending messages
+        url = f"{self.API}/messages"
+
+        # Look up the sender's URN
+        sender_urn = self._person_urn()
+
+        payload = {
+            "sender": sender_urn,
+            "recipients": [recipient_urn],
+            "body": message[:2000],
+        }
+
+        return _post_json(url, payload, self._headers())
+
 
 # ── Instagram ────────────────────────────────────────────────────────────────
 

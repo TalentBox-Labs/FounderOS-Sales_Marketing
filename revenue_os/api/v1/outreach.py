@@ -562,9 +562,12 @@ def list_enrollments(
     db: Session = Depends(get_db),
 ):
     from revenue_os.models.sequence_enrollment import SequenceEnrollment
+    from revenue_os.models.contact import Contact
 
-    query = db.query(SequenceEnrollment).filter(
-        SequenceEnrollment.sequence_id == uuid.UUID(seq_id)
+    query = (
+        db.query(SequenceEnrollment)
+        .join(Contact, SequenceEnrollment.contact_id == Contact.id)
+        .filter(SequenceEnrollment.sequence_id == uuid.UUID(seq_id))
     )
     if status:
         query = query.filter(SequenceEnrollment.status == status)
@@ -574,6 +577,9 @@ def list_enrollments(
         {
             "id": str(e.id),
             "contact_id": str(e.contact_id),
+            "contact_name": e.contact.full_name if e.contact else None,
+            "contact_email": e.contact.email if e.contact else None,
+            "contact_status": e.contact.status.value if e.contact else None,
             "current_step": e.current_step,
             "status": e.status,
             "channel": e.channel,
