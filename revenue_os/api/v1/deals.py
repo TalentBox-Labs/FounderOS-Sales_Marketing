@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from revenue_os.database import get_db
 from revenue_os.integrations.n8n import deal_stage_changed_webhook, new_deal_webhook
+from revenue_os.models.contact import Company, Contact
 from revenue_os.models.deal import Deal, DealStage, Pipeline, PipelineType
 from revenue_os.services.deal_service import forecast_pipeline, pipeline_health
+from revenue_os.services.export_service import export_deals_csv
 from revenue_os.services.search_service import index_deal
 
 router = APIRouter(prefix="/deals", tags=["deals"])
@@ -106,10 +108,29 @@ class DealResponse(BaseModel):
     expected_close_date: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     tags: Optional[str] = None
+    client_name: Optional[str] = None
+    contact_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class MoveStageBody(BaseModel):
+    stage: DealStage
+    probability: Optional[int] = None
+
+
+class BoardColumn(BaseModel):
+    stage: str
+    label: str
+    deals: list[DealResponse]
+
+
+class BoardResponse(BaseModel):
+    pipeline_id: uuid.UUID
+    pipeline_name: str
+    columns: list[BoardColumn]
 
 
 @router.get("", response_model=list[DealResponse])
@@ -121,7 +142,8 @@ def list_deals(
     limit: int = Query(50, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Deal)
+    from sqlalchemy.orm import joinedload
+    query = db.query(Deal).options(joinedload(Deal.company), joinedload(Deal.contact))
     if stage:
         query = query.filter(Deal.stage == stage)
     if pipeline_id:
@@ -129,15 +151,17 @@ def list_deals(
     if search:
         pattern = f"%{search}%"
         query = query.filter(Deal.name.ilike(pattern))
-    return query.offset(skip).limit(limit).all()
+    deals = query.offset(skip).limit(limit).all()
+    return [_enrich_deal(d) for d in deals]
 
 
 @router.get("/{deal_id}", response_model=DealResponse)
 def get_deal(deal_id: str, db: Session = Depends(get_db)):
-    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    from sqlalchemy.orm import joinedload
+    deal = db.query(Deal).options(joinedload(Deal.company), joinedload(Deal.contact)).filter(Deal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
-    return deal
+    return _enrich_deal(deal)
 
 
 @router.post("", response_model=DealResponse, status_code=201)
@@ -177,7 +201,7 @@ def create_deal(body: DealCreate, db: Session = Depends(get_db)):
         stage=deal.stage.value,
     )
 
-    return deal
+    return _enrich_deal(deal, db)
 
 
 @router.put("/{deal_id}", response_model=DealResponse)
@@ -212,16 +236,100 @@ def update_deal(
             new_stage=deal.stage.value,
         )
 
-    return deal
+    return _enrich_deal(deal)
 
 
-@router.delete("/{deal_id}", status_code=204)
-def delete_deal(deal_id: str, db: Session = Depends(get_db)):
+@router.post("/{deal_id}/move-stage", response_model=DealResponse)
+def move_deal_stage(
+    deal_id: str,
+    body: MoveStageBody,
+    db: Session = Depends(get_db),
+):
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
-    db.delete(deal)
+
+    old_stage = deal.stage.value
+    deal.stage = body.stage
+    if body.probability is not None:
+        deal.probability = body.probability
+    if body.stage == DealStage.CLOSED_WON:
+        deal.closed_at = datetime.utcnow()
+
     db.commit()
+    db.refresh(deal)
+
+    deal_stage_changed_webhook(
+        deal_id=str(deal.id),
+        deal_name=deal.name,
+        previous_stage=old_stage,
+        new_stage=deal.stage.value,
+    )
+    return _enrich_deal(deal)
+
+
+@router.get("/pipelines/{pipeline_id}/board", response_model=BoardResponse)
+def get_pipeline_board(
+    pipeline_id: str,
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy.orm import joinedload
+
+    pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    stage_list = [s.strip() for s in pipeline.stages.split(",")] if pipeline.stages else []
+    deals = (
+        db.query(Deal)
+        .options(joinedload(Deal.company), joinedload(Deal.contact))
+        .filter(Deal.pipeline_id == pipeline_id)
+        .order_by(Deal.created_at.desc())
+        .all()
+    )
+
+    deal_map = {d.id: _enrich_deal(d, db) for d in deals}
+
+    columns = []
+    for stage in stage_list:
+        label = stage.replace("_", " ").title()
+        stage_deals = [deal_map[d.id] for d in deals if d.stage.value == stage]
+        columns.append(BoardColumn(stage=stage, label=label, deals=stage_deals))
+
+    return BoardResponse(
+        pipeline_id=pipeline.id,
+        pipeline_name=pipeline.name,
+        columns=columns,
+    )
+
+
+def _enrich_deal(deal, db=None):
+    company = getattr(deal, "company", None)
+    if not company and db and deal.company_id:
+        from revenue_os.models.contact import Company
+        company = db.query(Company).filter(Company.id == deal.company_id).first()
+    contact = getattr(deal, "contact", None)
+    if not contact and db and deal.contact_id:
+        contact = db.query(Contact).filter(Contact.id == deal.contact_id).first()
+    return DealResponse(
+        id=deal.id,
+        pipeline_id=deal.pipeline_id,
+        company_id=deal.company_id,
+        contact_id=deal.contact_id,
+        name=deal.name,
+        stage=deal.stage if hasattr(deal.stage, 'value') else deal.stage,
+        probability=deal.probability,
+        value=deal.value,
+        currency=deal.currency,
+        description=deal.description,
+        expected_close_date=deal.expected_close_date,
+        closed_at=deal.closed_at,
+        client_name=company.name if company else None,
+        contact_name=f"{contact.first_name} {contact.last_name}" if contact else None,
+        tags=deal.tags,
+        created_at=deal.created_at,
+        updated_at=deal.updated_at,
+    )
 
 
 @router.get("/pipelines/{pipeline_id}/forecast")
@@ -232,3 +340,14 @@ def get_forecast(pipeline_id: str, db: Session = Depends(get_db)):
 @router.get("/pipelines/{pipeline_id}/health")
 def get_health(pipeline_id: str, db: Session = Depends(get_db)):
     return pipeline_health(db, pipeline_id)
+
+
+@router.get("/export/csv")
+def export_deals(db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    csv_data = export_deals_csv(db)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=deals.csv"},
+    )

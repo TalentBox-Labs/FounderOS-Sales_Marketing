@@ -56,6 +56,26 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 .toast.show { opacity: 1; }
 .toast.error { background: #ef4444; }
 @media (max-width: 768px) { .sidebar { display: none; } .main { margin-left: 0; padding: 16px; } }
+
+/* Kanban Board */
+.kanban-col { min-width:260px; max-width:300px; flex-shrink:0; background:#161822; border-radius:12px; border:1px solid #262a36; display:flex; flex-direction:column; max-height:calc(100vh - 180px); }
+.kanban-col-header { padding:12px 16px; font-size:13px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid #262a36; display:flex; justify-content:space-between; align-items:center; }
+.kanban-col-count { font-size:12px; background:#1f2937; padding:2px 8px; border-radius:10px; }
+.kanban-col-body { padding:8px; overflow-y:auto; flex:1; min-height:100px; }
+.kanban-card { background:#1a1d28; border:1px solid #2d3748; border-radius:10px; padding:12px; margin-bottom:8px; cursor:pointer; transition:all 0.15s; }
+.kanban-card:hover { border-color:#3b82f6; background:#1f2937; }
+.kanban-card-title { font-size:14px; font-weight:600; color:#fff; margin-bottom:4px; }
+.kanban-card-sub { font-size:12px; color:#6b7280; display:flex; gap:8px; flex-wrap:wrap; }
+.kanban-card-value { font-size:14px; font-weight:600; color:#22c55e; }
+.kanban-card-prob { font-size:11px; color:#9ca3af; }
+.kanban-card-client { font-size:11px; color:#3b82f6; }
+.kanban-card.dragging { opacity:0.5; }
+.kanban-col.drag-over { border-color:#3b82f6; background:#1f2937; }
+.kanban-card .card-menu { float:right; opacity:0; transition:opacity 0.15s; }
+.kanban-card:hover .card-menu { opacity:1; }
+.deal-detail-grid { display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:14px;margin-top:12px; }
+.deal-detail-grid div { padding:8px 12px;background:#0f1117;border-radius:8px; }
+.deal-detail-grid .label { font-size:11px;color:#6b7280;text-transform:uppercase; }
 </style>
 </head>
 <body>
@@ -92,13 +112,19 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
       <input type="file" id="uploadInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="bulkUpload(event)">
     </div>
   </div>
-  <table><thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Status</th><th>Score</th></tr></thead><tbody id="contactsTable" style="cursor:pointer"></tbody></table>
+  <table><thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Company</th><th>Status</th><th>Score</th></tr></thead><tbody id="contactsTable" style="cursor:pointer"></tbody></table>
   <div id="uploadResult" style="margin-top:12px"></div>
 </div>
 
 <div class="main" id="page-deals" style="display:none">
-  <div class="header"><h2>Deals</h2><button class="btn btn-primary" onclick="openDealModal()">+ Add Deal</button></div>
-  <table><thead><tr><th>Name</th><th>Stage</th><th>Value</th><th>Probability</th><th>Weighted</th></tr></thead><tbody id="dealsTable"></tbody></table>
+  <div class="header">
+    <h2>Pipeline Board</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="pipelineSelect" style="padding:8px 12px;border-radius:8px;border:1px solid #374151;background:#0f1117;color:#e1e4ea;font-size:14px" onchange="loadBoard()"></select>
+      <button class="btn btn-primary" onclick="openDealModal()">+ Add Deal</button>
+    </div>
+  </div>
+  <div id="kanbanBoard" style="display:flex;gap:16px;overflow-x:auto;padding-bottom:24px;min-height:60vh"></div>
 </div>
 
 <div class="main" id="page-outreach" style="display:none">
@@ -215,12 +241,168 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 </div>
 
 <div class="modal" id="contactModal">
-  <div class="modal-content">
+  <div class="modal-content" style="width:560px">
     <h3>New Contact</h3>
-    <div class="form-group"><label>First Name</label><input id="cfName" placeholder="John"></div>
-    <div class="form-group"><label>Last Name</label><input id="clName" placeholder="Doe"></div>
-    <div class="form-group"><label>Email</label><input id="cEmail" placeholder="john@example.com"></div>
-    <div class="form-group"><label>Designation</label><input id="cDesignation" placeholder="CEO"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>First Name *</label><input id="cfName" placeholder="John"></div>
+      <div class="form-group"><label>Last Name *</label><input id="clName" placeholder="Doe"></div>
+      <div class="form-group"><label>Email</label><input id="cEmail" placeholder="john@example.com"></div>
+      <div class="form-group"><label>Phone</label><input id="cPhone" placeholder="+1 555-0123"></div>
+      <div class="form-group" style="grid-column:1/3"><label>Designation / Title</label><input id="cDesignation" placeholder="CEO"></div>
+      <div class="form-group" style="grid-column:1/3"><label>LinkedIn URL</label><input id="cLinkedin" placeholder="https://linkedin.com/in/..."></div>
+      <div class="form-group" style="grid-column:1/3"><label>Twitter / X URL</label><input id="cTwitter" placeholder="https://x.com/..."></div>
+      <div class="form-group"><label>Source</label>
+        <select id="cSource">
+          <option value="manual">Manual</option>
+          <option value="import">Import</option>
+          <option value="web_form">Web Form</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="referral">Referral</option>
+          <option value="outreach">Outreach</option>
+          <option value="api">API</option>
+          <option value="n8n">n8n</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Status</label>
+        <select id="cStatus">
+          <option value="lead">Lead</option>
+          <option value="prospect">Prospect</option>
+          <option value="qualified">Qualified</option>
+          <option value="customer">Customer</option>
+          <option value="partner">Partner</option>
+        </select>
+      </div>
+      <div class="form-group" style="grid-column:1/3"><label>Tags</label><input id="cTags" placeholder="comma-separated"></div>
+      <div class="form-group" style="grid-column:1/3"><label>Notes</label><textarea id="cNotes" placeholder="Additional info..." style="min-height:50px"></textarea></div>
+    </div>
+
+    <h3 style="font-size:16px;font-weight:600;margin:16px 0 8px;padding-top:12px;border-top:1px solid #2d3748">Company / Account</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Company Name</label><input id="ccName" placeholder="Acme Corp"></div>
+      <div class="form-group"><label>Legal Name</label><input id="ccLegalName" placeholder="Acme Corporation Inc."></div>
+      <div class="form-group"><label>Domain</label><input id="ccDomain" placeholder="acme.com"></div>
+      <div class="form-group"><label>Website</label><input id="ccWebsite" placeholder="https://acme.com"></div>
+      <div class="form-group"><label>Phone</label><input id="ccPhone" placeholder="+1 555-0000"></div>
+      <div class="form-group"><label>Industry</label>
+        <select id="ccIndustry">
+          <option value="">— Select —</option>
+          <option value="technology">Technology</option>
+          <option value="healthcare">Healthcare</option>
+          <option value="finance">Finance</option>
+          <option value="education">Education</option>
+          <option value="manufacturing">Manufacturing</option>
+          <option value="retail">Retail</option>
+          <option value="real_estate">Real Estate</option>
+          <option value="staffing">Staffing</option>
+          <option value="recruitment">Recruitment</option>
+          <option value="agency">Agency</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Account Type</label>
+        <select id="ccAccountType">
+          <option value="">— Select —</option>
+          <option value="customer">Customer</option>
+          <option value="partner">Partner</option>
+          <option value="vendor">Vendor</option>
+          <option value="prospect">Prospect</option>
+          <option value="competitor">Competitor</option>
+          <option value="investor">Investor</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Account Tier</label>
+        <select id="ccTier">
+          <option value="">— Select —</option>
+          <option value="enterprise">Enterprise</option>
+          <option value="mid_market">Mid Market</option>
+          <option value="smb">SMB</option>
+          <option value="strategic">Strategic</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Lifecycle Stage</label>
+        <select id="ccLifecycle">
+          <option value="">— Select —</option>
+          <option value="subscriber">Subscriber</option>
+          <option value="lead">Lead</option>
+          <option value="mql">MQL</option>
+          <option value="sql">SQL</option>
+          <option value="opportunity">Opportunity</option>
+          <option value="customer">Customer</option>
+          <option value="evangelist">Evangelist</option>
+          <option value="churned">Churned</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Rating</label>
+        <select id="ccRating">
+          <option value="">— Select —</option>
+          <option value="hot">Hot</option>
+          <option value="warm">Warm</option>
+          <option value="cold">Cold</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Source</label>
+        <select id="ccSource">
+          <option value="">— Select —</option>
+          <option value="manual">Manual</option>
+          <option value="import">Import</option>
+          <option value="web_form">Web Form</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="referral">Referral</option>
+          <option value="outreach">Outreach</option>
+          <option value="api">API</option>
+          <option value="n8n">n8n</option>
+          <option value="crunchbase">Crunchbase</option>
+          <option value="marketplace">Marketplace</option>
+          <option value="partner">Partner</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Employees</label><input id="ccEmployees" type="number" placeholder="e.g. 500"></div>
+      <div class="form-group"><label>Annual Revenue</label><input id="ccRevenue" type="number" placeholder="e.g. 50000000"></div>
+      <div class="form-group"><label>Revenue Currency</label>
+        <select id="ccCurrency">
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="CAD">CAD</option>
+          <option value="AUD">AUD</option>
+          <option value="INR">INR</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Founded Year</label><input id="ccFoundedYear" type="number" placeholder="e.g. 2015"></div>
+      <div class="form-group"><label>Locations</label><input id="ccLocations" type="number" placeholder="e.g. 3"></div>
+      <div class="form-group"><label>Ticker Symbol</label><input id="ccTicker" placeholder="e.g. AAPL"></div>
+      <div class="form-group"><label>SIC Code</label><input id="ccSic" placeholder="e.g. 7371"></div>
+      <div class="form-group"><label>NAICS Code</label><input id="ccNaics" placeholder="e.g. 541511"></div>
+    </div>
+
+    <h4 style="font-size:14px;font-weight:600;margin:14px 0 8px;color:#9ca3af">Address</h4>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group" style="grid-column:1/3"><label>Street</label><input id="ccStreet" placeholder="123 Main St"></div>
+      <div class="form-group"><label>City</label><input id="ccCity" placeholder="San Francisco"></div>
+      <div class="form-group"><label>State / Province</label><input id="ccState" placeholder="CA"></div>
+      <div class="form-group"><label>Zip / Postal Code</label><input id="ccZip" placeholder="94105"></div>
+      <div class="form-group"><label>Country</label><input id="ccCountry" placeholder="United States"></div>
+    </div>
+
+    <h4 style="font-size:14px;font-weight:600;margin:14px 0 8px;color:#9ca3af">Social & Digital</h4>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>LinkedIn URL</label><input id="ccLinkedin" placeholder="https://linkedin.com/company/..."></div>
+      <div class="form-group"><label>Facebook URL</label><input id="ccFacebook" placeholder="https://facebook.com/..."></div>
+      <div class="form-group"><label>Twitter / X URL</label><input id="ccTwitter" placeholder="https://x.com/..."></div>
+      <div class="form-group"><label>Crunchbase URL</label><input id="ccCrunchbase" placeholder="https://crunchbase.com/organization/..."></div>
+    </div>
+
+    <h4 style="font-size:14px;font-weight:600;margin:14px 0 8px;color:#9ca3af">Additional Info</h4>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Funding Stage</label><input id="ccFunding" placeholder="e.g. Series A, Seed"></div>
+      <div class="form-group"><label>Tech Stack</label><input id="ccTechStack" placeholder="e.g. Python, React, AWS"></div>
+      <div class="form-group" style="grid-column:1/3"><label>Description</label><textarea id="ccDesc" placeholder="Company description..." style="min-height:40px"></textarea></div>
+      <div class="form-group" style="grid-column:1/3"><label>Tags</label><input id="ccTags" placeholder="comma-separated"></div>
+      <div class="form-group" style="grid-column:1/3"><label>Notes</label><textarea id="ccNotes" placeholder="Internal notes..." style="min-height:40px"></textarea></div>
+    </div>
+
     <div class="form-actions">
       <button class="btn btn-outline" onclick="closeModal('contactModal')">Cancel</button>
       <button class="btn btn-primary" onclick="createContact()">Create</button>
@@ -229,21 +411,42 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 </div>
 
 <div class="modal" id="dealModal">
-  <div class="modal-content">
-    <h3>New Deal</h3>
-    <div class="form-group"><label>Name</label><input id="dName" placeholder="Enterprise License"></div>
-    <div class="form-group"><label>Value</label><input id="dValue" type="number" placeholder="10000"></div>
+  <div class="modal-content" style="width:520px">
+    <h3 id="dealModalTitle">New Deal</h3>
+    <div class="form-group"><label>Name *</label><input id="dName" placeholder="Enterprise License"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Value</label><input id="dValue" type="number" placeholder="10000"></div>
+      <div class="form-group"><label>Probability</label><input id="dProb" type="number" placeholder="50" min="0" max="100"></div>
+    </div>
     <div class="form-group"><label>Stage</label>
       <select id="dStage">
         <option value="discovery">Discovery</option>
         <option value="qualified">Qualified</option>
         <option value="proposal">Proposal</option>
         <option value="negotiation">Negotiation</option>
+        <option value="closed_won">Closed Won</option>
+        <option value="closed_lost">Closed Lost</option>
       </select>
     </div>
-    <div class="form-actions">
+    <div class="form-group"><label>Description</label><textarea id="dDesc" placeholder="Deal description..." style="min-height:60px"></textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Expected Close</label><input id="dClose" type="date"></div>
+      <div class="form-group"><label>Tags</label><input id="dTags" placeholder="comma-separated"></div>
+    </div>
+    <div class="form-actions" id="dealModalActions">
       <button class="btn btn-outline" onclick="closeModal('dealModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="createDeal()">Create</button>
+      <button class="btn btn-primary" onclick="createDeal()" id="dealSaveBtn">Create</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="dealDetailModal">
+  <div class="modal-content" style="width:640px">
+    <h3 id="dealDetailName">Deal</h3>
+    <div id="dealDetailBody"></div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeModal('dealDetailModal')">Close</button>
+      <button class="btn btn-primary" onclick="editDeal()">Edit</button>
     </div>
   </div>
 </div>
@@ -360,25 +563,110 @@ async function loadContacts() {
       <td><strong>${c.full_name || `${c.first_name} ${c.last_name}`}</strong></td>
       <td>${c.email || ''}</td>
       <td>${c.designation || ''}</td>
+      <td>${c.company_name || ''}</td>
       <td><span class="status-badge status-${c.status}">${c.status}</span></td>
       <td>${c.lead_score}</td>
     </tr>`
-  ).join('') || '<tr><td colspan="5">No contacts yet</td></tr>';
+  ).join('') || '<tr><td colspan="6">No contacts yet</td></tr>';
 }
 
 async function loadDeals() {
-  const data = await api('GET', '/deals?limit=100');
-  if (!data) return;
-  const tbody = document.getElementById('dealsTable');
-  tbody.innerHTML = data.map(d =>
-    `<tr>
-      <td><strong>${d.name}</strong></td>
-      <td><span class="status-badge status-${d.stage === 'closed_won' ? 'won' : d.stage === 'closed_lost' ? 'lost' : ''}">${d.stage}</span></td>
-      <td>$${(d.value || 0).toLocaleString()}</td>
-      <td>${d.probability}%</td>
-      <td>$${((d.value || 0) * (d.probability || 0) / 100).toLocaleString()}</td>
-    </tr>`
-  ).join('') || '<tr><td colspan="5">No deals yet</td></tr>';
+  await loadBoard();
+}
+
+let _dragDealId = null;
+
+async function loadBoard() {
+  const pipelines = await api('GET', '/deals/pipelines');
+  if (!pipelines || pipelines.length === 0) {
+    document.getElementById('kanbanBoard').innerHTML = '<div style="color:#6b7280;padding:40px;text-align:center">No pipelines yet. Create one via the API.</div>';
+    return;
+  }
+  const sel = document.getElementById('pipelineSelect');
+  const prevVal = sel.value;
+  sel.innerHTML = pipelines.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  if (prevVal && [...sel.options].some(o => o.value === prevVal)) sel.value = prevVal;
+  else sel.value = pipelines[0].id;
+
+  const board = await api('GET', `/deals/pipelines/${sel.value}/board`);
+  if (!board) return;
+  const container = document.getElementById('kanbanBoard');
+  container.innerHTML = board.columns.map(col => `
+    <div class="kanban-col" data-stage="${col.stage}" ondragover="onDragOver(event)" ondrop="onDrop(event, '${col.stage}')">
+      <div class="kanban-col-header">
+        <span>${col.label}</span>
+        <span class="kanban-col-count">${col.deals.length}</span>
+      </div>
+      <div class="kanban-col-body">
+        ${col.deals.map(d => `
+          <div class="kanban-card" draggable="true" ondragstart="onDragStart(event, '${d.id}')" onclick="openDealDetail('${d.id}')">
+            ${d.client_name ? `<span class="kanban-card-client">${d.client_name}</span>` : ''}
+            <div class="kanban-card-title">${d.name}</div>
+            <div class="kanban-card-value">$${(d.value || 0).toLocaleString()}</div>
+            <div class="kanban-card-sub">
+              <span>${d.probability}%</span>
+              ${d.contact_name ? `<span>${d.contact_name}</span>` : ''}
+            </div>
+          </div>
+        `).join('') || '<div style="color:#4b5563;font-size:13px;padding:8px;text-align:center">No deals</div>'}
+      </div>
+    </div>
+  `).join('');
+}
+
+function onDragStart(event, dealId) {
+  _dragDealId = dealId;
+  event.dataTransfer.effectAllowed = 'move';
+  event.target.classList.add('dragging');
+}
+
+function onDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  event.currentTarget.classList.add('drag-over');
+}
+
+function onDrop(event, stage) {
+  event.preventDefault();
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  if (!_dragDealId) return;
+  moveDealStage(_dragDealId, stage);
+  _dragDealId = null;
+}
+
+async function moveDealStage(dealId, stage) {
+  const probMap = { discovery: 10, qualified: 30, proposal: 50, negotiation: 70, closed_won: 100, closed_lost: 0 };
+  await api('POST', `/deals/${dealId}/move-stage`, { stage, probability: probMap[stage] || 10 });
+  showToast('Deal moved to ' + stage.replace('_', ' '));
+  loadBoard();
+}
+
+async function openDealDetail(dealId) {
+  const deal = await api('GET', `/deals/${dealId}`);
+  if (!deal) return;
+  document.getElementById('dealDetailName').textContent = deal.name;
+  document.getElementById('dealDetailBody').innerHTML = `
+    <div class="deal-detail-grid">
+      <div><div class="label">Stage</div>${deal.stage}</div>
+      <div><div class="label">Value</div>$${(deal.value || 0).toLocaleString()}</div>
+      <div><div class="label">Probability</div>${deal.probability}%</div>
+      <div><div class="label">Weighted</div>$${((deal.value || 0) * (deal.probability || 0) / 100).toLocaleString()}</div>
+      <div><div class="label">Client</div>${deal.client_name || '—'}</div>
+      <div><div class="label">Contact</div>${deal.contact_name || '—'}</div>
+      <div><div class="label">Currency</div>${deal.currency}</div>
+      <div><div class="label">Expected Close</div>${deal.expected_close_date ? new Date(deal.expected_close_date).toLocaleDateString() : '—'}</div>
+      ${deal.description ? `<div style="grid-column:1/3"><div class="label">Description</div>${deal.description}</div>` : ''}
+      ${deal.tags ? `<div style="grid-column:1/3"><div class="label">Tags</div>${deal.tags}</div>` : ''}
+      <div><div class="label">Created</div>${new Date(deal.created_at).toLocaleDateString()}</div>
+      <div><div class="label">Updated</div>${new Date(deal.updated_at).toLocaleDateString()}</div>
+    </div>`;
+  document.getElementById('dealDetailModal').classList.add('open');
+  window._currentDealId = dealId;
+}
+
+function editDeal() {
+  closeModal('dealDetailModal');
+  showToast('Edit via the deal modal - coming soon');
 }
 
 async function loadSequences() {
@@ -417,13 +705,59 @@ async function createContact() {
   const body = {
     first_name: document.getElementById('cfName').value,
     last_name: document.getElementById('clName').value,
-    email: document.getElementById('cEmail').value,
-    designation: document.getElementById('cDesignation').value,
+    email: document.getElementById('cEmail').value || null,
+    phone: document.getElementById('cPhone').value || null,
+    designation: document.getElementById('cDesignation').value || null,
+    linkedin_url: document.getElementById('cLinkedin').value || null,
+    twitter_url: document.getElementById('cTwitter').value || null,
+    source: document.getElementById('cSource').value,
+    status: document.getElementById('cStatus').value,
+    tags: document.getElementById('cTags').value || null,
+    notes: document.getElementById('cNotes').value || null,
+    // Company fields
+    company_name: document.getElementById('ccName').value || null,
+    company_legal_name: document.getElementById('ccLegalName').value || null,
+    company_domain: document.getElementById('ccDomain').value || null,
+    company_industry: document.getElementById('ccIndustry').value || null,
+    company_website: document.getElementById('ccWebsite').value || null,
+    company_phone: document.getElementById('ccPhone').value || null,
+    company_employee_count: parseInt(document.getElementById('ccEmployees').value) || null,
+    company_annual_revenue: parseFloat(document.getElementById('ccRevenue').value) || null,
+    company_annual_revenue_currency: document.getElementById('ccCurrency').value || null,
+    company_funding_stage: document.getElementById('ccFunding').value || null,
+    company_tech_stack: document.getElementById('ccTechStack').value || null,
+    company_linkedin_url: document.getElementById('ccLinkedin').value || null,
+    company_facebook_url: document.getElementById('ccFacebook').value || null,
+    company_twitter_url: document.getElementById('ccTwitter').value || null,
+    company_crunchbase_url: document.getElementById('ccCrunchbase').value || null,
+    company_account_type: document.getElementById('ccAccountType').value || null,
+    company_account_tier: document.getElementById('ccTier').value || null,
+    company_lifecycle_stage: document.getElementById('ccLifecycle').value || null,
+    company_rating: document.getElementById('ccRating').value || null,
+    company_account_source: document.getElementById('ccSource').value || null,
+    company_sic_code: document.getElementById('ccSic').value || null,
+    company_naics_code: document.getElementById('ccNaics').value || null,
+    company_ticker_symbol: document.getElementById('ccTicker').value || null,
+    company_founded_year: parseInt(document.getElementById('ccFoundedYear').value) || null,
+    company_number_of_locations: parseInt(document.getElementById('ccLocations').value) || null,
+    company_street: document.getElementById('ccStreet').value || null,
+    company_city: document.getElementById('ccCity').value || null,
+    company_state: document.getElementById('ccState').value || null,
+    company_zip_code: document.getElementById('ccZip').value || null,
+    company_country: document.getElementById('ccCountry').value || null,
+    company_description: document.getElementById('ccDesc').value || null,
+    company_tags: document.getElementById('ccTags').value || null,
+    company_notes: document.getElementById('ccNotes').value || null,
   };
-  if (!body.first_name || !body.last_name) { showToast('Name is required', 'error'); return; }
+  if (!body.first_name || !body.last_name) { showToast('First and last name are required', 'error'); return; }
   await api('POST', '/contacts', body);
   closeModal('contactModal');
   showToast('Contact created');
+  // Clear form
+  document.querySelectorAll('#contactModal input, #contactModal textarea, #contactModal select').forEach(el => {
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else el.value = '';
+  });
   loadContacts();
 }
 
@@ -459,15 +793,27 @@ async function createDeal() {
   if (!name) { showToast('Name is required', 'error'); return; }
   const pipelines = await api('GET', '/deals/pipelines');
   if (!pipelines || pipelines.length === 0) { showToast('Create a pipeline first via API', 'error'); return; }
+  const sel = document.getElementById('pipelineSelect');
+  const pipelineId = sel ? sel.value : pipelines[0].id;
   await api('POST', '/deals', {
-    pipeline_id: pipelines[0].id,
+    pipeline_id: pipelineId,
     name,
     value: parseFloat(document.getElementById('dValue').value) || 0,
+    probability: parseInt(document.getElementById('dProb').value) || 10,
     stage: document.getElementById('dStage').value,
+    description: document.getElementById('dDesc').value || null,
+    expected_close_date: document.getElementById('dClose').value ? new Date(document.getElementById('dClose').value).toISOString() : null,
+    tags: document.getElementById('dTags').value || null,
   });
   closeModal('dealModal');
+  document.getElementById('dName').value = '';
+  document.getElementById('dValue').value = '';
+  document.getElementById('dProb').value = '';
+  document.getElementById('dDesc').value = '';
+  document.getElementById('dClose').value = '';
+  document.getElementById('dTags').value = '';
   showToast('Deal created');
-  loadDeals();
+  loadBoard();
 }
 
 /* ── Campaigns ── */
@@ -661,7 +1007,31 @@ async function openContactDetail(contactId) {
   if (!contact) return;
   document.getElementById('contactDetailName').textContent = contact.full_name || `${contact.first_name} ${contact.last_name}`;
   document.getElementById('contactDetailInfo').innerHTML =
-    `Email: ${contact.email || '—'} | Designation: ${contact.designation || '—'} | Status: ${contact.status} | Score: ${contact.lead_score}`;
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:13px">
+      <div><strong>Email:</strong> ${contact.email || '—'}</div>
+      <div><strong>Phone:</strong> ${contact.phone || '—'}</div>
+      <div><strong>Designation:</strong> ${contact.designation || '—'}</div>
+      <div><strong>Status:</strong> ${contact.status}</div>
+      <div><strong>Score:</strong> ${contact.lead_score}</div>
+      <div><strong>Source:</strong> ${contact.source}</div>
+      <div><strong>Tags:</strong> ${contact.tags || '—'}</div>
+    </div>
+    <hr style="border-color:#2d3748;margin:10px 0">
+    <div style="font-weight:600;margin-bottom:6px">Company: ${contact.company_name || '—'}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:13px">
+      <div><strong>Industry:</strong> ${contact.company_industry || '—'}</div>
+      <div><strong>Type:</strong> ${contact.company_account_type || '—'}</div>
+      <div><strong>Tier:</strong> ${contact.company_account_tier || '—'}</div>
+      <div><strong>Lifecycle:</strong> ${contact.company_lifecycle_stage || '—'}</div>
+      <div><strong>Rating:</strong> ${contact.company_rating || '—'}</div>
+      <div><strong>Employees:</strong> ${contact.company_employee_count || '—'}</div>
+      <div><strong>Revenue:</strong> ${contact.company_annual_revenue ? '$' + contact.company_annual_revenue.toLocaleString() : '—'}</div>
+      <div><strong>Founded:</strong> ${contact.company_founded_year || '—'}</div>
+      <div><strong>Domain:</strong> ${contact.company_domain || '—'}</div>
+      <div><strong>Website:</strong> ${contact.company_website || '—'}</div>
+      <div><strong>LinkedIn:</strong> ${contact.company_linkedin_url ? '<a href="'+contact.company_linkedin_url+'" target="_blank" style="color:#3b82f6">link</a>' : '—'}</div>
+      <div><strong>Ticker:</strong> ${contact.company_ticker_symbol || '—'}</div>
+    </div>`;
   const container = document.getElementById('contactTimeline');
   if (!timeline || timeline.length === 0) {
     container.innerHTML = '<p style="color:#6b7280;font-size:13px">No activity yet</p>';

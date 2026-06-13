@@ -7,9 +7,10 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from revenue_os.database import get_db
-from revenue_os.models.activity import Activity, ActivityType
+from revenue_os.models.activity import Activity, ActivityType, EmailActivity
 from revenue_os.models.contact import Contact, ContactStatus
 from revenue_os.models.deal import Deal, DealStage
+from revenue_os.models.task import Task, TaskStatus
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -329,3 +330,192 @@ def lead_sources(db: Session = Depends(get_db)):
         }
         for row in sources
     ]
+
+
+@router.get("/sales-velocity")
+def sales_velocity(db: Session = Depends(get_db)):
+    ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
+
+    won_deals = (
+        db.query(Deal)
+        .filter(
+            Deal.stage == DealStage.CLOSED_WON,
+            Deal.closed_at >= ninety_days_ago,
+        )
+        .all()
+    )
+
+    total_cycle_days = 0
+    total_value = 0
+    count = len(won_deals)
+
+    for d in won_deals:
+        if d.created_at and d.closed_at:
+            delta = (d.closed_at - d.created_at).days
+            total_cycle_days += max(delta, 0)
+        total_value += d.value or 0
+
+    avg_cycle_days = round(total_cycle_days / count, 1) if count else 0
+    monthly_value = round(total_value / 3, 0) if total_value else 0
+    velocity = round(monthly_value / avg_cycle_days, 0) if avg_cycle_days else 0
+
+    return {
+        "period_days": 90,
+        "deals_won": count,
+        "total_revenue": total_value,
+        "avg_cycle_days": avg_cycle_days,
+        "monthly_revenue": monthly_value,
+        "velocity_per_day": velocity,
+    }
+
+
+@router.get("/win-loss")
+def win_loss_analysis(db: Session = Depends(get_db)):
+    ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
+
+    stages = (
+        db.query(
+            Deal.stage,
+            func.count(Deal.id).label("count"),
+            func.coalesce(func.sum(Deal.value), 0).label("value"),
+        )
+        .filter(
+            Deal.stage.in_([DealStage.CLOSED_WON, DealStage.CLOSED_LOST]),
+            Deal.closed_at >= ninety_days_ago,
+        )
+        .group_by(Deal.stage)
+        .all()
+    )
+
+    result = {"won": {"count": 0, "value": 0}, "lost": {"count": 0, "value": 0}}
+    for stage, count, value in stages:
+        key = "won" if stage == DealStage.CLOSED_WON else "lost"
+        result[key] = {"count": count, "value": float(value)}
+
+    total = result["won"]["count"] + result["lost"]["count"]
+    result["win_rate"] = round((result["won"]["count"] / total * 100), 1) if total else 0
+    return result
+
+
+@router.get("/stage-conversion")
+def stage_conversion(db: Session = Depends(get_db)):
+    stages_order = [
+        DealStage.DISCOVERY,
+        DealStage.QUALIFIED,
+        DealStage.PROPOSAL,
+        DealStage.NEGOTIATION,
+        DealStage.CLOSED_WON,
+    ]
+
+    stage_counts = {}
+    for stage in stages_order:
+        stage_counts[stage.value] = (
+            db.query(func.count(Deal.id))
+            .filter(Deal.stage == stage)
+            .scalar()
+            or 0
+        )
+
+    results = []
+    for i, stage in enumerate(stages_order):
+        current = stage_counts[stage.value]
+        prev_stage = stages_order[i - 1].value if i > 0 else None
+        prev_count = stage_counts.get(prev_stage, 0) if prev_stage else current
+        conversion_rate = round((current / prev_count * 100), 1) if prev_count else 0
+        drop_off = prev_count - current if prev_count else 0
+
+        results.append({
+            "stage": stage.value,
+            "count": current,
+            "from_previous": conversion_rate,
+            "drop_off": drop_off,
+        })
+
+    return results
+
+
+@router.get("/rep-performance")
+def rep_performance(db: Session = Depends(get_db)):
+    ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
+
+    rep_stats = (
+        db.query(
+            Deal.owner_id,
+            func.count(Deal.id).label("total_deals"),
+            func.sum(
+                case(
+                    (Deal.stage == DealStage.CLOSED_WON, 1),
+                    else_=0,
+                )
+            ).label("won"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Deal.stage == DealStage.CLOSED_WON, Deal.value),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("revenue"),
+        )
+        .filter(
+            Deal.owner_id.isnot(None),
+            Deal.created_at >= ninety_days_ago,
+        )
+        .group_by(Deal.owner_id)
+        .all()
+    )
+
+    from revenue_os.models.user import User
+    users = {str(u.id): u.full_name for u in db.query(User).all()}
+
+    results = []
+    for owner_id, total, won, revenue in rep_stats:
+        uid_str = str(owner_id)
+        results.append({
+            "owner_id": uid_str,
+            "owner_name": users.get(uid_str, "Unknown"),
+            "total_deals": total,
+            "won": won or 0,
+            "revenue": float(revenue),
+            "win_rate": round((won or 0) / total * 100, 1) if total else 0,
+        })
+
+    return sorted(results, key=lambda r: r["revenue"], reverse=True)
+
+
+@router.get("/deal-aging")
+def deal_aging(db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    active_stages = [
+        DealStage.DISCOVERY,
+        DealStage.QUALIFIED,
+        DealStage.PROPOSAL,
+        DealStage.NEGOTIATION,
+    ]
+
+    aging = []
+    for stage in active_stages:
+        deals = (
+            db.query(Deal)
+            .filter(Deal.stage == stage)
+            .all()
+        )
+        total_days = 0
+        count = len(deals)
+        for d in deals:
+            if d.created_at:
+                total_days += (now - d.created_at).days
+
+        avg_days = round(total_days / count, 1) if count else 0
+
+        stale = sum(1 for d in deals if d.created_at and (now - d.created_at).days > 30)
+
+        aging.append({
+            "stage": stage.value,
+            "count": count,
+            "avg_days_in_stage": avg_days,
+            "stale_deals": stale,
+        })
+
+    return aging

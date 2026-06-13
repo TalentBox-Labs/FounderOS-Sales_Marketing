@@ -1,9 +1,14 @@
 from revenue_os.models.contact import (
+    AccountRating,
+    AccountSource,
+    AccountTier,
+    AccountType,
     Company,
     Contact,
     ContactSource,
     ContactStatus,
     Industry,
+    LifecycleStage,
 )
 from revenue_os.models.deal import Deal, DealStage, Pipeline, PipelineType
 from revenue_os.models.activity import (
@@ -30,6 +35,13 @@ from revenue_os.models.project import (
     ProjectStatus,
     TeamMember,
 )
+from revenue_os.models.automation import (
+    Action,
+    Trigger,
+    Workflow,
+    WorkflowExecution,
+    WorkflowStep,
+)
 from revenue_os.models.content import (
     Article,
     ContentLibrary,
@@ -46,13 +58,19 @@ from revenue_os.models.automation import (
 )
 from revenue_os.models.user import User
 from revenue_os.models.sequence_enrollment import SequenceEnrollment
+from revenue_os.models.task import Task, TaskPriority, TaskStatus, RelatedEntityType
 
 __all__ = [
+    "AccountRating",
+    "AccountSource",
+    "AccountTier",
+    "AccountType",
     "Company",
     "Contact",
     "ContactSource",
     "ContactStatus",
     "Industry",
+    "LifecycleStage",
     "Deal",
     "DealStage",
     "Pipeline",
@@ -87,4 +105,8 @@ __all__ = [
     "WorkflowStep",
     "User",
     "SequenceEnrollment",
+    "Task",
+    "TaskPriority",
+    "TaskStatus",
+    "RelatedEntityType",
 ]

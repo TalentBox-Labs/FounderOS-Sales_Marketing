@@ -10,9 +10,22 @@ from sqlalchemy.orm import Session
 
 from revenue_os.database import get_db
 from revenue_os.integrations.n8n import new_lead_webhook
-from revenue_os.models.contact import Company, Contact, ContactSource, ContactStatus
+from revenue_os.models.contact import (
+    AccountRating,
+    AccountSource,
+    AccountTier,
+    AccountType,
+    Company,
+    Contact,
+    ContactSource,
+    ContactStatus,
+    Industry,
+    LifecycleStage,
+)
+from revenue_os.services.export_service import export_contacts_csv
 from revenue_os.services.scoring_service import score_contact
 from revenue_os.services.search_service import delete_index, index_contact, search
+from revenue_os.services.dedup_service import find_duplicate_contacts, merge_contacts
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -30,6 +43,42 @@ class ContactCreate(BaseModel):
     status: ContactStatus = ContactStatus.LEAD
     tags: Optional[str] = None
     notes: Optional[str] = None
+    # Company fields
+    company_name: Optional[str] = None
+    company_domain: Optional[str] = None
+    company_legal_name: Optional[str] = None
+    company_industry: Optional[str] = None
+    company_website: Optional[str] = None
+    company_description: Optional[str] = None
+    company_phone: Optional[str] = None
+    company_street: Optional[str] = None
+    company_city: Optional[str] = None
+    company_state: Optional[str] = None
+    company_zip_code: Optional[str] = None
+    company_country: Optional[str] = None
+    company_employee_count: Optional[int] = None
+    company_annual_revenue: Optional[float] = None
+    company_annual_revenue_currency: Optional[str] = None
+    company_funding_stage: Optional[str] = None
+    company_tech_stack: Optional[str] = None
+    company_linkedin_url: Optional[str] = None
+    company_facebook_url: Optional[str] = None
+    company_twitter_url: Optional[str] = None
+    company_crunchbase_url: Optional[str] = None
+    company_logo_url: Optional[str] = None
+    company_account_type: Optional[str] = None
+    company_account_tier: Optional[str] = None
+    company_lifecycle_stage: Optional[str] = None
+    company_rating: Optional[str] = None
+    company_account_source: Optional[str] = None
+    company_sic_code: Optional[str] = None
+    company_naics_code: Optional[str] = None
+    company_ticker_symbol: Optional[str] = None
+    company_founded_year: Optional[int] = None
+    company_number_of_locations: Optional[int] = None
+    company_owner_id: Optional[str] = None
+    company_tags: Optional[str] = None
+    company_notes: Optional[str] = None
 
 
 class ContactUpdate(BaseModel):
@@ -62,10 +111,108 @@ class ContactResponse(BaseModel):
     lead_score: int
     tags: Optional[str] = None
     notes: Optional[str] = None
+    # Company fields
+    company_name: Optional[str] = None
+    company_legal_name: Optional[str] = None
+    company_domain: Optional[str] = None
+    company_industry: Optional[str] = None
+    company_website: Optional[str] = None
+    company_description: Optional[str] = None
+    company_phone: Optional[str] = None
+    company_street: Optional[str] = None
+    company_city: Optional[str] = None
+    company_state: Optional[str] = None
+    company_zip_code: Optional[str] = None
+    company_country: Optional[str] = None
+    company_employee_count: Optional[int] = None
+    company_annual_revenue: Optional[float] = None
+    company_annual_revenue_currency: Optional[str] = None
+    company_funding_stage: Optional[str] = None
+    company_tech_stack: Optional[str] = None
+    company_linkedin_url: Optional[str] = None
+    company_facebook_url: Optional[str] = None
+    company_twitter_url: Optional[str] = None
+    company_crunchbase_url: Optional[str] = None
+    company_logo_url: Optional[str] = None
+    company_account_type: Optional[str] = None
+    company_account_tier: Optional[str] = None
+    company_lifecycle_stage: Optional[str] = None
+    company_rating: Optional[str] = None
+    company_account_source: Optional[str] = None
+    company_sic_code: Optional[str] = None
+    company_naics_code: Optional[str] = None
+    company_ticker_symbol: Optional[str] = None
+    company_founded_year: Optional[int] = None
+    company_number_of_locations: Optional[int] = None
+    company_owner_id: Optional[str] = None
+    company_tags: Optional[str] = None
+    company_notes: Optional[str] = None
+    company_created_at: Optional[datetime] = None
+    company_updated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_with_company(cls, contact):
+        company = getattr(contact, "company", None)
+        return cls(
+            id=contact.id,
+            first_name=contact.first_name,
+            last_name=contact.last_name,
+            full_name=contact.full_name,
+            company_id=contact.company_id,
+            designation=contact.designation,
+            email=contact.email,
+            phone=contact.phone,
+            linkedin_url=contact.linkedin_url,
+            twitter_url=contact.twitter_url,
+            source=contact.source,
+            status=contact.status,
+            lead_score=contact.lead_score,
+            tags=contact.tags,
+            notes=contact.notes,
+            company_name=company.name if company else None,
+            company_legal_name=company.legal_name if company else None,
+            company_domain=company.domain if company else None,
+            company_industry=company.industry.value if company and company.industry else None,
+            company_website=company.website_url if company else None,
+            company_description=company.description if company else None,
+            company_phone=company.phone if company else None,
+            company_street=company.street if company else None,
+            company_city=company.city if company else None,
+            company_state=company.state if company else None,
+            company_zip_code=company.zip_code if company else None,
+            company_country=company.country if company else None,
+            company_employee_count=company.employee_count if company else None,
+            company_annual_revenue=company.annual_revenue if company else None,
+            company_annual_revenue_currency=company.annual_revenue_currency if company else None,
+            company_funding_stage=company.funding_stage if company else None,
+            company_tech_stack=company.tech_stack if company else None,
+            company_linkedin_url=company.linkedin_url if company else None,
+            company_facebook_url=company.facebook_url if company else None,
+            company_twitter_url=company.twitter_url if company else None,
+            company_crunchbase_url=company.crunchbase_url if company else None,
+            company_logo_url=company.logo_url if company else None,
+            company_account_type=company.account_type.value if company and company.account_type else None,
+            company_account_tier=company.account_tier.value if company and company.account_tier else None,
+            company_lifecycle_stage=company.lifecycle_stage.value if company and company.lifecycle_stage else None,
+            company_rating=company.rating.value if company and company.rating else None,
+            company_account_source=company.account_source.value if company and company.account_source else None,
+            company_sic_code=company.sic_code if company else None,
+            company_naics_code=company.naics_code if company else None,
+            company_ticker_symbol=company.ticker_symbol if company else None,
+            company_founded_year=company.founded_year if company else None,
+            company_number_of_locations=company.number_of_locations if company else None,
+            company_owner_id=str(company.owner_id) if company and company.owner_id else None,
+            company_tags=company.tags if company else None,
+            company_notes=company.notes if company else None,
+            company_created_at=company.created_at if company else None,
+            company_updated_at=company.updated_at if company else None,
+            created_at=contact.created_at,
+            updated_at=contact.updated_at,
+        )
 
 
 @router.get("", response_model=list[ContactResponse])
@@ -77,7 +224,8 @@ def list_contacts(
     limit: int = Query(50, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Contact)
+    from sqlalchemy.orm import joinedload
+    query = db.query(Contact).options(joinedload(Contact.company))
     if status:
         query = query.filter(Contact.status == status)
     if source:
@@ -90,7 +238,8 @@ def list_contacts(
             | Contact.email.ilike(pattern)
             | Contact.designation.ilike(pattern)
         )
-    return query.offset(skip).limit(limit).all()
+    contacts = query.offset(skip).limit(limit).all()
+    return [ContactResponse.from_orm_with_company(c) for c in contacts]
 
 
 @router.get("/{contact_id}/timeline")
@@ -296,20 +445,112 @@ def search_contacts(
 
 @router.get("/{contact_id}", response_model=ContactResponse)
 def get_contact(contact_id: str, db: Session = Depends(get_db)):
-    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    from sqlalchemy.orm import joinedload
+    contact = db.query(Contact).options(joinedload(Contact.company)).filter(Contact.id == contact_id).first()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
-    return contact
+    return ContactResponse.from_orm_with_company(contact)
 
 
 @router.post("", response_model=ContactResponse, status_code=201)
 def create_contact(body: ContactCreate, db: Session = Depends(get_db)):
+    company_id = None
+    if body.company_id:
+        company_id = uuid.UUID(body.company_id)
+    elif body.company_name:
+        existing = db.query(Company).filter(
+            Company.name.ilike(body.company_name)
+        ).first()
+        if existing:
+            company_id = existing.id
+        else:
+            industry_val = None
+            if body.company_industry:
+                try:
+                    industry_val = Industry(body.company_industry.lower())
+                except ValueError:
+                    industry_val = Industry.OTHER
+
+            account_type_val = None
+            if body.company_account_type:
+                try:
+                    account_type_val = AccountType(body.company_account_type.lower())
+                except ValueError:
+                    pass
+
+            account_tier_val = None
+            if body.company_account_tier:
+                try:
+                    account_tier_val = AccountTier(body.company_account_tier.lower())
+                except ValueError:
+                    pass
+
+            lifecycle_val = None
+            if body.company_lifecycle_stage:
+                try:
+                    lifecycle_val = LifecycleStage(body.company_lifecycle_stage.lower())
+                except ValueError:
+                    pass
+
+            rating_val = None
+            if body.company_rating:
+                try:
+                    rating_val = AccountRating(body.company_rating.lower())
+                except ValueError:
+                    pass
+
+            account_source_val = None
+            if body.company_account_source:
+                try:
+                    account_source_val = AccountSource(body.company_account_source.lower())
+                except ValueError:
+                    pass
+
+            company = Company(
+                name=body.company_name,
+                legal_name=body.company_legal_name,
+                domain=body.company_domain,
+                industry=industry_val,
+                website_url=body.company_website,
+                description=body.company_description,
+                phone=body.company_phone,
+                street=body.company_street,
+                city=body.company_city,
+                state=body.company_state,
+                zip_code=body.company_zip_code,
+                country=body.company_country,
+                employee_count=body.company_employee_count,
+                annual_revenue=body.company_annual_revenue,
+                annual_revenue_currency=body.company_annual_revenue_currency,
+                funding_stage=body.company_funding_stage,
+                tech_stack=body.company_tech_stack,
+                linkedin_url=body.company_linkedin_url,
+                facebook_url=body.company_facebook_url,
+                twitter_url=body.company_twitter_url,
+                crunchbase_url=body.company_crunchbase_url,
+                logo_url=body.company_logo_url,
+                account_type=account_type_val,
+                account_tier=account_tier_val,
+                lifecycle_stage=lifecycle_val,
+                rating=rating_val,
+                account_source=account_source_val,
+                sic_code=body.company_sic_code,
+                naics_code=body.company_naics_code,
+                ticker_symbol=body.company_ticker_symbol,
+                founded_year=body.company_founded_year,
+                number_of_locations=body.company_number_of_locations,
+                owner_id=uuid.UUID(body.company_owner_id) if body.company_owner_id else None,
+                tags=body.company_tags,
+                notes=body.company_notes,
+            )
+            db.add(company)
+            db.flush()
+            company_id = company.id
+
     contact = Contact(
         first_name=body.first_name,
         last_name=body.last_name,
-        company_id=(
-            uuid.UUID(body.company_id) if body.company_id else None
-        ),
+        company_id=company_id,
         designation=body.designation,
         email=body.email,
         phone=body.phone,
@@ -340,7 +581,7 @@ def create_contact(body: ContactCreate, db: Session = Depends(get_db)):
         email=contact.email or "",
     )
 
-    return contact
+    return ContactResponse.from_orm_with_company(contact)
 
 
 @router.put("/{contact_id}", response_model=ContactResponse)
@@ -349,7 +590,8 @@ def update_contact(
     body: ContactUpdate,
     db: Session = Depends(get_db),
 ):
-    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    from sqlalchemy.orm import joinedload
+    contact = db.query(Contact).options(joinedload(Contact.company)).filter(Contact.id == contact_id).first()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
@@ -362,7 +604,7 @@ def update_contact(
 
     db.commit()
     db.refresh(contact)
-    return contact
+    return ContactResponse.from_orm_with_company(contact)
 
 
 @router.delete("/{contact_id}", status_code=204)
@@ -373,3 +615,55 @@ def delete_contact(contact_id: str, db: Session = Depends(get_db)):
     delete_index(contact.id)
     db.delete(contact)
     db.commit()
+
+
+@router.get("/export/csv")
+def export_contacts(db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    csv_data = export_contacts_csv(db)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=contacts.csv"},
+    )
+
+
+class MergeBody(BaseModel):
+    primary_id: str
+    duplicate_id: str
+
+
+@router.post("/merge")
+def merge_contacts_endpoint(body: MergeBody, db: Session = Depends(get_db)):
+    result = merge_contacts(
+        db, uuid.UUID(body.primary_id), uuid.UUID(body.duplicate_id)
+    )
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/dedup")
+def find_duplicates(
+    email: Optional[str] = Query(None),
+    first_name: Optional[str] = Query(None),
+    last_name: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    threshold: float = Query(0.8, ge=0.1, le=1.0),
+    db: Session = Depends(get_db),
+):
+    return find_duplicate_contacts(
+        db,
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        company_id=uuid.UUID(company_id) if company_id else None,
+        threshold=threshold,
+    )
+
+
+@router.get("/export/csv")
+def export_contacts_csv_endpoint(db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    csv_data = export_contacts_csv(db)
+    return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=contacts.csv"})
