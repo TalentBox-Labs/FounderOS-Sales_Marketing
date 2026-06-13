@@ -66,6 +66,8 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
     <a onclick="showPage('contacts')">Contacts</a>
     <a onclick="showPage('deals')">Deals</a>
     <a onclick="showPage('outreach')">Outreach</a>
+    <a onclick="showPage('prospecting')">Prospecting</a>
+    <a onclick="showPage('orchestration')">Orchestration</a>
     <a onclick="showPage('search')">Search</a>
   </nav>
 </div>
@@ -102,6 +104,54 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
     <button class="btn btn-primary" onclick="doSearch()">Search</button>
   </div>
   <div id="searchResults"></div>
+</div>
+
+<div class="main" id="page-prospecting" style="display:none">
+  <div class="header"><h2>Prospecting</h2></div>
+  <div class="grid" id="prospectingInfo"></div>
+  <h3 class="section-title">Build Prospecting Plan</h3>
+  <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-bottom:16px">
+    <div class="form-group" style="flex:1;min-width:120px"><label>Target Count</label><input id="ppCount" type="number" value="50" min="1" max="5000"></div>
+    <div class="form-group" style="flex:1;min-width:120px"><label>Min Score</label><input id="ppScore" type="number" value="25" min="0" max="100"></div>
+    <div class="form-group" style="flex:1;min-width:120px">
+      <label>Scraper</label><select id="ppScraper"><option value="true">On</option><option value="false">Off</option></select>
+    </div>
+    <div class="form-group" style="flex:1;min-width:120px">
+      <label>MCP</label><select id="ppMcp"><option value="true">On</option><option value="false">Off</option></select>
+    </div>
+    <button class="btn btn-primary" onclick="buildProspectingPlan()">Build Plan</button>
+  </div>
+  <div id="prospectingPlan"></div>
+  <h3 class="section-title">Matched Contacts</h3>
+  <table><thead><tr><th>Name</th><th>Email</th><th>Score</th><th>Source</th></tr></thead><tbody id="prospectingContacts"></tbody></table>
+</div>
+
+<div class="main" id="page-orchestration" style="display:none">
+  <div class="header"><h2>GTM Orchestration</h2></div>
+  <div class="grid" id="orchestrationInfo"></div>
+  <h3 class="section-title">New Campaign</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+    <div class="form-group"><label>Topic</label><input id="orTopic" placeholder="e.g. AI recruiting"></div>
+    <div class="form-group"><label>Keyword</label><input id="orKeyword" placeholder="e.g. AI recruiting software"></div>
+    <div class="form-group"><label>Brand</label>
+      <select id="orBrand"><option value="workcrew">WorkCrew</option><option value="hirestack">HireStack</option><option value="founder">Founder</option></select>
+    </div>
+    <div class="form-group"><label>Backend</label>
+      <select id="orBackend"><option value="hermes">Hermes</option><option value="openclaw">OpenClaw</option></select>
+    </div>
+    <div class="form-group"><label>Funnel Stage</label>
+      <select id="orFunnel"><option value="awareness">Awareness</option><option value="consideration">Consideration</option><option value="decision">Decision</option></select>
+    </div>
+    <div class="form-group"><label>Audience</label><input id="orAudience" value="recruiters and hiring managers"></div>
+    <div class="form-group" style="grid-column:1/3"><label>Geo Target</label><input id="orGeo" placeholder="e.g. US"></div>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:24px">
+    <button class="btn btn-primary" onclick="buildOrchestrationPlan()">Build Strategy</button>
+    <button class="btn btn-primary" onclick="runOrchestration()">Run Campaign</button>
+  </div>
+  <div id="orchestrationResult"></div>
+  <h3 class="section-title">Recent Runs</h3>
+  <table><thead><tr><th>ID</th><th>Topic</th><th>Backend</th><th>Status</th><th>Created</th></tr></thead><tbody id="orchestrationLogs"></tbody></table>
 </div>
 
 <div class="modal" id="contactModal">
@@ -193,6 +243,8 @@ function showPage(name) {
   if (name === 'contacts') loadContacts();
   if (name === 'deals') loadDeals();
   if (name === 'outreach') loadSequences();
+  if (name === 'prospecting') { loadProspectingInfo(); document.getElementById('prospectingPlan').innerHTML = ''; }
+  if (name === 'orchestration') { loadOrchestrationInfo(); loadOrchestrationLogs(); }
 }
 
 async function loadDashboard() {
@@ -310,6 +362,93 @@ async function createDeal() {
   closeModal('dealModal');
   showToast('Deal created');
   loadDeals();
+}
+
+/* ── Prospecting ── */
+async function loadProspectingInfo() {
+  const d = await api('GET', '/prospecting/providers');
+  if (!d) return;
+  document.getElementById('prospectingInfo').innerHTML = [
+    { label: 'Scraper', value: d.providers?.scraper ?? 'off', cls: d.providers?.scraper === 'on' ? 'green' : '' },
+    { label: 'MCP', value: d.providers?.mcp ?? 'off', cls: d.providers?.mcp === 'on' ? 'green' : '' },
+    { label: 'Daily Limit', value: d.thresholds?.daily_limit || 500, cls: '' },
+    { label: 'Used Today', value: d.thresholds?.used_today || 0, cls: 'yellow' },
+  ].map(k => `<div class="card"><div class="label">${k.label}</div><div class="value ${k.cls}">${k.value}</div></div>`).join('');
+}
+
+async function buildProspectingPlan() {
+  const body = {
+    target_count: parseInt(document.getElementById('ppCount').value) || 50,
+    min_score: parseInt(document.getElementById('ppScore').value) || 25,
+    allow_scraper: document.getElementById('ppScraper').value === 'true',
+    allow_mcp: document.getElementById('ppMcp').value === 'true',
+  };
+  const d = await api('POST', '/prospecting/plan', body);
+  if (!d) return;
+  const plan = d.plan || {};
+  document.getElementById('prospectingPlan').innerHTML =
+    `<div class="card"><strong>Plan Summary</strong><br>` +
+    `Target: ${plan.target_count} | Candidates Found: ${plan.candidates_found || 0}<br>` +
+    `Existing: ${plan.existing || 0} | New to Enrich: ${plan.new_to_enrich || 0}<br>` +
+    `Estimated Time: ${plan.estimated_minutes || 0} min</div>`;
+  const tbody = document.getElementById('prospectingContacts');
+  tbody.innerHTML = (plan.contacts || []).map(c =>
+    `<tr><td><strong>${c.name}</strong></td><td>${c.email || ''}</td><td>${c.score}</td><td>${c.source || ''}</td></tr>`
+  ).join('') || '<tr><td colspan="4">No contacts matched</td></tr>';
+}
+
+/* ── Orchestration ── */
+async function loadOrchestrationInfo() {
+  const d = await api('GET', '/orchestration/backends');
+  if (!d) return;
+  document.getElementById('orchestrationInfo').innerHTML = d.supported.map(b =>
+    `<div class="card"><div class="label">Backend</div><div class="value">${b}</div></div>`
+  ).join('');
+}
+
+async function buildOrchestrationPlan() {
+  const body = {
+    topic: document.getElementById('orTopic').value,
+    keyword: document.getElementById('orKeyword').value,
+    brand: document.getElementById('orBrand').value,
+    backend: document.getElementById('orBackend').value,
+    funnel_stage: document.getElementById('orFunnel').value,
+    audience: document.getElementById('orAudience').value,
+    geo_target: document.getElementById('orGeo').value,
+  };
+  if (!body.topic) { showToast('Topic is required', 'error'); return; }
+  const d = await api('POST', '/orchestration/plan', body);
+  if (!d) return;
+  document.getElementById('orchestrationResult').innerHTML =
+    `<div class="card"><pre style="white-space:pre-wrap;font-size:13px;color:#d1d5db;margin:0">${JSON.stringify(d.plan, null, 2)}</pre></div>`;
+}
+
+async function runOrchestration() {
+  const body = {
+    topic: document.getElementById('orTopic').value,
+    keyword: document.getElementById('orKeyword').value,
+    brand: document.getElementById('orBrand').value,
+    backend: document.getElementById('orBackend').value,
+    funnel_stage: document.getElementById('orFunnel').value,
+    audience: document.getElementById('orAudience').value,
+    geo_target: document.getElementById('orGeo').value,
+  };
+  if (!body.topic) { showToast('Topic is required', 'error'); return; }
+  const d = await api('POST', '/orchestration/run', body);
+  if (!d) return;
+  showToast('Campaign launched');
+  document.getElementById('orchestrationResult').innerHTML =
+    `<div class="card"><pre style="white-space:pre-wrap;font-size:13px;color:#d1d5db;margin:0">${JSON.stringify(d.result, null, 2)}</pre></div>`;
+  loadOrchestrationLogs();
+}
+
+async function loadOrchestrationLogs() {
+  const d = await api('GET', '/orchestration/logs?limit=20');
+  if (!d) return;
+  const tbody = document.getElementById('orchestrationLogs');
+  tbody.innerHTML = (d.runs || []).map(r =>
+    `<tr><td style="font-family:mono;font-size:12px">${r.id?.slice(0,8)||''}</td><td>${r.topic||''}</td><td>${r.backend||''}</td><td><span class="status-badge">${r.status||'created'}</span></td><td>${r.created_at ? new Date(r.created_at).toLocaleString() : ''}</td></tr>`
+  ).join('') || '<tr><td colspan="5">No runs yet</td></tr>';
 }
 
 async function init() {

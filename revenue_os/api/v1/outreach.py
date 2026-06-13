@@ -16,6 +16,7 @@ from revenue_os.models.activity import (
     SequenceStep,
 )
 from revenue_os.services.ai_service import generate_cold_email
+from revenue_os.services.search_service import index_activity
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
 
@@ -195,6 +196,11 @@ def create_activity(body: ActivityCreate, db: Session = Depends(get_db)):
     db.add(activity)
     db.commit()
     db.refresh(activity)
+    index_activity(
+        activity_id=activity.id,
+        subject=activity.subject,
+        body=activity.body,
+    )
     return activity
 
 
