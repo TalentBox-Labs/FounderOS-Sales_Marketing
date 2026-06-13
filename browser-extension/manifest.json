@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Revenue OS — Profile Extractor",
+  "version": "1.0.0",
+  "description": "Extract LinkedIn & web profiles and sync them to your Revenue OS CRM with one click.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["*://*/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon-16.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.linkedin.com/in/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  }
+}

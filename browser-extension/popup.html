@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Revenue OS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e1e4ea; width: 360px; padding: 16px; }
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #fff; }
+    h2 span { color: #3b82f6; }
+    .form-group { margin-bottom: 10px; }
+    label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 3px; }
+    input, select, textarea { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #374151; background: #1a1d28; color: #e1e4ea; font-size: 13px; font-family: inherit; }
+    textarea { resize: vertical; min-height: 50px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; border: none; cursor: pointer; width: 100%; justify-content: center; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-outline { background: transparent; border: 1px solid #374151; color: #9ca3af; margin-top: 8px; }
+    .btn-outline:hover { border-color: #6b7280; color: #fff; }
+    .card { background: #1a1d28; border: 1px solid #262a36; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .card .label { font-size: 11px; color: #6b7280; }
+    .card .val { font-size: 13px; font-weight: 500; color: #e1e4ea; word-break: break-all; }
+    .toast { position: fixed; bottom: 12px; left: 12px; right: 12px; background: #22c55e; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 13px; text-align: center; opacity: 0; transition: opacity 0.3s; z-index: 10; }
+    .toast.error { background: #ef4444; }
+    .toast.show { opacity: 1; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+    .tab { flex: 1; padding: 6px; text-align: center; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; background: #1a1d28; color: #6b7280; border: 1px solid transparent; }
+    .tab.active { background: #1f2937; color: #fff; border-color: #3b82f6; }
+    .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; background: #1e3a5f; color: #60a5fa; }
+    .url { font-size: 11px; color: #6b7280; word-break: break-all; margin-bottom: 8px; padding: 4px 6px; background: #0f1117; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h2>Revenue <span>OS</span></h2>
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('extract')">Extract</div>
+    <div class="tab" onclick="switchTab('manual')">Manual</div>
+    <div class="tab" onclick="switchTab('settings')">Settings</div>
+  </div>
+
+  <!-- Extract Tab -->
+  <div id="tab-extract">
+    <div class="card">
+      <div class="label">Name</div>
+      <div class="val" id="extractName">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Headline / Title</div>
+      <div class="val" id="extractTitle">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Company</div>
+      <div class="val" id="extractCompany">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Email</div>
+      <input id="extractEmail" placeholder="Enter email">
+    </div>
+    <div class="card">
+      <div class="label">LinkedIn URL</div>
+      <div class="url" id="extractUrl">—</div>
+    </div>
+    <button class="btn btn-primary" id="syncBtn" onclick="syncToCRM()">Sync to CRM</button>
+    <div id="extractStatus" style="margin-top:8px;font-size:12px;color:#6b7280"></div>
+  </div>
+
+  <!-- Manual Tab -->
+  <div id="tab-manual" style="display:none">
+    <div class="form-group"><label>First Name *</label><input id="mFirstName" placeholder="John"></div>
+    <div class="form-group"><label>Last Name</label><input id="mLastName" placeholder="Doe"></div>
+    <div class="form-group"><label>Email</label><input id="mEmail" placeholder="john@example.com"></div>
+    <div class="form-group"><label>Designation</label><input id="mDesignation" placeholder="CEO"></div>
+    <div class="form-group"><label>Company</label><input id="mCompany" placeholder="Acme Inc"></div>
+    <div class="form-group"><label>LinkedIn URL</label><input id="mLinkedin" placeholder="https://linkedin.com/in/..."></div>
+    <div class="form-group"><label>Tags</label><input id="mTags" placeholder="comma-separated"></div>
+    <div class="form-group"><label>Notes</label><textarea id="mNotes" placeholder="Additional info..."></textarea></div>
+    <button class="btn btn-primary" onclick="manualSync()">Add Contact</button>
+    <div id="manualStatus" style="margin-top:8px;font-size:12px;color:#6b7280"></div>
+  </div>
+
+  <!-- Settings Tab -->
+  <div id="tab-settings" style="display:none">
+    <div class="form-group"><label>API URL</label><input id="sApiUrl" placeholder="https://your-server.com/api/v1"></div>
+    <div class="form-group"><label>API Key / Token</label><input id="sApiKey" type="password" placeholder="Bearer token or API key"></div>
+    <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    <button class="btn btn-outline" onclick="clearSettings()">Clear Saved Data</button>
+    <div id="settingsStatus" style="margin-top:8px;font-size:12px;color:#6b7280"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

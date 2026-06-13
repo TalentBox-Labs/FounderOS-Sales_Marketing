@@ -85,8 +85,15 @@ td { padding: 12px; font-size: 14px; border-bottom: 1px solid #1f2937; }
 </div>
 
 <div class="main" id="page-contacts" style="display:none">
-  <div class="header"><h2>Contacts</h2><button class="btn btn-primary" onclick="openContactModal()">+ Add Contact</button></div>
+  <div class="header"><h2>Contacts</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-primary" onclick="document.getElementById('uploadInput').click()">+ Bulk Upload</button>
+      <button class="btn btn-primary" onclick="openContactModal()">+ Add Contact</button>
+      <input type="file" id="uploadInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="bulkUpload(event)">
+    </div>
+  </div>
   <table><thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Status</th><th>Score</th></tr></thead><tbody id="contactsTable" style="cursor:pointer"></tbody></table>
+  <div id="uploadResult" style="margin-top:12px"></div>
 </div>
 
 <div class="main" id="page-deals" style="display:none">
@@ -418,6 +425,33 @@ async function createContact() {
   closeModal('contactModal');
   showToast('Contact created');
   loadContacts();
+}
+
+async function bulkUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch(`${API}/contacts/bulk-upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form,
+    });
+    const result = await r.json();
+    if (!r.ok) { showToast(result.detail || 'Upload failed', 'error'); return; }
+    const el = document.getElementById('uploadResult');
+    el.innerHTML = `<div class="card" style="margin-top:8px">
+      <strong>Upload complete</strong><br>
+      Created: ${result.created} | Skipped: ${result.skipped} | Errors: ${result.errors.length} / ${result.total_rows} rows
+      ${result.errors.length ? '<br><span style="color:#f87171;font-size:12px">' + result.errors.map(e => `Row ${e.row}: ${e.error}`).join('<br>') + '</span>' : ''}
+    </div>`;
+    showToast(`Created ${result.created} contacts`);
+    loadContacts();
+  } catch(e) {
+    showToast('Upload failed: ' + e.message, 'error');
+  }
+  event.target.value = '';
 }
 
 async function createDeal() {

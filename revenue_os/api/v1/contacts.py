@@ -4,13 +4,13 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from revenue_os.database import get_db
 from revenue_os.integrations.n8n import new_lead_webhook
-from revenue_os.models.contact import Contact, ContactSource, ContactStatus
+from revenue_os.models.contact import Company, Contact, ContactSource, ContactStatus
 from revenue_os.services.scoring_service import score_contact
 from revenue_os.services.search_service import delete_index, index_contact, search
 
@@ -141,6 +141,148 @@ def contact_timeline(
                 }
         results.append(item)
     return results
+
+
+@router.post("/bulk-upload")
+def bulk_upload_contacts(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    import io
+    import csv
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else ""
+    if ext not in ("csv", "xlsx", "xls"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: .{ext}. Use .csv, .xlsx, or .xls",
+        )
+
+    content = file.file.read()
+    rows = []
+
+    if ext == "csv":
+        text = content.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            rows.append(row)
+    else:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+        ws = wb.active
+        headers = [str(c.value).strip().lower().replace(" ", "_") for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if any(v is not None for v in row):
+                rows.append(dict(zip(headers, [str(v) if v is not None else "" for v in row])))
+
+    column_map = {
+        "first_name": "first_name", "firstname": "first_name", "first name": "first_name",
+        "last_name": "last_name", "lastname": "last_name", "last name": "last_name",
+        "email": "email", "e-mail": "email",
+        "designation": "designation", "title": "designation", "job_title": "designation", "job title": "designation", "role": "designation",
+        "phone": "phone", "telephone": "phone", "mobile": "phone",
+        "linkedin_url": "linkedin_url", "linkedin": "linkedin_url", "linkedin url": "linkedin_url", "linkedin profile": "linkedin_url",
+        "company": "company_name", "company_name": "company_name", "organization": "company_name",
+        "tags": "tags",
+        "notes": "notes", "note": "notes",
+        "source": "source",
+        "status": "status",
+        "lead_score": "lead_score", "score": "lead_score",
+    }
+
+    created = 0
+    skipped = 0
+    errors = []
+
+    for i, row in enumerate(rows):
+        try:
+            mapped = {}
+            for k, v in row.items():
+                target = column_map.get(k.strip().lower(), None)
+                if target:
+                    mapped[target] = v.strip() if v else ""
+
+            first = mapped.get("first_name", "")
+            last = mapped.get("last_name", "")
+            if not first and not last:
+                skipped += 1
+                continue
+            if not first:
+                first = last
+                last = ""
+
+            company_name = mapped.get("company_name", "")
+            company_id = None
+            if company_name:
+                existing = db.query(Company).filter(Company.name.ilike(f"%{company_name}%")).first()
+                if existing:
+                    company_id = existing.id
+                else:
+                    company = Company(name=company_name)
+                    db.add(company)
+                    db.flush()
+                    company_id = company.id
+
+            email = mapped.get("email")
+
+            source_str = mapped.get("source", "manual").lower()
+            try:
+                source = ContactSource(source_str)
+            except ValueError:
+                source = ContactSource.MANUAL
+
+            status_str = mapped.get("status", "lead").lower()
+            try:
+                status = ContactStatus(status_str)
+            except ValueError:
+                status = ContactStatus.LEAD
+
+            score_str = mapped.get("lead_score", "0")
+            try:
+                score = int(score_str)
+            except (ValueError, TypeError):
+                score = 0
+
+            contact = Contact(
+                first_name=first,
+                last_name=last,
+                company_id=company_id,
+                designation=mapped.get("designation"),
+                email=email,
+                phone=mapped.get("phone"),
+                linkedin_url=mapped.get("linkedin_url"),
+                source=source,
+                status=status,
+                lead_score=score,
+                tags=mapped.get("tags"),
+                notes=mapped.get("notes"),
+            )
+            db.add(contact)
+            db.flush()
+
+            score_contact(db, contact.id)
+            index_contact(
+                contact_id=contact.id,
+                first_name=contact.first_name,
+                last_name=contact.last_name,
+                email=contact.email,
+                designation=contact.designation,
+                tags=contact.tags,
+                notes=contact.notes,
+            )
+            new_lead_webhook(
+                contact_id=str(contact.id),
+                contact_name=contact.full_name,
+                email=email or "",
+            )
+            created += 1
+        except Exception as e:
+            errors.append({"row": i + 2, "error": str(e)})
+
+    db.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+        "total_rows": len(rows),
+    }
 
 
 @router.get("/search")
