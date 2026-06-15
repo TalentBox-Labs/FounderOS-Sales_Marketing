@@ -45,8 +45,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from revenue_os.config import settings
@@ -86,10 +87,32 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PIPELINE_TIMEOUT_SEC = int(os.environ.get("RUNNER_PIPELINE_TIMEOUT_SEC", "1800"))
 TAIL_CHARS = int(os.environ.get("RUNNER_LOG_TAIL_CHARS", "4000"))
 
+security = HTTPBearer(auto_error=False)
 
-def _runner_api_key() -> str:
+
+def _get_runner_api_key() -> str:
     """Read on each auth check so tests can monkeypatch ``RUNNER_API_KEY``."""
     return os.environ.get("RUNNER_API_KEY", "").strip()
+
+
+async def _verify_api_key(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> str | None:
+    """Verify Bearer token using timing-safe comparison. Returns None if auth disabled."""
+    key = _get_runner_api_key()
+    if not key:
+        return None
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    import hmac
+    expected = _get_runner_api_key()
+    provided = credentials.credentials
+
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return provided
 
 
 class RunRequest(BaseModel):
@@ -103,15 +126,6 @@ class RunRequest(BaseModel):
         default=None,
         description="Optional label for operators / n8n logs; not passed to validators.",
     )
-
-
-def _require_auth(authorization: str | None) -> None:
-    key = _runner_api_key()
-    if not key:
-        return
-    expected = f"Bearer {key}"
-    if (authorization or "").strip() != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _tail(text: str) -> str:
@@ -161,6 +175,15 @@ def _read_tracker() -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def _validate_week_id(week_id: str) -> None:
+    """Validate week_id against tracker to prevent path traversal attacks."""
+    if not week_id or "/" in week_id or "\\" in week_id or week_id.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid week ID format")
+    valid_weeks = {row["content_id"] for row in _read_tracker()}
+    if week_id not in valid_weeks:
+        raise HTTPException(status_code=404, detail="Week not found")
+
+
 def _load_runtime() -> dict:
     rc = PROJECT_ROOT / "data" / "runtime_config.json"
     if not rc.is_file():
@@ -179,6 +202,7 @@ def _last_run_summary() -> dict | None:
 
 
 def _week_artifacts(week_id: str) -> dict[str, bool]:
+    _validate_week_id(week_id)
     base = PROJECT_ROOT / "input" / week_id
     return {key: (base / fname).is_file() for _, fname, key in PIPELINE_STEPS}
 
@@ -394,10 +418,9 @@ def _apply_week_if_set(week: str | None) -> tuple[bool, list[dict]]:
 @app.post("/run")
 def run_full(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Full pipeline: optional week switch then main.py."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper() or None
     ok, steps = _apply_week_if_set(week)
     if not ok:
@@ -412,10 +435,9 @@ def run_full(
 @app.post("/validate")
 def run_validate(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Run validators only (no generation, no tracker write)."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper() or None
     ok, steps = _apply_week_if_set(week)
     if not ok:
@@ -427,10 +449,9 @@ def run_validate(
 @app.post("/generate")
 def run_generate(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Phase 2A: generation crew."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper() or None
     ok, steps = _apply_week_if_set(week)
     if not ok:
@@ -442,10 +463,9 @@ def run_generate(
 @app.post("/edit")
 def run_edit(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Phase 2B: editor crew."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper() or None
     ok, steps = _apply_week_if_set(week)
     if not ok:
@@ -457,10 +477,9 @@ def run_edit(
 @app.post("/switch-week")
 def switch_week(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Apply a week profile to runtime_config.json."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper()
     if not week:
         raise HTTPException(status_code=400, detail="week is required")
@@ -471,10 +490,9 @@ def switch_week(
 @app.post("/go-live")
 def record_go_live(
     request: WeekRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Record that a week's article is live at a URL."""
-    _require_auth(authorization)
     week = (request.week or "").strip().upper()
     url  = (request.url or "").strip()
     if not week or not url:
@@ -610,9 +628,8 @@ def page_sales(request: Request) -> HTMLResponse:
 def page_orchestration_run(
     run_id: str,
     request: Request,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> HTMLResponse:
-    _require_auth(authorization)
     run = load_orchestration_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="orchestration run not found")
@@ -774,9 +791,8 @@ def _schedule_contact_sequence(db, sequence: OutreachSequence, contact_id: str) 
 
 @app.get("/api/v1/outreach/sequences")
 def outreach_sequences_proxy(
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     db = SessionLocal()
     try:
         rows = db.query(OutreachSequence).filter(OutreachSequence.is_active == 1).all()
@@ -798,9 +814,8 @@ def outreach_sequences_proxy(
 
 @app.get("/api/v1/prospecting/providers")
 def prospecting_providers_proxy(
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     return {
         "ok": True,
         "providers": provider_status(),
@@ -811,9 +826,8 @@ def prospecting_providers_proxy(
 @app.post("/api/v1/prospecting/plan")
 def prospecting_plan_proxy(
     req: ProspectingRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     db = SessionLocal()
     try:
         statuses = _parse_statuses(req.statuses)
@@ -834,9 +848,8 @@ def prospecting_plan_proxy(
 def prospecting_presets_list(
     brand: str | None = None,
     team: str | None = None,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     items = _read_presets()
     if brand:
         items = [x for x in items if (x.get("brand") or "") == brand]
@@ -849,9 +862,8 @@ def prospecting_presets_list(
 @app.post("/api/v1/prospecting/presets/save")
 def prospecting_presets_save(
     req: ProspectingPresetSaveRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     items = _read_presets()
     now = datetime.now(timezone.utc).isoformat()
     key = f"{req.brand}:{req.team}:{req.name}".lower()
@@ -877,9 +889,8 @@ def prospecting_presets_save(
 @app.post("/api/v1/prospecting/import")
 def prospecting_import(
     req: ProspectingImportRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     db = SessionLocal()
     try:
         if not req.contact_ids:
@@ -904,9 +915,8 @@ def prospecting_import(
 @app.post("/api/v1/prospecting/execute")
 def prospecting_execute(
     req: ProspectingExecuteRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     db = SessionLocal()
     try:
         statuses = _parse_statuses(req.statuses)
@@ -966,9 +976,8 @@ def prospecting_execute(
 
 @app.get("/api/v1/orchestration/backends")
 def orchestration_backends_proxy(
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     return {
         "supported": ["hermes", "openclaw"],
         "configured": backend_status(),
@@ -978,9 +987,8 @@ def orchestration_backends_proxy(
 @app.get("/api/v1/orchestration/logs")
 def orchestration_logs_proxy(
     limit: int = 20,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     return {
         "ok": True,
         "runs": load_recent_orchestration_runs(limit=max(1, min(limit, 100))),
@@ -990,9 +998,8 @@ def orchestration_logs_proxy(
 @app.post("/api/v1/orchestration/plan")
 def orchestration_plan_proxy(
     req: OrchestrationRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     if not req.topic or not req.keyword:
         raise HTTPException(status_code=400, detail="topic and keyword are required")
     plan_req = GTMOrchestrationRequest(
@@ -1021,9 +1028,8 @@ def orchestration_plan_proxy(
 @app.post("/api/v1/orchestration/run")
 def orchestration_run_proxy(
     req: OrchestrationRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
-    _require_auth(authorization)
     if not req.topic or not req.keyword:
         raise HTTPException(status_code=400, detail="topic and keyword are required")
     run_req = GTMOrchestrationRequest(
@@ -1052,10 +1058,9 @@ def orchestration_run_proxy(
 @app.post("/marketing/generate")
 def marketing_generate(
     req: MarketingRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Generate multi-channel marketing content via CrewAI agents."""
-    _require_auth(authorization)
     if not req.topic or not req.keyword:
         raise HTTPException(status_code=400, detail="topic and keyword are required")
     r = _run([
@@ -1076,10 +1081,9 @@ def marketing_generate(
 @app.post("/marketing/dry-run")
 def marketing_dry_run(
     req: MarketingRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Preview what publish_all would post without hitting any APIs."""
-    _require_auth(authorization)
     if not req.status_path:
         raise HTTPException(status_code=400, detail="status_path is required")
     try:
@@ -1092,10 +1096,9 @@ def marketing_dry_run(
 @app.post("/marketing/publish")
 def marketing_publish(
     req: MarketingRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """Publish to all configured social channels. Requires confirmed=True."""
-    _require_auth(authorization)
     if not req.status_path:
         raise HTTPException(status_code=400, detail="status_path is required")
     if not req.confirmed:
@@ -1455,12 +1458,11 @@ def health() -> dict:
 @app.post("/run-pipeline")
 def run_pipeline(
     request: RunRequest,
-    authorization: str | None = Header(default=None),
+    _: str | None = Depends(_verify_api_key),
 ) -> dict:
     """
     Optionally apply a week profile, then run the same entrypoint as ``python main.py``.
     """
-    _require_auth(authorization)
 
     steps: list[dict] = []
     week = (request.week or "").strip().upper() or None
