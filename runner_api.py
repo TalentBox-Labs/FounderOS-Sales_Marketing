@@ -37,6 +37,7 @@ from __future__ import annotations
 import csv
 import json
 import html
+import logging
 import os
 import subprocess
 import sys
@@ -46,10 +47,31 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+
+from runner_api_routers.middleware import StructuredLoggingMiddleware
+from runner_api_routers.pipeline import router as pipeline_router
+from runner_api_routers.utils import (
+    _apply_week_if_set,
+    _get_runner_api_key,
+    _load_runtime,
+    _read_tracker,
+    _run,
+    _tail,
+    _verify_api_key,
+    _week_artifacts,
+    PROJECT_ROOT,
+    PIPELINE_TIMEOUT_SEC,
+    TAIL_CHARS,
+)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 from revenue_os.config import settings
 from revenue_os.database import SessionLocal
 from revenue_os.models.activity import (
@@ -79,132 +101,54 @@ def _social_publisher():
     from revenue_os.integrations.social_publisher import SocialPublisher
     return SocialPublisher()
 
-app = FastAPI(title="WorkCrew CMS OS")
+# Initialize FastAPI app with security headers
+app = FastAPI(
+    title="WorkCrew CMS OS",
+    description="Content management, pipeline execution, and AI orchestration",
+    version="1.0.0",
+)
+
+# Setup CORS
+cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+# Add structured logging middleware
+app.add_middleware(StructuredLoggingMiddleware)
+
+# Setup templates
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-PIPELINE_TIMEOUT_SEC = int(os.environ.get("RUNNER_PIPELINE_TIMEOUT_SEC", "1800"))
-TAIL_CHARS = int(os.environ.get("RUNNER_LOG_TAIL_CHARS", "4000"))
-
-security = HTTPBearer(auto_error=False)
+# Include routers
+app.include_router(pipeline_router)
 
 
-def _get_runner_api_key() -> str:
-    """Read on each auth check so tests can monkeypatch ``RUNNER_API_KEY``."""
-    return os.environ.get("RUNNER_API_KEY", "").strip()
-
-
-async def _verify_api_key(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> str | None:
-    """Verify Bearer token using timing-safe comparison. Returns None if auth disabled."""
-    key = _get_runner_api_key()
-    if not key:
-        return None
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    import hmac
-    expected = _get_runner_api_key()
-    provided = credentials.credentials
-
-    if not hmac.compare_digest(provided, expected):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    return provided
-
-
-class RunRequest(BaseModel):
-    """``topic`` is echoed only; pipeline selection uses ``week`` + runtime files."""
+class WeekRequest(BaseModel):
+    """Request model for week-based operations."""
 
     week: str | None = Field(
         default=None,
-        description="If set (e.g. W10), copies data/week_runtime/WXX.json to runtime_config.json before the pipeline.",
+        description="Week ID (e.g., W10)",
     )
     topic: str | None = Field(
         default=None,
-        description="Optional label for operators / n8n logs; not passed to validators.",
+        description="Optional label for logs",
+    )
+    url: str | None = Field(
+        default=None,
+        description="URL for go-live operations",
     )
 
 
-def _tail(text: str) -> str:
-    if len(text) <= TAIL_CHARS:
-        return text
-    return text[-TAIL_CHARS:]
-
-
-def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=PIPELINE_TIMEOUT_SEC,
-    )
-
-
-# ── UI helpers ─────────────────────────────────────────────────────────────
-
-PIPELINE_STEPS = [
-    ("Brief",    "01_Content_Brief.md",     "brief"),
-    ("SEO Plan", "02_SEO_Plan.md",          "seo"),
-    ("Research", "03_Research.md",          "research"),
-    ("Draft",    "04_Draft.md",             "draft"),
-    ("Final",    "05_Final.md",             "final"),
-    ("Design",   "06_Design_Brief.md",      "design"),
-    ("Social",   "07_Social_Posts.md",      "social"),
-    ("Email",    "08_Email_Copy.md",        "email"),
-    ("Checklist","09_Publish_Checklist.md", "checklist"),
-]
-
-VALIDATOR_NAMES = [
-    "research_mapper",
-    "draft_validator",
-    "structure_checker",
-    "metadata_checker",
-    "publish_checklist_checker",
-]
-
-
-def _read_tracker() -> list[dict[str, str]]:
-    tracker = PROJECT_ROOT / "tracker.csv"
-    if not tracker.is_file():
-        return []
-    with tracker.open(encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
-
-
-def _validate_week_id(week_id: str) -> None:
-    """Validate week_id against tracker to prevent path traversal attacks."""
-    if not week_id or "/" in week_id or "\\" in week_id or week_id.startswith("."):
-        raise HTTPException(status_code=400, detail="Invalid week ID format")
-    valid_weeks = {row["content_id"] for row in _read_tracker()}
-    if week_id not in valid_weeks:
-        raise HTTPException(status_code=404, detail="Week not found")
-
-
-def _load_runtime() -> dict:
-    rc = PROJECT_ROOT / "data" / "runtime_config.json"
-    if not rc.is_file():
-        return {}
-    return json.loads(rc.read_text(encoding="utf-8"))
-
-
-def _last_run_summary() -> dict | None:
-    p = PROJECT_ROOT / "output" / "pipeline_orchestrator_run.json"
-    if not p.is_file():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _week_artifacts(week_id: str) -> dict[str, bool]:
-    _validate_week_id(week_id)
-    base = PROJECT_ROOT / "input" / week_id
-    return {key: (base / fname).is_file() for _, fname, key in PIPELINE_STEPS}
+# ── UI helpers ────────────────────────────────────────────────────────────
 
 
 def _week_pipeline_steps(row: dict) -> list[dict]:
@@ -404,106 +348,8 @@ class WeekRequest(BaseModel):
     url: str | None = None
 
 
-def _apply_week_if_set(week: str | None) -> tuple[bool, list[dict]]:
-    steps: list[dict] = []
-    if not week:
-        return True, steps
-    week = week.strip().upper()
-    r = _run([sys.executable, "-m", "src.tools.runtime_apply", week])
-    steps.append({"step": "runtime_apply", "returncode": r.returncode,
-                  "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")})
-    return r.returncode == 0, steps
-
-
-@app.post("/run")
-def run_full(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Full pipeline: optional week switch then main.py."""
-    week = (request.week or "").strip().upper() or None
-    ok, steps = _apply_week_if_set(week)
-    if not ok:
-        return {"ok": False, "week": week, "steps": steps, "stderr": steps[-1]["stderr"]}
-    r = _run([sys.executable, "-m", "src.tools.pipeline_orchestrator"])
-    steps.append({"step": "pipeline", "returncode": r.returncode,
-                  "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")})
-    return {"ok": r.returncode == 0, "week": week, "stdout": _tail(r.stdout or ""),
-            "stderr": _tail(r.stderr or ""), "steps": steps}
-
-
-@app.post("/validate")
-def run_validate(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Run validators only (no generation, no tracker write)."""
-    week = (request.week or "").strip().upper() or None
-    ok, steps = _apply_week_if_set(week)
-    if not ok:
-        return {"ok": False, "steps": steps}
-    r = _run([sys.executable, "-m", "src.tools.pipeline_runner"])
-    return {"ok": r.returncode == 0, "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")}
-
-
-@app.post("/generate")
-def run_generate(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Phase 2A: generation crew."""
-    week = (request.week or "").strip().upper() or None
-    ok, steps = _apply_week_if_set(week)
-    if not ok:
-        return {"ok": False, "steps": steps}
-    r = _run([sys.executable, "-m", "src.generation_crew"])
-    return {"ok": r.returncode == 0, "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")}
-
-
-@app.post("/edit")
-def run_edit(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Phase 2B: editor crew."""
-    week = (request.week or "").strip().upper() or None
-    ok, steps = _apply_week_if_set(week)
-    if not ok:
-        return {"ok": False, "steps": steps}
-    r = _run([sys.executable, "-m", "src.editor_crew"])
-    return {"ok": r.returncode == 0, "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")}
-
-
-@app.post("/switch-week")
-def switch_week(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Apply a week profile to runtime_config.json."""
-    week = (request.week or "").strip().upper()
-    if not week:
-        raise HTTPException(status_code=400, detail="week is required")
-    r = _run([sys.executable, "-m", "src.tools.runtime_apply", week])
-    return {"ok": r.returncode == 0, "week": week, "stdout": r.stdout, "stderr": r.stderr}
-
-
-@app.post("/go-live")
-def record_go_live(
-    request: WeekRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """Record that a week's article is live at a URL."""
-    week = (request.week or "").strip().upper()
-    url  = (request.url or "").strip()
-    if not week or not url:
-        raise HTTPException(status_code=400, detail="week and url are required")
-    ok, steps = _apply_week_if_set(week)
-    if not ok:
-        return {"ok": False, "steps": steps}
-    r = _run([sys.executable, "-m", "src.tools.go_live_helpers",
-              "record-live", "--url", url, "--i-confirmed-url-live"])
-    return {"ok": r.returncode == 0, "stdout": _tail(r.stdout or ""), "stderr": _tail(r.stderr or "")}
-
+# Pipeline endpoints have been moved to runner_api_routers/pipeline.py
+# and included via: app.include_router(pipeline_router)
 
 # ── Marketing ───────────────────────────────────────────────────────────────
 
@@ -1455,52 +1301,4 @@ def health() -> dict:
     }
 
 
-@app.post("/run-pipeline")
-def run_pipeline(
-    request: RunRequest,
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    """
-    Optionally apply a week profile, then run the same entrypoint as ``python main.py``.
-    """
-
-    steps: list[dict] = []
-    week = (request.week or "").strip().upper() or None
-
-    if week:
-        r = _run([sys.executable, "-m", "src.tools.runtime_apply", week])
-        steps.append(
-            {
-                "step": "runtime_apply",
-                "returncode": r.returncode,
-                "stdout_tail": _tail(r.stdout or ""),
-                "stderr_tail": _tail(r.stderr or ""),
-            }
-        )
-        if r.returncode != 0:
-            return {
-                "status": "failed",
-                "week": week,
-                "topic": request.topic,
-                "returncode": r.returncode,
-                "steps": steps,
-            }
-
-    r = _run([sys.executable, "main.py"])
-    steps.append(
-        {
-            "step": "main.py",
-            "returncode": r.returncode,
-            "stdout_tail": _tail(r.stdout or ""),
-            "stderr_tail": _tail(r.stderr or ""),
-        }
-    )
-
-    ok = r.returncode == 0
-    return {
-        "status": "success" if ok else "failed",
-        "week": week,
-        "topic": request.topic,
-        "returncode": r.returncode,
-        "steps": steps,
-    }
+# /run-pipeline endpoint has been moved to runner_api_routers/pipeline.py
