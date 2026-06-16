@@ -108,9 +108,70 @@ def _social_publisher():
 
 # Initialize FastAPI app with security headers
 app = FastAPI(
-    title="WorkCrew CMS OS",
-    description="Content management, pipeline execution, and AI orchestration",
-    version="1.0.0",
+    title="WorkCrew CMS OS API",
+    description=(
+        "Enterprise content management, multi-agent orchestration, and AI-powered publishing platform.\n\n"
+        "## Features\n\n"
+        "- **Pipeline Management**: Execute validation, generation, editing, and publishing workflows\n"
+        "- **Multi-Agent Orchestration**: Coordinate complex content creation across teams\n"
+        "- **Marketing Automation**: Generate multi-channel marketing content (blog, social, email)\n"
+        "- **Outreach Management**: Track and manage automated outreach sequences\n"
+        "- **UI Dashboard**: Visual monitoring and control of all workflows\n\n"
+        "## Authentication\n\n"
+        "All API endpoints require authentication via API key in the Authorization header:\n"
+        "```\nAuthorization: Bearer YOUR_API_KEY\n```\n\n"
+        "## Rate Limiting\n\n"
+        "API endpoints are subject to rate limiting. Long-running operations (pipeline execution) "
+        "have a 10-minute timeout and return partial results on timeout.\n\n"
+        "## Documentation\n\n"
+        "- **Swagger UI**: `/docs` (interactive API explorer)\n"
+        "- **ReDoc**: `/redoc` (static API documentation)\n"
+        "- **OpenAPI Schema**: `/openapi.json` (machine-readable specification)"
+    ),
+    version="2.0.0",
+    contact={
+        "name": "WorkCrew Engineering",
+        "email": "engineering@workcrew.ai",
+        "url": "https://workcrew.ai",
+    },
+    license_info={
+        "name": "Proprietary",
+        "url": "https://workcrew.ai/legal/license",
+    },
+    servers=[
+        {"url": "http://localhost:8000", "description": "Local development"},
+        {"url": "https://api.workcrew.ai", "description": "Production"},
+    ],
+    openapi_tags=[
+        {
+            "name": "pipeline",
+            "description": "Content pipeline execution: validation, generation, editing, publishing",
+        },
+        {
+            "name": "orchestration",
+            "description": "Multi-agent workflow orchestration and planning",
+        },
+        {
+            "name": "prospecting",
+            "description": "Sales prospecting and contact management",
+        },
+        {
+            "name": "marketing",
+            "description": "Multi-channel marketing content generation",
+        },
+        {
+            "name": "outreach",
+            "description": "Automated outreach sequence management",
+        },
+        {
+            "name": "ui",
+            "description": "Web UI pages and file serving",
+        },
+        {
+            "name": "health",
+            "description": "Service health and status checks",
+        },
+    ],
 )
 
 # Setup CORS
