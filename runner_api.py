@@ -55,6 +55,9 @@ from pydantic import BaseModel, Field
 
 from runner_api_routers.middleware import StructuredLoggingMiddleware
 from runner_api_routers.pipeline import router as pipeline_router
+from runner_api_routers.orchestration import router as orchestration_router
+from runner_api_routers.prospecting import router as prospecting_router
+from runner_api_routers.marketing import router as marketing_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -129,6 +132,9 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Include routers
 app.include_router(pipeline_router)
+app.include_router(orchestration_router)
+app.include_router(prospecting_router)
+app.include_router(marketing_router)
 
 
 class WeekRequest(BaseModel):
