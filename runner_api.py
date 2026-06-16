@@ -64,6 +64,7 @@ from runner_api_routers.metrics import router as metrics_router
 from runner_api_routers.hermes import router as hermes_router
 from runner_api_routers.automation import router as automation_router
 from runner_api_routers.paperclip import router as paperclip_router
+from runner_api_routers.csm import router as csm_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -208,6 +209,7 @@ app.include_router(metrics_router)
 app.include_router(hermes_router)
 app.include_router(automation_router)
 app.include_router(paperclip_router)
+app.include_router(csm_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
