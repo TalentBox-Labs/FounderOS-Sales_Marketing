@@ -35,11 +35,19 @@ class Settings:
         PROJECT_ROOT / "data" / "chroma_db"
     )
 
-    # Auth (future)
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
+    # Auth
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")
     )
+
+    def __post_init__(self):
+        if not self.SECRET_KEY or self.SECRET_KEY == "change-me-in-production":
+            raise ValueError(
+                "FATAL: SECRET_KEY must be set to a strong random value. "
+                "Set the SECRET_KEY environment variable before starting the application. "
+                "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
 
     # External integrations
     SLACK_BOT_TOKEN: str = os.getenv("SLACK_BOT_TOKEN", "")

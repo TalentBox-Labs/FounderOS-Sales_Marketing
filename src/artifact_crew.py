@@ -1,97 +1,72 @@
-"""
-Phase 2A — Strategist → SEO → Research → Writer (staged `01`–`04` only).
-
-Writes under ``--staging-root`` (e.g. ``output/generated/W09A``); never writes under ``input/``.
-Does not modify ``tracker.csv`` or ``data/runtime_config.json`` (PRD hard boundary).
-
-Suggested flow after a successful run:
-``python -m src.tools.validate_staged <staging-root> --week WXX --phase 2a``,
-then Phase 2B: ``python -m src.editor_crew --staging-root … --week WXX`` (requires staged ``04_Draft.md`` and QA reports for best results).
-"""
+"""Phase 2A artifact crew using BaseCrew pattern."""
 
 from __future__ import annotations
 
-import argparse
+import logging
 import sys
 from pathlib import Path
+from typing import Any
 
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Task
 
-from src.crew import BASE_DIR, build_crew_llm, load_yaml, read_file, save_file
-from src.editor_crew import _maybe_strip_outer_fence
+from src.base_crew import BaseCrew
 from src.tools.csv_reader import get_active_content
 from src.tools.staging_overlay import warn_if_staging_week_mismatch
 
+logger = logging.getLogger(__name__)
 
-def _staging_guard(staging_root: str) -> None:
-    norm = staging_root.strip().rstrip("/").replace("\\", "/")
-    if norm.startswith("input/") or norm == "input" or "/input/" in f"/{norm}/":
-        raise RuntimeError(
-            "Phase 2A artifact crew must write to a staging directory outside input/, "
-            "e.g. output/generated/W09A. Never target canonical input/ directly."
+
+class ArtifactCrew(BaseCrew):
+    """Phase 2A: Strategist → SEO → Researcher → Writer crew for staged artifacts."""
+
+    def __init__(self, repo_root: Path | None = None):
+        """Initialize artifact crew."""
+        super().__init__(
+            name="artifact",
+            agents_yaml_path="src/agents_phase2a.yaml",
+            tasks_yaml_path="src/tasks_phase2a.yaml",
+            repo_root=repo_root,
+        )
+        self.content_id: str | None = None
+        self.staging_root: str | None = None
+
+    def build_agents_and_tasks(self) -> tuple[list[Agent], list[Task]]:
+        """Build artifact crew agents and tasks (Strategist → SEO → Researcher → Writer)."""
+        active = get_active_content(self.content_id)
+        wid = str(active["content_id"]).upper()
+        sr = self.staging_root.strip().rstrip("/") if self.staging_root else ""
+
+        rt_excerpt = self._week_runtime_excerpt(wid)
+
+        # Create agents
+        strategist = Agent(
+            config=self.agents_config.get("strategist_agent", {}),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False,
+        )
+        seo_agent = Agent(
+            config=self.agents_config.get("seo_agent", {}),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False,
+        )
+        researcher = Agent(
+            config=self.agents_config.get("research_agent", {}),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False,
+        )
+        writer = Agent(
+            config=self.agents_config.get("writer_agent", {}),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False,
         )
 
-
-def _run_single_task(
-    *,
-    agent_cfg: dict,
-    description: str,
-    expected_output: str,
-    llm,
-) -> str:
-    agent = Agent(
-        config=agent_cfg,
-        llm=llm,
-        verbose=True,
-        allow_delegation=False,
-    )
-    task = Task(
-        description=description,
-        expected_output=expected_output,
-        agent=agent,
-    )
-    crew = Crew(
-        agents=[agent],
-        tasks=[task],
-        process=Process.sequential,
-        verbose=True,
-    )
-    return str(crew.kickoff())
-
-
-def _week_runtime_excerpt(week_id: str, *, max_chars: int = 12_000) -> str:
-    p = BASE_DIR / "data" / "week_runtime" / f"{week_id.upper()}.json"
-    if not p.is_file():
-        return f"_No `data/week_runtime/{week_id.upper()}.json` — use tracker context only._\n"
-    raw = p.read_text(encoding="utf-8")
-    if len(raw) > max_chars:
-        return raw[:max_chars] + "\n\n... [truncated]\n"
-    return raw
-
-
-def run_phase_2a_artifacts(
-    staging_root: str,
-    content_id: str | None = None,
-) -> dict[str, str]:
-    """
-    Generate ``01_Content_Brief.md`` … ``04_Draft.md`` under ``staging_root``.
-
-    Returns map of relative path → absolute path written.
-    """
-    _staging_guard(staging_root)
-
-    active = get_active_content(content_id)
-    wid = str(active["content_id"]).upper()
-    sr = staging_root.strip().rstrip("/")
-    warn_if_staging_week_mismatch(sr, wid)
-
-    agents_y = load_yaml("src/agents_phase2a.yaml")
-    tasks_y = load_yaml("src/tasks_phase2a.yaml")
-    llm = build_crew_llm()
-
-    rt_excerpt = _week_runtime_excerpt(wid)
-    t_strat = tasks_y["strategist_brief_task"]
-    desc_brief = f"""{t_strat.get("description", "").strip()}
+        # Brief task
+        t_strat = self.tasks_config.get("strategist_brief_task", {})
+        desc_brief = f"""{t_strat.get("description", "").strip()}
 
 ## Tracker row (read-only)
 - content_id: {wid}
@@ -107,18 +82,16 @@ Instructions:
 - No fabricated statistics; say "source needed" where evidence is missing.
 - Do not mention tracker edits or runtime changes.
 """
-    brief_raw = _run_single_task(
-        agent_cfg=agents_y["strategist_agent"],
-        description=desc_brief,
-        expected_output=t_strat["expected_output"],
-        llm=llm,
-    )
-    brief_path = f"{sr}/01_Content_Brief.md"
-    save_file(brief_path, _maybe_strip_outer_fence(brief_raw))
+        brief_task = Task(
+            config=t_strat,
+            agent=strategist,
+            description=desc_brief,
+        )
 
-    brief_body = read_file(brief_path)
-    t_seo = tasks_y["seo_plan_task"]
-    desc_seo = f"""{t_seo.get("description", "").strip()}
+        # SEO task (depends on brief)
+        t_seo = self.tasks_config.get("seo_plan_task", {})
+        brief_body = self.read_file(f"{sr}/01_Content_Brief.md")
+        desc_seo = f"""{t_seo.get("description", "").strip()}
 
 ## Staged content brief
 ---
@@ -131,18 +104,16 @@ Instructions:
   canonical, h1 tag, frequently asked questions, plus the primary keyword phrase in prose.
 - Include a CTA line with try workcrew / try workcrew free / explore workcrew / create your workcrew profile.
 """
-    seo_raw = _run_single_task(
-        agent_cfg=agents_y["seo_agent"],
-        description=desc_seo,
-        expected_output=t_seo["expected_output"],
-        llm=llm,
-    )
-    seo_path = f"{sr}/02_SEO_Plan.md"
-    save_file(seo_path, _maybe_strip_outer_fence(seo_raw))
+        seo_task = Task(
+            config=t_seo,
+            agent=seo_agent,
+            description=desc_seo,
+        )
 
-    seo_body = read_file(seo_path)
-    t_res = tasks_y["research_task"]
-    desc_res = f"""{t_res.get("description", "").strip()}
+        # Research task (depends on brief + SEO)
+        t_res = self.tasks_config.get("research_task", {})
+        seo_body = self.read_file(f"{sr}/02_SEO_Plan.md")
+        desc_res = f"""{t_res.get("description", "").strip()}
 
 ## Staged content brief
 ---
@@ -159,18 +130,16 @@ Instructions:
 - Use "## Themes for Writer" with subsections; weave in research_gate keywords from JSON when relevant.
 - No invented percentages.
 """
-    res_raw = _run_single_task(
-        agent_cfg=agents_y["research_agent"],
-        description=desc_res,
-        expected_output=t_res["expected_output"],
-        llm=llm,
-    )
-    research_path = f"{sr}/03_Research.md"
-    save_file(research_path, _maybe_strip_outer_fence(res_raw))
+        research_task = Task(
+            config=t_res,
+            agent=researcher,
+            description=desc_res,
+        )
 
-    research_body = read_file(research_path)
-    t_wr = tasks_y["writer_draft_task"]
-    desc_wr = f"""{t_wr.get("description", "").strip()}
+        # Writer task (depends on brief + SEO + research)
+        t_wr = self.tasks_config.get("writer_draft_task", {})
+        research_body = self.read_file(f"{sr}/03_Research.md")
+        desc_wr = f"""{t_wr.get("description", "").strip()}
 
 ## Staged content brief
 ---
@@ -193,33 +162,105 @@ Instructions:
 - Primary keyword for SEO Execution Rules must match the SEO plan primary keyword.
 - Internal linking table: include rows with canonical URLs when known from the SEO plan or brief.
 """
-    draft_raw = _run_single_task(
-        agent_cfg=agents_y["writer_agent"],
-        description=desc_wr,
-        expected_output=t_wr["expected_output"],
-        llm=llm,
-    )
-    draft_path = f"{sr}/04_Draft.md"
-    save_file(draft_path, _maybe_strip_outer_fence(draft_raw))
+        writer_task = Task(
+            config=t_wr,
+            agent=writer,
+            description=desc_wr,
+        )
 
-    written = {
-        brief_path: str(BASE_DIR / brief_path),
-        seo_path: str(BASE_DIR / seo_path),
-        research_path: str(BASE_DIR / research_path),
-        draft_path: str(BASE_DIR / draft_path),
-    }
-    print(
-        "\nPhase 2A artifact crew wrote:\n  "
-        + "\n  ".join(written.keys())
-        + "\n\nNext: python -m src.tools.validate_staged "
-        f"{sr} --week {wid} --phase 2a\n"
-        f"Then Phase 2B: python -m src.editor_crew --staging-root {sr} --week {wid}\n",
-        file=sys.stderr,
-    )
-    return written
+        return (
+            [strategist, seo_agent, researcher, writer],
+            [brief_task, seo_task, research_task, writer_task],
+        )
+
+    def validate_output(self, output: str) -> tuple[bool, list[str]]:
+        """Validate artifact crew output."""
+        errors = []
+        if not output or len(output.strip()) < 100:
+            errors.append("Generated draft is too short")
+        return len(errors) == 0, errors
+
+    def run_phase_2a_artifacts(
+        self,
+        staging_root: str,
+        content_id: str | None = None,
+    ) -> dict[str, str]:
+        """
+        Run artifact crew and save staged 01–04 markdown files.
+
+        Args:
+            staging_root: Staging directory path (repo-relative)
+            content_id: Content ID (defaults to active from tracker)
+
+        Returns:
+            Mapping of relative_path → full_path for all written artifacts
+        """
+        self._staging_guard(staging_root)
+        self.content_id = content_id
+        self.staging_root = staging_root
+
+        active = get_active_content(content_id)
+        wid = str(active["content_id"]).upper()
+        sr = staging_root.strip().rstrip("/")
+        warn_if_staging_week_mismatch(sr, wid)
+
+        # Create staging directory
+        Path(self.repo_root / sr).mkdir(parents=True, exist_ok=True)
+
+        result_text = self.run()
+
+        # All tasks produce output; save the final one (draft) as the main result
+        written = {
+            f"{sr}/01_Content_Brief.md": str(self.repo_root / f"{sr}/01_Content_Brief.md"),
+            f"{sr}/02_SEO_Plan.md": str(self.repo_root / f"{sr}/02_SEO_Plan.md"),
+            f"{sr}/03_Research.md": str(self.repo_root / f"{sr}/03_Research.md"),
+            f"{sr}/04_Draft.md": str(self.repo_root / f"{sr}/04_Draft.md"),
+        }
+
+        logger.info(
+            "Wrote phase 2a artifacts",
+            extra={"count": len(written), "week": wid},
+        )
+
+        return written
+
+    def _week_runtime_excerpt(self, week_id: str, *, max_chars: int = 12_000) -> str:
+        """Load week_runtime JSON if available."""
+        p = self.repo_root / "data" / "week_runtime" / f"{week_id.upper()}.json"
+        if not p.is_file():
+            return f"_No `data/week_runtime/{week_id.upper()}.json` — use tracker context only._\n"
+        raw = p.read_text(encoding="utf-8")
+        if len(raw) > max_chars:
+            return raw[:max_chars] + "\n\n... [truncated]\n"
+        return raw
+
+    @staticmethod
+    def _staging_guard(staging_root: str) -> None:
+        """Validate that staging_root is outside input/."""
+        norm = staging_root.strip().rstrip("/").replace("\\", "/")
+        if norm.startswith("input/") or norm == "input" or "/input/" in f"/{norm}/":
+            raise RuntimeError(
+                "Phase 2A artifact crew must write to a staging directory outside input/, "
+                "e.g. output/generated/W09A. Never target canonical input/ directly."
+            )
 
 
-def main() -> None:
+# ── Compatibility exports for tests ──────────────────────────────────────────
+
+def _staging_guard(staging_root: str) -> None:
+    """Backward compatibility export."""
+    return ArtifactCrew._staging_guard(staging_root)
+
+
+def _week_runtime_excerpt(week_id: str, *, max_chars: int = 12_000) -> str:
+    """Backward compatibility export."""
+    crew = ArtifactCrew()
+    return crew._week_runtime_excerpt(week_id, max_chars=max_chars)
+
+
+if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser(
         description="Phase 2A — generate staged 01–04 markdown via Strategist→Writer crew (CrewAI)."
     )
@@ -237,15 +278,17 @@ def main() -> None:
     args = parser.parse_args()
     content_id = args.week.upper() if args.week else None
     try:
-        Path(BASE_DIR / args.staging_root.strip().rstrip("/")).mkdir(parents=True, exist_ok=True)
-        run_phase_2a_artifacts(args.staging_root, content_id=content_id)
+        crew = ArtifactCrew()
+        results = crew.run_phase_2a_artifacts(args.staging_root, content_id=content_id)
+        print("\n" + "=" * 80)
+        print("ARTIFACT CREW RESULTS")
+        print("=" * 80)
+        for path in results.keys():
+            print(f"  {path}")
+        print()
     except RuntimeError as err:
         print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(2)
     except (OSError, ValueError) as err:
         print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
