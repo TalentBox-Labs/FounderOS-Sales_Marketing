@@ -60,6 +60,7 @@ from runner_api_routers.prospecting import router as prospecting_router
 from runner_api_routers.marketing import router as marketing_router
 from runner_api_routers.ui import router as ui_router
 from runner_api_routers.outreach import router as outreach_router
+from runner_api_routers.metrics import router as metrics_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -199,6 +200,7 @@ app.include_router(orchestration_router)
 app.include_router(prospecting_router)
 app.include_router(outreach_router)
 app.include_router(marketing_router)
+app.include_router(metrics_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
