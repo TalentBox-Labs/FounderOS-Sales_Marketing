@@ -58,6 +58,8 @@ from runner_api_routers.pipeline import router as pipeline_router
 from runner_api_routers.orchestration import router as orchestration_router
 from runner_api_routers.prospecting import router as prospecting_router
 from runner_api_routers.marketing import router as marketing_router
+from runner_api_routers.ui import router as ui_router
+from runner_api_routers.outreach import router as outreach_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -130,11 +132,14 @@ app.add_middleware(StructuredLoggingMiddleware)
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Include routers
+# Include routers (domain-specific functionality)
 app.include_router(pipeline_router)
 app.include_router(orchestration_router)
 app.include_router(prospecting_router)
+app.include_router(outreach_router)
 app.include_router(marketing_router)
+# UI routes must be last to avoid conflicts with API routes
+app.include_router(ui_router)
 
 
 class WeekRequest(BaseModel):
