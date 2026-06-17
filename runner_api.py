@@ -61,6 +61,16 @@ from runner_api_routers.marketing import router as marketing_router
 from runner_api_routers.ui import router as ui_router
 from runner_api_routers.outreach import router as outreach_router
 from runner_api_routers.metrics import router as metrics_router
+from runner_api_routers.hermes import router as hermes_router
+from runner_api_routers.automation import router as automation_router
+from runner_api_routers.paperclip import router as paperclip_router
+from runner_api_routers.csm import router as csm_router
+from runner_api_routers.forecasting import router as forecasting_router
+from runner_api_routers.integrations import router as integrations_router
+from runner_api_routers.reporting import router as reporting_router
+from runner_api_routers.agents import router as agents_router
+from runner_api_routers.whatsapp import router as whatsapp_router
+from runner_api_routers.analytics import router as analytics_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -74,6 +84,7 @@ from runner_api_routers.utils import (
     PIPELINE_TIMEOUT_SEC,
     TAIL_CHARS,
 )
+from revenue_os.automation.init import initialize_automation
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -201,8 +212,21 @@ app.include_router(prospecting_router)
 app.include_router(outreach_router)
 app.include_router(marketing_router)
 app.include_router(metrics_router)
+app.include_router(hermes_router)
+app.include_router(automation_router)
+app.include_router(paperclip_router)
+app.include_router(csm_router)
+app.include_router(forecasting_router)
+app.include_router(integrations_router)
+app.include_router(reporting_router)
+app.include_router(agents_router)
+app.include_router(whatsapp_router)
+app.include_router(analytics_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
+
+# Initialize automation system
+initialize_automation()
 
 
 class WeekRequest(BaseModel):
