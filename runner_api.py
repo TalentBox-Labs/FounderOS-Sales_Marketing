@@ -69,6 +69,7 @@ from runner_api_routers.forecasting import router as forecasting_router
 from runner_api_routers.integrations import router as integrations_router
 from runner_api_routers.reporting import router as reporting_router
 from runner_api_routers.agents import router as agents_router
+from runner_api_routers.whatsapp import router as whatsapp_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -218,6 +219,7 @@ app.include_router(forecasting_router)
 app.include_router(integrations_router)
 app.include_router(reporting_router)
 app.include_router(agents_router)
+app.include_router(whatsapp_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 

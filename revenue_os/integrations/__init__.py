@@ -4,6 +4,8 @@ from revenue_os.integrations.email import EmailNotifier, EmailTemplate, Schedule
 from revenue_os.integrations.webhooks import WebhookManager, WebhookEventType, WebhookSubscription, WebhookDelivery
 from revenue_os.integrations.slack import SlackNotifier, SlackMessage
 from revenue_os.integrations.calendar import GoogleCalendarClient, OutlookCalendarClient, CalendarEvent
+from revenue_os.integrations.whatsapp import WhatsAppClient, MessageTemplate, BroadcastCampaign
+from revenue_os.integrations.whatsapp_community import CommunityManager, BrandContentStrategy
 
 __all__ = [
     "EmailNotifier",
@@ -18,4 +20,9 @@ __all__ = [
     "GoogleCalendarClient",
     "OutlookCalendarClient",
     "CalendarEvent",
+    "WhatsAppClient",
+    "MessageTemplate",
+    "BroadcastCampaign",
+    "CommunityManager",
+    "BrandContentStrategy",
 ]
