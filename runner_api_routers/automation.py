@@ -29,7 +29,7 @@ class ConditionRequest(BaseModel):
     """Condition specification."""
 
     field: str
-    operator: str = Field(..., regex="^(eq|gte|lte|gt|lt|contains|in|exists)$")
+    operator: str = Field(..., pattern="^(eq|gte|lte|gt|lt|contains|in|exists)$")
     value: Any = None
 
 
