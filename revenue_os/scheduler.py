@@ -96,6 +96,13 @@ def job_check_deals_at_risk() -> dict[str, Any]:
         db.close()
 
 
+def job_hermes_goal_check() -> dict[str, Any]:
+    """Run one Hermes planning cycle for every active goal."""
+    from revenue_os.services.hermes_planner import check_all_active_goals
+
+    return check_all_active_goals()
+
+
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
     """Persist a pipeline-health snapshot as analytics data points."""
     from revenue_os.analytics.core import AnalyticsEngine, AnalyticsMetric, MetricType
@@ -285,6 +292,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "snapshot_pipeline_metrics", job_snapshot_pipeline_metrics,
         _env_int("HEARTBEAT_METRICS_SNAPSHOT_SEC", 3600),
+    )
+    scheduler.register(
+        "hermes_goal_check", job_hermes_goal_check,
+        _env_int("HEARTBEAT_GOAL_CHECK_SEC", 3600),
     )
     if heartbeat_enabled():
         scheduler.start()

@@ -73,6 +73,7 @@ from runner_api_routers.whatsapp import router as whatsapp_router
 from runner_api_routers.analytics import router as analytics_router
 from runner_api_routers.heartbeat import router as heartbeat_router
 from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
+from runner_api_routers.goals import router as goals_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -226,6 +227,7 @@ app.include_router(whatsapp_router)
 app.include_router(analytics_router)
 app.include_router(heartbeat_router)
 app.include_router(n8n_webhooks_router)
+app.include_router(goals_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
