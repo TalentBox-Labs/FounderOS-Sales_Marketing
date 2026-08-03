@@ -95,14 +95,40 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
     qualified = []
     for contact in candidates:
         contact.status = ContactStatus.QUALIFIED
-        qualified.append(str(contact.id))
+        qualified.append({
+            "id": str(contact.id),
+            "name": f"{contact.first_name} {contact.last_name}".strip(),
+            "email": contact.email,
+        })
     db.commit()
-    for contact_id in qualified:
+
+    from revenue_os.services.approvals import request_approval
+
+    for contact in qualified:
         try:
-            emit_contact_qualified(contact_id)
+            emit_contact_qualified(contact["id"])
         except Exception as e:
-            logger.warning(f"emit_contact_qualified failed for {contact_id}: {e}")
-    return {"qualified": len(qualified), "threshold": threshold}
+            logger.warning(f"emit_contact_qualified failed for {contact['id']}: {e}")
+        # Outbound email is a risky action: propose it, let a human approve.
+        try:
+            request_approval(
+                requested_by=ACTOR,
+                action_type="send_outreach_email",
+                title=f"Send intro email to {contact['name'] or contact['email']}",
+                description=(
+                    "Contact was auto-qualified by Hermes (score >= "
+                    f"{threshold}). Approving hands the intro email to the "
+                    "n8n send-email workflow."
+                ),
+                target_type="contact",
+                target_id=contact["id"],
+                payload={"contact_id": contact["id"], "name": contact["name"],
+                         "email": contact["email"], "template": "intro"},
+            )
+        except Exception as e:
+            logger.warning(f"approval request failed for {contact['id']}: {e}")
+    return {"qualified": len(qualified), "threshold": threshold,
+            "outreach_approvals_filed": len(qualified)}
 
 
 def action_create_deals_for_qualified(db: Session, params: dict) -> dict[str, Any]:
