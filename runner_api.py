@@ -72,6 +72,7 @@ from runner_api_routers.agents import router as agents_router
 from runner_api_routers.whatsapp import router as whatsapp_router
 from runner_api_routers.analytics import router as analytics_router
 from runner_api_routers.heartbeat import router as heartbeat_router
+from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -224,6 +225,7 @@ app.include_router(agents_router)
 app.include_router(whatsapp_router)
 app.include_router(analytics_router)
 app.include_router(heartbeat_router)
+app.include_router(n8n_webhooks_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
@@ -250,6 +252,13 @@ async def _startup_persistence_and_heartbeat() -> None:
         initialize_heartbeat()
     except Exception as e:
         logger.error(f"Heartbeat initialization failed: {e}")
+
+    try:
+        from revenue_os.integrations.n8n import initialize_n8n_bridge
+
+        initialize_n8n_bridge()
+    except Exception as e:
+        logger.error(f"n8n bridge initialization failed: {e}")
 
 
 @app.on_event("shutdown")
