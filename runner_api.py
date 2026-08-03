@@ -71,6 +71,7 @@ from runner_api_routers.reporting import router as reporting_router
 from runner_api_routers.agents import router as agents_router
 from runner_api_routers.whatsapp import router as whatsapp_router
 from runner_api_routers.analytics import router as analytics_router
+from runner_api_routers.heartbeat import router as heartbeat_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -222,11 +223,40 @@ app.include_router(reporting_router)
 app.include_router(agents_router)
 app.include_router(whatsapp_router)
 app.include_router(analytics_router)
+app.include_router(heartbeat_router)
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
 # Initialize automation system
 initialize_automation()
+
+
+@app.on_event("startup")
+async def _startup_persistence_and_heartbeat() -> None:
+    """Create any missing tables, then start the autonomous heartbeat."""
+    try:
+        import revenue_os.models  # noqa: F401 - registers all tables on Base.metadata
+        from revenue_os.database import engine
+        from revenue_os.models.base import Base
+
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created")
+    except Exception as e:
+        logger.error(f"Table creation failed (continuing): {e}")
+
+    try:
+        from revenue_os.scheduler import initialize_heartbeat
+
+        initialize_heartbeat()
+    except Exception as e:
+        logger.error(f"Heartbeat initialization failed: {e}")
+
+
+@app.on_event("shutdown")
+async def _shutdown_heartbeat() -> None:
+    from revenue_os.scheduler import scheduler
+
+    scheduler.stop()
 
 
 class WeekRequest(BaseModel):

@@ -45,6 +45,12 @@ from revenue_os.models.automation import (
     WorkflowStep,
 )
 from revenue_os.models.user import User
+from revenue_os.models.automation_state import (
+    AgentActionLog,
+    AnalyticsDataPointRecord,
+    AnalyticsMetricRecord,
+    HeartbeatRun,
+)
 
 __all__ = [
     "Company",
@@ -85,4 +91,8 @@ __all__ = [
     "WorkflowExecution",
     "WorkflowStep",
     "User",
+    "AgentActionLog",
+    "HeartbeatRun",
+    "AnalyticsMetricRecord",
+    "AnalyticsDataPointRecord",
 ]
