@@ -74,6 +74,8 @@ from runner_api_routers.analytics import router as analytics_router
 from runner_api_routers.heartbeat import router as heartbeat_router
 from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
 from runner_api_routers.goals import router as goals_router
+from runner_api_routers.approvals import router as approvals_router
+from runner_api_routers.crm import router as crm_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -228,6 +230,18 @@ app.include_router(analytics_router)
 app.include_router(heartbeat_router)
 app.include_router(n8n_webhooks_router)
 app.include_router(goals_router)
+app.include_router(approvals_router)
+app.include_router(crm_router)
+
+# Serve the built React CRM at /app when frontend/dist exists (production).
+# The SPA uses hash routing, so a single index.html works without fallbacks.
+_frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/app", StaticFiles(directory=str(_frontend_dist), html=True), name="crm-frontend")
+    logger.info("CRM frontend mounted at /app")
+
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 

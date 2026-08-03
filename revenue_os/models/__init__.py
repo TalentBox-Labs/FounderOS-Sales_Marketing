@@ -52,6 +52,7 @@ from revenue_os.models.automation_state import (
     HeartbeatRun,
 )
 from revenue_os.models.goals import Goal, GoalStep
+from revenue_os.models.approvals import ApprovalRequest
 
 __all__ = [
     "Company",
@@ -98,4 +99,5 @@ __all__ = [
     "AnalyticsDataPointRecord",
     "Goal",
     "GoalStep",
+    "ApprovalRequest",
 ]
