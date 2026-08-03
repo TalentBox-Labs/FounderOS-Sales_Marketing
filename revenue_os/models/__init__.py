@@ -51,6 +51,7 @@ from revenue_os.models.automation_state import (
     AnalyticsMetricRecord,
     HeartbeatRun,
 )
+from revenue_os.models.goals import Goal, GoalStep
 
 __all__ = [
     "Company",
@@ -95,4 +96,6 @@ __all__ = [
     "HeartbeatRun",
     "AnalyticsMetricRecord",
     "AnalyticsDataPointRecord",
+    "Goal",
+    "GoalStep",
 ]
