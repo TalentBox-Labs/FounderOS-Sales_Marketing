@@ -48,8 +48,8 @@ closed n8n loop, auth, single-container deploy.
 5. **M5 — Agent registry & collaboration** ✅: agent status page, inter-agent
    task handoff, per-agent memory/goals/permissions.
 6. **M6 — Knowledge base + RAG** ✅ (chromadb; notes, playbooks, semantic search).
-7. **M7 — Integrations abstraction (next)** (connector registry, credentials vault).
-8. **M8 — Analytics depth**: attribution, funnel, CAC/LTV, agent productivity.
+7. **M7 — Integrations abstraction** ✅ (connector registry, credentials vault).
+8. **M8 — Analytics depth (next)**: attribution, funnel, CAC/LTV, agent productivity.
 
 Each milestone ships: DB changes (auto-created), services, API, React page(s),
 audit-trail integration, browser-verified, committed.
