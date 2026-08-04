@@ -29,3 +29,4 @@ server.log
 server.pid
 *.db
 demo.db
+data/chroma_db/
