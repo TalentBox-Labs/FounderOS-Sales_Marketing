@@ -7,8 +7,24 @@ import Analytics from './pages/Analytics.jsx'
 import Goals from './pages/Goals.jsx'
 import Activity from './pages/Activity.jsx'
 import Approvals from './pages/Approvals.jsx'
+import Marketing from './pages/Marketing.jsx'
+import Customers from './pages/Customers.jsx'
+import Automation from './pages/Automation.jsx'
 import Login from './pages/Login.jsx'
 import { isAuthed, logout } from './api.js'
+
+const NAV_LINKS = [
+  { to: '/', label: 'Dashboard', end: true },
+  { to: '/contacts', label: 'Contacts' },
+  { to: '/deals', label: 'Deals' },
+  { to: '/customers', label: 'Customers' },
+  { to: '/marketing', label: 'Marketing' },
+  { to: '/analytics', label: 'Analytics' },
+  { to: '/goals', label: 'Goals' },
+  { to: '/approvals', label: 'Approvals' },
+  { to: '/automation', label: 'Automation' },
+  { to: '/activity', label: 'Activity' },
+]
 
 function RequireAuth({ children }) {
   if (!isAuthed()) return <Navigate to="/login" replace />
@@ -26,13 +42,13 @@ export default function App() {
             </NavLink>
             {isAuthed() && (
               <ul className="nav-menu">
-                <li><NavLink to="/" className="nav-link" end>Dashboard</NavLink></li>
-                <li><NavLink to="/contacts" className="nav-link">Contacts</NavLink></li>
-                <li><NavLink to="/deals" className="nav-link">Deals</NavLink></li>
-                <li><NavLink to="/analytics" className="nav-link">Analytics</NavLink></li>
-                <li><NavLink to="/goals" className="nav-link">Goals</NavLink></li>
-                <li><NavLink to="/approvals" className="nav-link">Approvals</NavLink></li>
-                <li><NavLink to="/activity" className="nav-link">Activity</NavLink></li>
+                {NAV_LINKS.map(link => (
+                  <li key={link.to}>
+                    <NavLink to={link.to} className="nav-link" end={link.end}>
+                      {link.label}
+                    </NavLink>
+                  </li>
+                ))}
                 <li>
                   <button
                     onClick={logout}
@@ -53,9 +69,12 @@ export default function App() {
             <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/contacts" element={<RequireAuth><Contacts /></RequireAuth>} />
             <Route path="/deals" element={<RequireAuth><Deals /></RequireAuth>} />
+            <Route path="/customers" element={<RequireAuth><Customers /></RequireAuth>} />
+            <Route path="/marketing" element={<RequireAuth><Marketing /></RequireAuth>} />
             <Route path="/analytics" element={<RequireAuth><Analytics /></RequireAuth>} />
             <Route path="/goals" element={<RequireAuth><Goals /></RequireAuth>} />
             <Route path="/approvals" element={<RequireAuth><Approvals /></RequireAuth>} />
+            <Route path="/automation" element={<RequireAuth><Automation /></RequireAuth>} />
             <Route path="/activity" element={<RequireAuth><Activity /></RequireAuth>} />
           </Routes>
         </div>

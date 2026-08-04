@@ -1,108 +1,132 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import api from '../api.js'
+import { LineChart, ColumnChart, DataTable } from '../components/Charts.jsx'
 
-const DASHBOARD_ICONS = {
-  executive: '👔',
-  sales: '💼',
-  csm: '💝',
-  marketing: '📢',
-  operations: '⚙️',
-}
+const TREND_METRICS = [
+  { id: 'pipeline_total_value', label: 'Pipeline Value', unit: '$' },
+  { id: 'pipeline_weighted_forecast', label: 'Weighted Forecast', unit: '$' },
+  { id: 'pipeline_deal_count', label: 'Open Deal Count', unit: '' },
+]
 
-const DASHBOARD_DESCRIPTIONS = {
-  executive: 'High-level business metrics for the C-suite',
-  sales: 'Pipeline and deal metrics for the sales team',
-  csm: 'Customer health and retention metrics',
-  marketing: 'Lead generation and campaign performance',
-  operations: 'System health and automation metrics',
-}
+const STAGE_ORDER = ['discovery', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
 
 export default function Analytics() {
-  const [dashboards, setDashboards] = useState([])
-  const [selected, setSelected] = useState(null)
-  const [connected, setConnected] = useState(false)
+  const [metricId, setMetricId] = useState(TREND_METRICS[0].id)
+  const [trendPoints, setTrendPoints] = useState([])
+  const [stageData, setStageData] = useState([])
+  const [scoreData, setScoreData] = useState([])
+  const [showTable, setShowTable] = useState(false)
+  const [offline, setOffline] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    api.get('/analytics/dashboards/templates')
-      .then(res => {
-        const list = Object.entries(res.data.templates || {}).map(([key, value]) => ({ id: key, ...value }))
-        setDashboards(list)
-        setConnected(true)
-      })
-      .catch(() => {
-        // Backend offline — show the template names so the page still renders.
-        setDashboards(Object.keys(DASHBOARD_ICONS).map(id => ({
-          id,
-          name: `${id.charAt(0).toUpperCase()}${id.slice(1)} Dashboard`,
-          dashboard_type: id,
-          widgets: [],
-        })))
-        setConnected(false)
-      })
-      .finally(() => setLoading(false))
+  const loadTrend = useCallback(async (id) => {
+    try {
+      const res = await api.get(`/analytics/metric-data/${id}`)
+      const pts = (res.data.data_points || [])
+        .map(p => ({ t: new Date(p.timestamp), v: p.value }))
+        .sort((a, b) => a.t - b.t)
+      setTrendPoints(pts)
+      setOffline(false)
+    } catch (err) {
+      if (err.response?.status === 404) setTrendPoints([])
+      else setOffline(true)
+    }
   }, [])
+
+  const loadBreakdowns = useCallback(async () => {
+    try {
+      const [dealsRes, contactsRes] = await Promise.all([
+        api.get('/api/v1/crm/deals', { params: { limit: 500 } }),
+        api.get('/api/v1/crm/contacts', { params: { limit: 500 } }),
+      ])
+      const deals = dealsRes.data.deals || []
+      setStageData(
+        STAGE_ORDER
+          .map(stage => ({
+            label: stage.replace('_', ' '),
+            value: deals.filter(d => d.stage === stage).reduce((s, d) => s + (d.value || 0), 0),
+          }))
+          .filter(d => d.value > 0 || true),
+      )
+      const contacts = contactsRes.data.contacts || []
+      const buckets = [
+        { label: '0–24', lo: 0, hi: 24 },
+        { label: '25–49', lo: 25, hi: 49 },
+        { label: '50–69', lo: 50, hi: 69 },
+        { label: '70+', lo: 70, hi: 1000 },
+      ]
+      setScoreData(buckets.map(b => ({
+        label: b.label,
+        value: contacts.filter(c => (c.lead_score || 0) >= b.lo && (c.lead_score || 0) <= b.hi).length,
+      })))
+    } catch {
+      setOffline(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadTrend(metricId) }, [metricId, loadTrend])
+  useEffect(() => { loadBreakdowns() }, [loadBreakdowns])
+
+  const activeMetric = TREND_METRICS.find(m => m.id === metricId)
 
   if (loading) return <div className="loading">Loading analytics…</div>
 
   return (
     <div>
-      <h1>Analytics & Reports</h1>
+      <h1>Analytics</h1>
 
-      <div className="card">
-        <h2 className="card-title">Backend Connection</h2>
-        {connected ? (
-          <span className="badge badge-success">✓ Live — dashboard templates loaded from the API</span>
-        ) : (
-          <span className="badge badge-danger">Offline — start the backend on port 8000 to load live data</span>
-        )}
-      </div>
-
-      <div className="card">
-        <h2 className="card-title">Available Dashboards</h2>
-        <div className="grid" style={{ marginTop: '1rem' }}>
-          {dashboards.map(d => (
-            <div key={d.id} className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setSelected(d)}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>
-                {DASHBOARD_ICONS[d.dashboard_type] || '📊'}
-              </div>
-              <h3 style={{ marginBottom: '0.5rem' }}>{d.name}</h3>
-              <p style={{ color: '#999', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                {DASHBOARD_DESCRIPTIONS[d.dashboard_type] || 'View detailed metrics'}
-              </p>
-              <button className="btn btn-primary" style={{ width: '100%' }}>
-                {selected?.id === d.id ? 'Selected' : 'View Widgets'}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {selected && (
-        <div className="card">
-          <h2 className="card-title">{selected.name} — Widgets</h2>
-          {selected.widgets?.length ? (
-            <table className="table">
-              <thead>
-                <tr><th>Widget</th><th>Metric</th><th>Type</th></tr>
-              </thead>
-              <tbody>
-                {selected.widgets.map((w, i) => (
-                  <tr key={i}>
-                    <td><strong>{w.name}</strong></td>
-                    <td>{w.metric_id}</td>
-                    <td><span className="badge badge-warning">{w.widget_type}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ color: '#999' }}>
-              Widget definitions load from the backend. Start the API to see this dashboard's widgets.
-            </p>
-          )}
+      {offline && (
+        <div className="card" style={{ borderLeft: '4px solid #D62828' }}>
+          Backend offline — start the API on port 8000
         </div>
       )}
+
+      <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <h2 className="card-title" style={{ marginBottom: 0 }}>
+            {activeMetric.label} over time
+          </h2>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {TREND_METRICS.map(m => (
+              <button key={m.id}
+                className={`btn ${metricId === m.id ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                onClick={() => setMetricId(m.id)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p style={{ color: '#666', margin: '0.5rem 0 1rem' }}>
+          Recorded automatically by the heartbeat's hourly pipeline snapshot.
+        </p>
+        {showTable ? (
+          <DataTable
+            columns={['Time', activeMetric.label]}
+            rows={trendPoints.map(p => [p.t.toLocaleString(), `${activeMetric.unit}${p.v.toLocaleString()}`])}
+          />
+        ) : (
+          <LineChart points={trendPoints} unit={activeMetric.unit === '$' ? '' : activeMetric.unit}
+            ariaLabel={`${activeMetric.label} trend`} />
+        )}
+        <button className="btn btn-secondary" style={{ marginTop: '0.75rem', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+          onClick={() => setShowTable(!showTable)}>
+          {showTable ? 'Chart view' : 'Table view'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '2rem' }}>
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2 className="card-title">Pipeline value by stage</h2>
+          <ColumnChart data={stageData} ariaLabel="pipeline value by stage" />
+        </div>
+        <div className="card" style={{ marginBottom: 0 }}>
+          <h2 className="card-title">Contacts by lead score</h2>
+          <ColumnChart data={scoreData} ariaLabel="contacts by lead score band" />
+        </div>
+      </div>
     </div>
   )
 }

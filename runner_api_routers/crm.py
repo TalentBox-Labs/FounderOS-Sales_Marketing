@@ -189,7 +189,13 @@ def create_deal(
             if db.get(Contact, contact_id) is None:
                 raise HTTPException(status_code=404, detail="Contact not found")
 
-        deal = Deal(name=req.name, value=req.value, stage=stage, contact_id=contact_id)
+        from revenue_os.services.deal_automation_service import get_or_create_sales_pipeline
+
+        pipeline = get_or_create_sales_pipeline(db)
+        deal = Deal(
+            name=req.name, value=req.value, stage=stage,
+            contact_id=contact_id, pipeline_id=pipeline.id,
+        )
         db.add(deal)
         db.commit()
         db.refresh(deal)
