@@ -31,36 +31,32 @@ def _resp(reply: str, items: list[dict] | None = None, action: str | None = None
 
 
 def _handle_followups(message: str) -> dict[str, Any]:
-    """Deals at risk + qualified contacts without deals + pending approvals."""
-    from revenue_os.models.contact import Contact, ContactStatus
-    from revenue_os.models.deal import Deal
-    from revenue_os.services.approvals import list_requests
-    from revenue_os.services.deal_automation_service import get_deals_at_risk
+    """Overdue tasks + deals at risk + stalled contacts + pending approvals."""
+    from revenue_os.services.followups import get_followups
 
+    f = get_followups()
     items: list[dict] = []
-    db = SessionLocal()
-    try:
-        for deal in get_deals_at_risk(db)[:5]:
-            items.append({
-                "title": f"Deal at risk: {deal.get('name', deal.get('deal_id', '?'))}",
-                "subtitle": f"risk {deal.get('risk_score', '?')} · {deal.get('days_overdue', 0)} days overdue",
-                "link": "/deals",
-            })
-        with_deals = {d.contact_id for d in db.query(Deal).all() if d.contact_id}
-        no_deal = [
-            c for c in db.query(Contact).filter(Contact.status == ContactStatus.QUALIFIED).all()
-            if c.id not in with_deals
-        ]
-        for c in no_deal[:5]:
-            items.append({
-                "title": f"Qualified, no deal yet: {c.first_name} {c.last_name}".strip(),
-                "subtitle": f"score {c.lead_score or 0} · {c.email}",
-                "link": "/contacts",
-            })
-    finally:
-        db.close()
 
-    for r in list_requests(status="pending", limit=5):
+    for t in f["overdue_tasks"][:5]:
+        link = f"/deals/{t['deal_id']}" if t.get("deal_id") else f"/contacts/{t['contact_id']}"
+        items.append({
+            "title": f"Overdue task: {t['subject']}",
+            "subtitle": f"was due {t['due_date']}",
+            "link": link,
+        })
+    for d in f["at_risk_deals"][:5]:
+        items.append({
+            "title": f"Deal at risk: {d.get('name', d.get('deal_id', '?'))}",
+            "subtitle": f"risk {d.get('risk_score', '?')} · {d.get('days_overdue', 0)} days overdue",
+            "link": f"/deals/{d['deal_id']}",
+        })
+    for c in f["stalled_contacts"][:5]:
+        items.append({
+            "title": f"Qualified, no deal yet: {c['name']}",
+            "subtitle": f"score {c['lead_score']} · quiet {c['days_stale']} days",
+            "link": f"/contacts/{c['id']}",
+        })
+    for r in f["pending_approvals"][:5]:
         items.append({
             "title": f"Awaiting your approval: {r['title']}",
             "subtitle": f"proposed by {r['requested_by']}",
@@ -75,13 +71,12 @@ def _handle_followups(message: str) -> dict[str, Any]:
 def _handle_priorities(message: str) -> dict[str, Any]:
     """Morning-brief style summary across the platform."""
     from revenue_os.models.goals import Goal
-    from revenue_os.services.approvals import pending_count
-    from revenue_os.services.deal_automation_service import get_deals_at_risk, get_pipeline_health
+    from revenue_os.services.deal_automation_service import get_pipeline_health
+    from revenue_os.services.followups import get_followups
 
     db = SessionLocal()
     try:
         health = get_pipeline_health(db)
-        at_risk = len(get_deals_at_risk(db))
         goals = db.query(Goal).filter(Goal.status == "active").all()
         goal_items = [{
             "title": g.title,
@@ -91,8 +86,14 @@ def _handle_priorities(message: str) -> dict[str, Any]:
     finally:
         db.close()
 
-    pending = pending_count()
+    f = get_followups()
+    pending = len(f["pending_approvals"])
+    at_risk = len(f["at_risk_deals"])
+    overdue = len(f["overdue_tasks"])
+
     items = []
+    if overdue:
+        items.append({"title": f"{overdue} task(s) overdue", "subtitle": "Clear these first", "link": "/copilot"})
     if pending:
         items.append({"title": f"{pending} approval(s) waiting for you", "subtitle": "Approve or reject proposed actions", "link": "/approvals"})
     if at_risk:
@@ -103,7 +104,7 @@ def _handle_priorities(message: str) -> dict[str, Any]:
         f"Today: pipeline ${health.get('total_pipeline_value', 0):,.0f} across "
         f"{health.get('total_deals', 0)} open deals "
         f"(weighted forecast ${health.get('weighted_forecast', 0):,.0f}). "
-        f"{pending} approvals pending, {at_risk} deals at risk, "
+        f"{overdue} tasks overdue, {pending} approvals pending, {at_risk} deals at risk, "
         f"{len(goal_items)} active goal(s)."
     )
     return _resp(reply, items)

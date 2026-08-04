@@ -40,7 +40,7 @@ class Activity(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     contact_id = Column(
-        UUID(as_uuid=True), ForeignKey("contacts.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("contacts.id"), nullable=True
     )
     deal_id = Column(
         UUID(as_uuid=True), ForeignKey("deals.id"), nullable=True
@@ -54,6 +54,12 @@ class Activity(Base):
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
     performed_at = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Task tracking — only meaningful when activity_type == TASK, but kept on
+    # the shared table so the timeline query stays a single, ordered feed.
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    is_completed = Column(Integer, default=0)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     contact = relationship("Contact", back_populates="activities")
     deal = relationship("Deal")

@@ -251,6 +251,66 @@ app.include_router(ui_router)
 initialize_automation()
 
 
+def _migrate_missing_columns() -> None:
+    """Add columns introduced after a table already exists.
+
+    ``Base.metadata.create_all()`` only creates missing tables, it never
+    alters existing ones — so a fresh column on an old table needs an
+    explicit ``ALTER TABLE``. This is a lightweight, additive-only patch
+    list (no drops, no renames), safe to run on every startup.
+    """
+    from sqlalchemy import inspect, text
+
+    from revenue_os.database import engine
+
+    patches = {
+        "activities": [
+            ("due_date", "DATETIME"),
+            ("is_completed", "INTEGER DEFAULT 0"),
+            ("completed_at", "DATETIME"),
+        ],
+    }
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, columns in patches.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl_type in columns:
+                if name in existing:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+                logger.info(f"Migrated: added {table}.{name}")
+
+        # activities.contact_id used to be NOT NULL; deal-only activities need
+        # it nullable. Postgres can alter in place. SQLite can't alter a
+        # column constraint — only safe to rebuild the table when it's empty.
+        if inspector.has_table("activities"):
+            contact_col = next(
+                (c for c in inspector.get_columns("activities") if c["name"] == "contact_id"), None
+            )
+            if contact_col is not None and not contact_col["nullable"]:
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("ALTER TABLE activities ALTER COLUMN contact_id DROP NOT NULL"))
+                    logger.info("Migrated: activities.contact_id is now nullable")
+                elif engine.dialect.name == "sqlite":
+                    row_count = conn.execute(text("SELECT COUNT(*) FROM activities")).scalar()
+                    if row_count == 0:
+                        conn.execute(text("DROP TABLE activities"))
+                        logger.info("Migrated: dropped empty activities table for nullable rebuild")
+                        # Base.metadata.create_all() above already ran this
+                        # startup — recreate it now from the current model.
+                        from revenue_os.models.activity import Activity
+
+                        Activity.__table__.create(bind=conn)
+                    else:
+                        logger.warning(
+                            "activities.contact_id is NOT NULL on SQLite with existing rows — "
+                            "deal-only activities will fail until manually migrated"
+                        )
+
+
 @app.on_event("startup")
 async def _startup_persistence_and_heartbeat() -> None:
     """Create any missing tables, then start the autonomous heartbeat."""
@@ -263,6 +323,11 @@ async def _startup_persistence_and_heartbeat() -> None:
         logger.info("Database tables verified/created")
     except Exception as e:
         logger.error(f"Table creation failed (continuing): {e}")
+
+    try:
+        _migrate_missing_columns()
+    except Exception as e:
+        logger.error(f"Column migration failed (continuing): {e}")
 
     try:
         from revenue_os.scheduler import initialize_heartbeat
