@@ -192,6 +192,17 @@ def create_contact(
         ))
     except Exception as e:
         logger.warning(f"LEAD_CREATED publish failed: {e}")
+
+    try:
+        from revenue_os.services.search_service import index_contact
+
+        index_contact(
+            uuid_lib.UUID(result["id"]), req.first_name, req.last_name or "",
+            email=req.email, designation=req.title,
+        )
+    except Exception as e:
+        logger.warning(f"Contact search-index failed: {e}")
+
     return {"ok": True, "contact": result}
 
 
@@ -304,6 +315,14 @@ def create_deal(
         ))
     except Exception as e:
         logger.warning(f"DEAL_CREATED publish failed: {e}")
+
+    try:
+        from revenue_os.services.search_service import index_deal
+
+        index_deal(uuid_lib.UUID(result["id"]), req.name)
+    except Exception as e:
+        logger.warning(f"Deal search-index failed: {e}")
+
     return {"ok": True, "deal": result}
 
 
@@ -398,9 +417,18 @@ def create_activity(
 
         db.commit()
         db.refresh(activity)
-        return {"ok": True, "activity": _activity_dict(activity)}
+        result = _activity_dict(activity)
     finally:
         db.close()
+
+    try:
+        from revenue_os.services.search_service import index_activity
+
+        index_activity(activity.id, subject=req.subject, body=req.body)
+    except Exception as e:
+        logger.warning(f"Activity search-index failed: {e}")
+
+    return {"ok": True, "activity": result}
 
 
 @router.post("/activities/{activity_id}/complete")

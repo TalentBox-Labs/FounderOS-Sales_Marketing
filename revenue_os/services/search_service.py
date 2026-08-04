@@ -83,6 +83,17 @@ def index_project(project_id: uuid.UUID, name: str, description: str | None = No
     )
 
 
+def index_kb_article(article_id: uuid.UUID, title: str, content: str | None = None,
+                     tags: str | None = None) -> None:
+    collection = _get_collection()
+    text = f"{title} {content or ''} {tags or ''}"
+    collection.upsert(
+        ids=[str(article_id)],
+        documents=[text],
+        metadatas=[{"type": "kb_article", "title": title}],
+    )
+
+
 def search(query: str, limit: int = 10, type_filter: str | None = None,
            db: Session | None = None) -> list[dict[str, Any]]:
     collection = _get_collection()
@@ -136,6 +147,13 @@ def _fetch_record(db: Session, record_id: str, record_type: str) -> dict[str, An
         p = db.query(Project).filter(Project.id == uid).first()
         if p:
             return {"id": str(p.id), "name": p.name, "status": p.status.value}
+    elif record_type == "kb_article":
+        from revenue_os.models.content import KnowledgeBaseArticle
+
+        a = db.query(KnowledgeBaseArticle).filter(KnowledgeBaseArticle.id == uid).first()
+        if a:
+            return {"id": str(a.id), "title": a.title,
+                    "knowledge_base_id": str(a.knowledge_base_id)}
 
     return None
 

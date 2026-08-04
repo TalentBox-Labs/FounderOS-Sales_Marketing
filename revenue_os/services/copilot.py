@@ -256,6 +256,7 @@ def _handle_help(message: str) -> dict[str, Any]:
             {"title": "Create a goal: 20 qualified leads", "subtitle": "Hermes plans and executes it"},
             {"title": "Run lead scoring", "subtitle": "score new contacts now"},
             {"title": "Run a goal check", "subtitle": "one Hermes cycle across active goals"},
+            {"title": "Anything else — e.g. \"how do I handle a stuck deal?\"", "subtitle": "answered from your knowledge base"},
         ],
     )
 
@@ -296,6 +297,25 @@ def chat(message: str) -> dict[str, Any]:
                         "action": result.get("action")},
             )
             return result
+
+    # No pattern matched — try the knowledge base + CRM before giving up.
+    # This is retrieval-augmented, not a guess: it only answers from what
+    # search_service actually finds, and always shows its sources.
+    try:
+        from revenue_os.services.rag_service import answer_question
+
+        rag = answer_question(text, limit=4)
+    except Exception as e:
+        logger.error(f"Copilot RAG fallback failed: {e}")
+        rag = {"answer": "", "sources": []}
+
+    if rag.get("sources"):
+        log_agent_action(actor=ACTOR, action_type="chat",
+                         detail={"message": text[:200], "intent": "rag_answer"})
+        items = [{
+            "title": s["title"], "subtitle": f"{s['type']} · {s['snippet'][:80]}",
+        } for s in rag["sources"]]
+        return _resp(rag["answer"], items, action="rag_answer")
 
     log_agent_action(actor=ACTOR, action_type="chat",
                      detail={"message": text[:200], "intent": "unmatched"})
