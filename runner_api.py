@@ -358,6 +358,13 @@ async def _startup_persistence_and_heartbeat() -> None:
     except Exception as e:
         logger.error(f"Agent registry seeding failed: {e}")
 
+    try:
+        from revenue_os.services.credentials_vault import hydrate_all_connectors
+
+        hydrate_all_connectors()
+    except Exception as e:
+        logger.error(f"Connector hydration failed: {e}")
+
 
 @app.on_event("shutdown")
 async def _shutdown_heartbeat() -> None:
