@@ -272,6 +272,9 @@ def _migrate_missing_columns() -> None:
             ("is_completed", "INTEGER DEFAULT 0"),
             ("completed_at", "DATETIME"),
         ],
+        "hermes_goals": [
+            ("agent_name", "VARCHAR(64)"),
+        ],
     }
 
     inspector = inspect(engine)
@@ -345,6 +348,13 @@ async def _startup_persistence_and_heartbeat() -> None:
         initialize_n8n_bridge()
     except Exception as e:
         logger.error(f"n8n bridge initialization failed: {e}")
+
+    try:
+        from revenue_os.agents.orchestration import seed_platform_agents
+
+        seed_platform_agents()
+    except Exception as e:
+        logger.error(f"Agent registry seeding failed: {e}")
 
 
 @app.on_event("shutdown")

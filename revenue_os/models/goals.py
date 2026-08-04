@@ -26,6 +26,7 @@ class Goal(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False, default="")
+    agent_name = Column(String(64), nullable=True, index=True)  # owning agent, if any (see agent_registry)
     metric = Column(String(64), nullable=False)  # qualified_leads | pipeline_value | deals_closed
     target_value = Column(Float, nullable=False)
     baseline_value = Column(Float, nullable=False, default=0.0)
@@ -50,6 +51,7 @@ class Goal(Base):
             "id": self.id,
             "title": self.title,
             "description": self.description,
+            "agent_name": self.agent_name,
             "metric": self.metric,
             "target_value": self.target_value,
             "baseline_value": self.baseline_value,
