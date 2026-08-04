@@ -76,6 +76,7 @@ from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
 from runner_api_routers.goals import router as goals_router
 from runner_api_routers.approvals import router as approvals_router
 from runner_api_routers.crm import router as crm_router
+from runner_api_routers.copilot import router as copilot_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -232,6 +233,7 @@ app.include_router(n8n_webhooks_router)
 app.include_router(goals_router)
 app.include_router(approvals_router)
 app.include_router(crm_router)
+app.include_router(copilot_router)
 
 # Serve the built React CRM at /app when frontend/dist exists (production).
 # The SPA uses hash routing, so a single index.html works without fallbacks.
