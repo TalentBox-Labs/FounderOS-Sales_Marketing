@@ -58,6 +58,28 @@ class Condition:
         """Convert to dictionary."""
         return {"field": self.field, "operator": self.operator, "value": self.value}
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Condition":
+        return cls(field=d["field"], operator=d["operator"], value=d.get("value"))
+
+
+def _action_to_dict(a: Action) -> dict[str, Any]:
+    return {
+        "action_id": a.action_id,
+        "action_type": a.action_type.value,
+        "config": a.config,
+        "enabled": a.enabled,
+    }
+
+
+def _action_from_dict(d: dict[str, Any]) -> Action:
+    return Action(
+        action_type=ActionType(d["action_type"]),
+        config=d.get("config") or {},
+        enabled=d.get("enabled", True),
+        action_id=d.get("action_id"),
+    )
+
 
 class Workflow:
     """A workflow that triggers actions based on events and conditions."""
@@ -148,47 +170,131 @@ class Workflow:
             "description": self.description,
             "event_type": self.event_type.value if self.event_type else None,
             "conditions": [c.to_dict() for c in self.conditions],
-            "actions": [
-                {
-                    "action_id": a.action_id,
-                    "action_type": a.action_type.value,
-                    "config": a.config,
-                    "enabled": a.enabled,
-                }
-                for a in self.actions
-            ],
+            "actions": [_action_to_dict(a) for a in self.actions],
             "enabled": self.enabled,
             "created_at": self.created_at,
             "execution_count": len(self.executions),
         }
 
 
+def _workflows_db():
+    """Open a DB session for workflow persistence. Returns None if unavailable."""
+    try:
+        from revenue_os.database import SessionLocal
+        return SessionLocal()
+    except Exception:
+        return None
+
+
 class WorkflowEngine:
-    """Manages and executes workflows."""
+    """Manages and executes workflows.
+
+    Workflows run from the in-memory ``_workflows`` list for speed, but every
+    mutation writes through to ``WorkflowDefinitionRecord`` and the list is
+    hydrated from that table once per process — otherwise every workflow a
+    founder builds evaporates the moment the process restarts.
+    """
 
     _workflows: list[Workflow] = []
     _execution_history: list[dict[str, Any]] = []
+    _hydrated: bool = False
+
+    @classmethod
+    def _hydrate_from_db(cls) -> None:
+        if cls._hydrated:
+            return
+        cls._hydrated = True
+        db = _workflows_db()
+        if db is None:
+            return
+        try:
+            from revenue_os.models.automation_state import WorkflowDefinitionRecord
+
+            known_ids = {w.workflow_id for w in cls._workflows}
+            for row in db.query(WorkflowDefinitionRecord).all():
+                if row.id in known_ids:
+                    continue
+                workflow = Workflow(
+                    name=row.name,
+                    description=row.description or "",
+                    event_type=EventType(row.event_type) if row.event_type else None,
+                    conditions=[Condition.from_dict(c) for c in (row.conditions or [])],
+                    actions=[_action_from_dict(a) for a in (row.actions or [])],
+                    enabled=bool(row.is_enabled),
+                )
+                workflow.workflow_id = row.id
+                workflow.created_at = row.created_at.isoformat() if row.created_at else workflow.created_at
+                cls._workflows.append(workflow)
+        except Exception as e:
+            logger.warning(f"Workflow hydration skipped: {e}")
+        finally:
+            db.close()
+
+    @classmethod
+    def _persist(cls, workflow: Workflow) -> None:
+        db = _workflows_db()
+        if db is None:
+            return
+        try:
+            from revenue_os.models.automation_state import WorkflowDefinitionRecord
+
+            row = db.get(WorkflowDefinitionRecord, workflow.workflow_id)
+            if row is None:
+                row = WorkflowDefinitionRecord(id=workflow.workflow_id)
+                db.add(row)
+            row.name = workflow.name
+            row.description = workflow.description
+            row.event_type = workflow.event_type.value if workflow.event_type else None
+            row.conditions = [c.to_dict() for c in workflow.conditions]
+            row.actions = [_action_to_dict(a) for a in workflow.actions]
+            row.is_enabled = 1 if workflow.enabled else 0
+            db.commit()
+        except Exception as e:
+            logger.warning(f"Workflow not persisted ({workflow.workflow_id}): {e}")
+        finally:
+            db.close()
 
     @classmethod
     def register_workflow(cls, workflow: Workflow) -> None:
-        """Register a workflow."""
+        """Register a workflow (persisted)."""
         cls._workflows.append(workflow)
+        cls._persist(workflow)
         logger.info(f"Workflow registered: {workflow.name}", extra={"workflow_id": workflow.workflow_id})
 
     @classmethod
+    def save_workflow(cls, workflow: Workflow) -> None:
+        """Persist changes to an already-registered workflow (toggle, edit)."""
+        cls._persist(workflow)
+
+    @classmethod
     def unregister_workflow(cls, workflow_id: str) -> bool:
-        """Unregister a workflow by ID."""
+        """Unregister a workflow by ID (persisted)."""
         cls._workflows = [w for w in cls._workflows if w.workflow_id != workflow_id]
+        db = _workflows_db()
+        if db is not None:
+            try:
+                from revenue_os.models.automation_state import WorkflowDefinitionRecord
+
+                row = db.get(WorkflowDefinitionRecord, workflow_id)
+                if row is not None:
+                    db.delete(row)
+                    db.commit()
+            except Exception as e:
+                logger.warning(f"Workflow delete not persisted ({workflow_id}): {e}")
+            finally:
+                db.close()
         return True
 
     @classmethod
     def get_workflow(cls, workflow_id: str) -> Optional[Workflow]:
         """Get workflow by ID."""
+        cls._hydrate_from_db()
         return next((w for w in cls._workflows if w.workflow_id == workflow_id), None)
 
     @classmethod
     def list_workflows(cls, enabled_only: bool = False) -> list[Workflow]:
         """List all workflows."""
+        cls._hydrate_from_db()
         workflows = cls._workflows
         if enabled_only:
             workflows = [w for w in workflows if w.enabled]
@@ -197,6 +303,7 @@ class WorkflowEngine:
     @classmethod
     def on_event(cls, event: Event) -> list[dict[str, Any]]:
         """Process event and execute matching workflows."""
+        cls._hydrate_from_db()
         executions = []
 
         for workflow in cls._workflows:
