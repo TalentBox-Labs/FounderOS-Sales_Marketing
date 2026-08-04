@@ -77,6 +77,7 @@ from runner_api_routers.goals import router as goals_router
 from runner_api_routers.approvals import router as approvals_router
 from runner_api_routers.crm import router as crm_router
 from runner_api_routers.copilot import router as copilot_router
+from runner_api_routers.seo import router as seo_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -105,6 +106,7 @@ from revenue_os.models.activity import (
 )
 from revenue_os.models.contact import Contact, ContactStatus
 from revenue_os.models.deal import Deal, DealStage
+from revenue_os.services.outreach_service import schedule_contact_sequence as _schedule_contact_sequence
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
@@ -234,6 +236,7 @@ app.include_router(goals_router)
 app.include_router(approvals_router)
 app.include_router(crm_router)
 app.include_router(copilot_router)
+app.include_router(seo_router)
 
 # Serve the built React CRM at /app when frontend/dist exists (production).
 # The SPA uses hash routing, so a single index.html works without fallbacks.
@@ -801,81 +804,6 @@ def _parse_statuses(raw: list[str]) -> list[ContactStatus]:
     if not statuses:
         raise HTTPException(status_code=400, detail="at least one status is required")
     return statuses
-
-
-def _map_activity_type(step_action: str, sequence_channel: str) -> ActivityType:
-    action = (step_action or "").strip().lower()
-    channel = (sequence_channel or "").strip().lower()
-    if action in {"send_email", "email"} or channel == "email":
-        return ActivityType.EMAIL
-    if action in {"linkedin_message", "linkedin"}:
-        return ActivityType.LINKEDIN_MESSAGE
-    if action in {"linkedin_connect"}:
-        return ActivityType.LINKEDIN_CONNECT
-    if action in {"whatsapp"} or channel == "whatsapp":
-        return ActivityType.WHATSAPP
-    if action in {"call"}:
-        return ActivityType.CALL
-    return ActivityType.TASK
-
-
-def _schedule_contact_sequence(db, sequence: OutreachSequence, contact_id: str) -> dict[str, Any]:
-    steps = (
-        db.query(SequenceStep)
-        .filter(SequenceStep.sequence_id == sequence.id)
-        .order_by(SequenceStep.step_order)
-        .all()
-    )
-    if not steps:
-        activity = Activity(
-            contact_id=uuid.UUID(contact_id),
-            activity_type=_map_activity_type("", sequence.channel),
-            subject=f"{sequence.name} - outreach",
-            body="Imported from prospecting plan",
-            direction="outbound",
-            status="scheduled",
-            scheduled_at=datetime.now(timezone.utc),
-        )
-        db.add(activity)
-        return {"contact_id": contact_id, "steps": 1}
-
-    cumulative_days = 0
-    for step in steps:
-        cumulative_days += max(0, int(step.delay_days or 0))
-        activity = Activity(
-            contact_id=uuid.UUID(contact_id),
-            activity_type=_map_activity_type(step.action_type, sequence.channel),
-            subject=step.subject or f"{sequence.name} - step {step.step_order}",
-            body=step.template or "",
-            direction="outbound",
-            status="scheduled",
-            scheduled_at=datetime.now(timezone.utc) + timedelta(days=cumulative_days),
-        )
-        db.add(activity)
-    return {"contact_id": contact_id, "steps": len(steps)}
-
-
-@app.get("/api/v1/outreach/sequences")
-def outreach_sequences_proxy(
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    db = SessionLocal()
-    try:
-        rows = db.query(OutreachSequence).filter(OutreachSequence.is_active == 1).all()
-        return {
-            "ok": True,
-            "sequences": [
-                {
-                    "id": str(r.id),
-                    "name": r.name,
-                    "channel": r.channel,
-                    "steps_count": r.steps_count,
-                }
-                for r in rows
-            ],
-        }
-    finally:
-        db.close()
 
 
 @app.get("/api/v1/prospecting/providers")
