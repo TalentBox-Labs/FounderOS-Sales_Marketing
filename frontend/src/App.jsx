@@ -10,11 +10,13 @@ import Approvals from './pages/Approvals.jsx'
 import Marketing from './pages/Marketing.jsx'
 import Customers from './pages/Customers.jsx'
 import Automation from './pages/Automation.jsx'
+import Copilot from './pages/Copilot.jsx'
 import Login from './pages/Login.jsx'
 import { isAuthed, logout } from './api.js'
 
 const NAV_LINKS = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/copilot', label: 'Copilot' },
   { to: '/contacts', label: 'Contacts' },
   { to: '/deals', label: 'Deals' },
   { to: '/customers', label: 'Customers' },
@@ -67,6 +69,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
+            <Route path="/copilot" element={<RequireAuth><Copilot /></RequireAuth>} />
             <Route path="/contacts" element={<RequireAuth><Contacts /></RequireAuth>} />
             <Route path="/deals" element={<RequireAuth><Deals /></RequireAuth>} />
             <Route path="/customers" element={<RequireAuth><Customers /></RequireAuth>} />
