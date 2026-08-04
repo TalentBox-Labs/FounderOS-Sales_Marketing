@@ -49,7 +49,32 @@ closed n8n loop, auth, single-container deploy.
    task handoff, per-agent memory/goals/permissions.
 6. **M6 — Knowledge base + RAG** ✅ (chromadb; notes, playbooks, semantic search).
 7. **M7 — Integrations abstraction** ✅ (connector registry, credentials vault).
-8. **M8 — Analytics depth (next)**: attribution, funnel, CAC/LTV, agent productivity.
+8. **M8 — Analytics depth** ✅: attribution, funnel, CAC/LTV, agent productivity.
+
+All 8 milestones from the original roadmap are complete.
 
 Each milestone ships: DB changes (auto-created), services, API, React page(s),
 audit-trail integration, browser-verified, committed.
+
+## 4. Next steps — production hardening
+
+The feature surface now matches the founder-OS vision end to end. What
+remains is less "build the next module" and more "make the existing
+modules trustworthy under real load and real users":
+
+- **Postgres migration path**: every model change so far has shipped as an
+  additive SQLite-safe patch in `runner_api.py`'s startup migration list.
+  That works for one process on one SQLite file; a real Postgres deploy
+  needs proper Alembic migrations instead of ad hoc `ALTER TABLE`s.
+- **Background job durability**: the heartbeat scheduler, WorkflowEngine,
+  and Hermes all run in-process. A crash mid-cycle loses that cycle's work
+  silently. Worth revisiting once there's a real multi-instance deploy.
+- **Real external sends**: `send_email`/`send_slack`/social-publish actions
+  work end to end once a connector is configured (M7), but haven't been
+  exercised against live third-party APIs — only the configured/
+  not-configured path is verified.
+- **Test coverage**: nothing here has an automated test suite yet;
+  everything was verified by hand (curl + Playwright) per milestone.
+- **Multi-tenancy / auth depth**: currently one shared `RUNNER_API_KEY`.
+  Real usage beyond a single founder needs per-user accounts and scoped
+  permissions, not just the bearer-token gate.
