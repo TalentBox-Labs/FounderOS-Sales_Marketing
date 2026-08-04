@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api.js'
 
 const SALES_STAGES = ['discovery', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
@@ -186,7 +187,7 @@ export default function Deals() {
             <tbody>
               {deals.map(deal => (
                 <tr key={deal.id}>
-                  <td><strong>{deal.name}</strong></td>
+                  <td><Link to={`/deals/${deal.id}`} style={{ color: '#667eea', fontWeight: 700, textDecoration: 'none' }}>{deal.name}</Link></td>
                   <td>{deal.contact_name || '—'}</td>
                   <td>${(deal.value || 0).toLocaleString()}</td>
                   <td>

@@ -2,7 +2,9 @@ import React from 'react'
 import { HashRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import Dashboard from './pages/Dashboard.jsx'
 import Contacts from './pages/Contacts.jsx'
+import ContactDetail from './pages/ContactDetail.jsx'
 import Deals from './pages/Deals.jsx'
+import DealDetail from './pages/DealDetail.jsx'
 import Analytics from './pages/Analytics.jsx'
 import Goals from './pages/Goals.jsx'
 import Activity from './pages/Activity.jsx'
@@ -71,7 +73,9 @@ export default function App() {
             <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/copilot" element={<RequireAuth><Copilot /></RequireAuth>} />
             <Route path="/contacts" element={<RequireAuth><Contacts /></RequireAuth>} />
+            <Route path="/contacts/:id" element={<RequireAuth><ContactDetail /></RequireAuth>} />
             <Route path="/deals" element={<RequireAuth><Deals /></RequireAuth>} />
+            <Route path="/deals/:id" element={<RequireAuth><DealDetail /></RequireAuth>} />
             <Route path="/customers" element={<RequireAuth><Customers /></RequireAuth>} />
             <Route path="/marketing" element={<RequireAuth><Marketing /></RequireAuth>} />
             <Route path="/analytics" element={<RequireAuth><Analytics /></RequireAuth>} />

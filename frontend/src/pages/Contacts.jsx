@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api.js'
 
 const EMPTY_FORM = { first_name: '', last_name: '', email: '', phone: '', title: '', status: 'prospect' }
@@ -134,7 +135,7 @@ export default function Contacts() {
             <tbody>
               {contacts.map(c => (
                 <tr key={c.id}>
-                  <td><strong>{c.name}</strong></td>
+                  <td><Link to={`/contacts/${c.id}`} style={{ color: '#667eea', fontWeight: 700, textDecoration: 'none' }}>{c.name}</Link></td>
                   <td>{c.email}</td>
                   <td>{c.title || '—'}</td>
                   <td>

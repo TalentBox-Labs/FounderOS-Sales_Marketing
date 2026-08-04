@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api.js'
 
 export default function Dashboard() {
@@ -6,6 +7,8 @@ export default function Dashboard() {
   const [analyticsHealth, setAnalyticsHealth] = useState(null)
   const [goals, setGoals] = useState([])
   const [heartbeat, setHeartbeat] = useState(null)
+  const [stats, setStats] = useState({ totalContacts: 0, totalDeals: 0, pipelineValue: 0, closedDeals: 0 })
+  const [followups, setFollowups] = useState(null)
 
   useEffect(() => {
     api.get('/health')
@@ -23,14 +26,25 @@ export default function Dashboard() {
     api.get('/api/v1/heartbeat/status')
       .then(res => setHeartbeat(res.data))
       .catch(() => setHeartbeat(null))
-  }, [])
 
-  const stats = {
-    totalContacts: 12,
-    totalDeals: 8,
-    pipelineValue: 250000,
-    closedDeals: 5,
-  }
+    Promise.all([
+      api.get('/api/v1/crm/contacts', { params: { limit: 500 } }),
+      api.get('/api/v1/crm/deals', { params: { limit: 500 } }),
+    ]).then(([contactsRes, dealsRes]) => {
+      const deals = dealsRes.data.deals || []
+      const open = deals.filter(d => d.stage !== 'closed_won' && d.stage !== 'closed_lost')
+      setStats({
+        totalContacts: contactsRes.data.count || 0,
+        totalDeals: open.length,
+        pipelineValue: open.reduce((sum, d) => sum + (d.value || 0), 0),
+        closedDeals: deals.filter(d => d.stage === 'closed_won').length,
+      })
+    }).catch(() => {})
+
+    api.get('/api/v1/crm/followups')
+      .then(res => setFollowups(res.data))
+      .catch(() => setFollowups(null))
+  }, [])
 
   return (
     <div>
@@ -42,7 +56,7 @@ export default function Dashboard() {
           <div className="stat-number">{stats.totalContacts}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Active Deals</div>
+          <div className="stat-label">Open Deals</div>
           <div className="stat-number">{stats.totalDeals}</div>
         </div>
         <div className="stat-card">
@@ -54,6 +68,41 @@ export default function Dashboard() {
           <div className="stat-number">{stats.closedDeals}</div>
         </div>
       </div>
+
+      {followups && followups.total > 0 && (
+        <div className="card">
+          <h2 className="card-title">Needs Your Attention ({followups.total})</h2>
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {followups.overdue_tasks.slice(0, 3).map(t => (
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>⚠️ Overdue: {t.subject}</span>
+                <Link to={t.deal_id ? `/deals/${t.deal_id}` : `/contacts/${t.contact_id}`} style={{ color: '#667eea' }}>View</Link>
+              </div>
+            ))}
+            {followups.at_risk_deals.slice(0, 3).map(d => (
+              <div key={d.deal_id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>📉 At risk: {d.name}</span>
+                <Link to={`/deals/${d.deal_id}`} style={{ color: '#667eea' }}>View</Link>
+              </div>
+            ))}
+            {followups.stalled_contacts.slice(0, 3).map(c => (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>💤 Stalled: {c.name} ({c.days_stale}d quiet)</span>
+                <Link to={`/contacts/${c.id}`} style={{ color: '#667eea' }}>View</Link>
+              </div>
+            ))}
+            {followups.pending_approvals.slice(0, 3).map(r => (
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>✅ Approval: {r.title}</span>
+                <Link to="/approvals" style={{ color: '#667eea' }}>View</Link>
+              </div>
+            ))}
+          </div>
+          <Link to="/copilot" style={{ display: 'inline-block', marginTop: '1rem', color: '#667eea' }}>
+            Ask Copilot for the full brief →
+          </Link>
+        </div>
+      )}
 
       <div className="card" style={{ marginTop: '2rem' }}>
         <h2 className="card-title">System Status</h2>
