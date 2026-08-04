@@ -45,9 +45,9 @@ closed n8n loop, auth, single-container deploy.
 3. **M3 — Marketing OS core** ✅: email-sequence REST + UI, SEO/GEO tracking
    models (keywords, rankings, AI-visibility checks) with scores on Dashboard.
 4. **M4 — Visual workflow builder** ✅ on the existing event→action engine.
-5. **M5 — Agent registry & collaboration (next)**: agent status page, inter-agent
+5. **M5 — Agent registry & collaboration** ✅: agent status page, inter-agent
    task handoff, per-agent memory/goals/permissions.
-6. **M6 — Knowledge base + RAG** (chromadb; notes, playbooks, semantic search).
+6. **M6 — Knowledge base + RAG (next)** (chromadb; notes, playbooks, semantic search).
 7. **M7 — Integrations abstraction** (connector registry, credentials vault).
 8. **M8 — Analytics depth**: attribution, funnel, CAC/LTV, agent productivity.
 
