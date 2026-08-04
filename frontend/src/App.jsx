@@ -14,6 +14,7 @@ import Customers from './pages/Customers.jsx'
 import Automation from './pages/Automation.jsx'
 import Agents from './pages/Agents.jsx'
 import KnowledgeBase from './pages/KnowledgeBase.jsx'
+import Integrations from './pages/Integrations.jsx'
 import Copilot from './pages/Copilot.jsx'
 import Login from './pages/Login.jsx'
 import { isAuthed, logout } from './api.js'
@@ -31,6 +32,7 @@ const NAV_LINKS = [
   { to: '/automation', label: 'Automation' },
   { to: '/agents', label: 'Agents' },
   { to: '/knowledge-base', label: 'Knowledge Base' },
+  { to: '/integrations', label: 'Integrations' },
   { to: '/activity', label: 'Activity' },
 ]
 
@@ -88,6 +90,7 @@ export default function App() {
             <Route path="/automation" element={<RequireAuth><Automation /></RequireAuth>} />
             <Route path="/agents" element={<RequireAuth><Agents /></RequireAuth>} />
             <Route path="/knowledge-base" element={<RequireAuth><KnowledgeBase /></RequireAuth>} />
+            <Route path="/integrations" element={<RequireAuth><Integrations /></RequireAuth>} />
             <Route path="/activity" element={<RequireAuth><Activity /></RequireAuth>} />
           </Routes>
         </div>

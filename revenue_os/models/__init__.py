@@ -56,6 +56,7 @@ from revenue_os.models.goals import Goal, GoalStep
 from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.seo import SEOKeyword, SEORankCheck
 from revenue_os.models.agents import AgentRegistryRecord, AgentMessageRecord
+from revenue_os.models.integrations import ConnectorCredentialRecord
 
 __all__ = [
     "Company",
@@ -108,4 +109,5 @@ __all__ = [
     "WorkflowDefinitionRecord",
     "AgentRegistryRecord",
     "AgentMessageRecord",
+    "ConnectorCredentialRecord",
 ]

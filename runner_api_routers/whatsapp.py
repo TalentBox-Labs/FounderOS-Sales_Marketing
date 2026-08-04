@@ -32,7 +32,7 @@ def configure_whatsapp(
     config: dict[str, Any],
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Configure WhatsApp Business API."""
+    """Configure WhatsApp Business API — persisted encrypted, survives restart."""
     logger.info("Configuring WhatsApp Business API")
 
     try:
@@ -41,6 +41,9 @@ def configure_whatsapp(
             phone_number_id=config.get("phone_number_id", ""),
             business_account_id=config.get("business_account_id", ""),
         )
+        from revenue_os.services.credentials_vault import save_credentials
+
+        save_credentials("whatsapp", "messaging", config)
         return {"ok": True, "message": "WhatsApp configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure WhatsApp: {str(e)}")
