@@ -42,9 +42,9 @@ closed n8n loop, auth, single-container deploy.
    Deterministic intent router now; LLM slot-in later without API changes.
 2. **M2 — CRM depth** ✅: activities/notes/tasks + timeline per contact/deal,
    follow-up engine feeding Dashboard + Copilot.
-3. **M3 — Marketing OS core (next)**: email-sequence REST + UI, SEO/GEO tracking
+3. **M3 — Marketing OS core** ✅: email-sequence REST + UI, SEO/GEO tracking
    models (keywords, rankings, AI-visibility checks) with scores on Dashboard.
-4. **M4 — Visual workflow builder** on the existing event→action engine.
+4. **M4 — Visual workflow builder (next)** on the existing event→action engine.
 5. **M5 — Agent registry & collaboration**: agent status page, inter-agent
    task handoff, per-agent memory/goals/permissions.
 6. **M6 — Knowledge base + RAG** (chromadb; notes, playbooks, semantic search).
