@@ -28,6 +28,7 @@ class GoalCreateRequest(BaseModel):
     target_value: float = Field(..., gt=0)
     description: str = Field(default="")
     deadline: datetime | None = Field(default=None)
+    agent_name: str | None = Field(default=None, description="Owning agent, if any — see /api/v1/agents/registry")
 
 
 @router.post("")
@@ -43,6 +44,7 @@ def create_goal_endpoint(
             target_value=req.target_value,
             description=req.description,
             deadline=req.deadline,
+            agent_name=req.agent_name,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -52,6 +54,7 @@ def create_goal_endpoint(
 @router.get("")
 def list_goals(
     status: str | None = None,
+    agent_name: str | None = None,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """List goals with live progress."""
@@ -60,6 +63,8 @@ def list_goals(
         query = db.query(Goal).order_by(Goal.created_at.desc())
         if status:
             query = query.filter(Goal.status == status)
+        if agent_name:
+            query = query.filter(Goal.agent_name == agent_name)
         goals = [g.to_dict() for g in query.limit(100).all()]
         return {"ok": True, "count": len(goals), "goals": goals}
     finally:

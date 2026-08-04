@@ -18,6 +18,7 @@ from revenue_os.agents.orchestration import (
     AgentCoordinator,
     OrchestrationStrategy,
 )
+from pydantic import BaseModel, Field
 from revenue_os.agents.safeguards import (
     SafeguardEngine,
     AgentMonitor,
@@ -28,6 +29,95 @@ from runner_api_routers.utils import _verify_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
+
+
+class RegisterAgentRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    agent_type: str
+    capabilities: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class SendMessageRequest(BaseModel):
+    to_agent: str
+    message: str = Field(..., min_length=1)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/registry", tags=["agents"])
+def list_registered_agents(
+    agent_type: str | None = None,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """List every registered agent — platform subsystems and any custom ones."""
+    agents = AgentCoordinator.list_agents(agent_type=agent_type)
+    return {"ok": True, "count": len(agents), "agents": agents}
+
+
+@router.get("/registry/{agent_name}", tags=["agents"])
+def get_registered_agent(
+    agent_name: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Get one agent's registry entry, plus its unread inbox."""
+    info = AgentCoordinator.get_agent_info(agent_name)
+    if info is None:
+        return {"ok": False, "error": "Agent not found"}
+    return {
+        "ok": True,
+        "agent": {"name": agent_name, **info},
+        "unread_messages": AgentCoordinator.get_messages(agent_name, unread_only=True),
+    }
+
+
+@router.post("/registry", tags=["agents"])
+def register_agent(
+    req: RegisterAgentRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Register a custom agent (platform subsystems are seeded automatically)."""
+    AgentCoordinator.register_agent(
+        agent_name=req.name, agent_type=req.agent_type,
+        capabilities=req.capabilities, description=req.description,
+    )
+    return {"ok": True, "agent": AgentCoordinator.get_agent_info(req.name)}
+
+
+@router.get("/registry/{agent_name}/messages", tags=["agents"])
+def get_agent_messages(
+    agent_name: str,
+    unread_only: bool = False,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Get an agent's inbox — this is the inter-agent handoff log."""
+    messages = AgentCoordinator.get_messages(agent_name, unread_only=unread_only)
+    return {"ok": True, "count": len(messages), "messages": messages}
+
+
+@router.post("/registry/{agent_name}/messages", tags=["agents"])
+def send_agent_message(
+    agent_name: str,
+    req: SendMessageRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Send a message from one agent to another (a task handoff)."""
+    sent = AgentCoordinator.send_message(
+        from_agent=agent_name, to_agent=req.to_agent, message=req.message, data=req.data,
+    )
+    if not sent:
+        return {"ok": False, "error": f"Unknown recipient agent: {req.to_agent}"}
+    return {"ok": True}
+
+
+@router.post("/registry/{agent_name}/messages/{message_index}/read", tags=["agents"])
+def mark_agent_message_read(
+    agent_name: str,
+    message_index: int,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Mark one of an agent's messages as read."""
+    ok = AgentCoordinator.mark_message_read(agent_name, message_index)
+    return {"ok": ok}
 
 
 @router.post("/tasks", tags=["agents"])

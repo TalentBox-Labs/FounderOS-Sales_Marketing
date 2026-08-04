@@ -125,6 +125,19 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
                 payload={"contact_id": contact["id"], "name": contact["name"],
                          "email": contact["email"], "template": "intro"},
             )
+            # Hand off awareness of the pending approval to the founder-facing
+            # agent — the concrete example of inter-agent collaboration this
+            # platform actually does, not a demo message.
+            try:
+                from revenue_os.agents.orchestration import AgentCoordinator
+
+                AgentCoordinator.send_message(
+                    from_agent="hermes", to_agent="copilot",
+                    message=f"Qualified {contact['name'] or contact['email']} and proposed an intro email — awaiting founder approval.",
+                    data={"contact_id": contact["id"], "action_type": "send_outreach_email"},
+                )
+            except Exception as e:
+                logger.warning(f"agent handoff message failed for {contact['id']}: {e}")
         except Exception as e:
             logger.warning(f"approval request failed for {contact['id']}: {e}")
     return {"qualified": len(qualified), "threshold": threshold,
@@ -225,6 +238,7 @@ def create_goal(
     target_value: float,
     description: str = "",
     deadline: datetime | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     """Create a goal, snapshot its baseline, and generate its plan."""
     if metric not in SUPPORTED_METRICS:
@@ -237,6 +251,7 @@ def create_goal(
         goal = Goal(
             title=title,
             description=description,
+            agent_name=agent_name,
             metric=metric,
             target_value=target_value,
             baseline_value=baseline,

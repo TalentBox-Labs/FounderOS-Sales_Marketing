@@ -76,6 +76,40 @@ class WorkflowExecution:
         }
 
 
+def seed_platform_agents() -> None:
+    """Register the platform's built-in autonomous subsystems.
+
+    register_agent() upserts, so this is safe (and cheap) to call on every
+    startup — it gives the agent registry real content reflecting what the
+    platform actually runs, instead of an empty shell nobody ever fills in.
+    """
+    AgentCoordinator.register_agent(
+        "heartbeat", "operations",
+        capabilities=["score_new_leads", "check_deals_at_risk", "snapshot_pipeline_metrics", "hermes_goal_check"],
+        description="Autonomous scheduler — runs the platform's background jobs on a fixed interval.",
+    )
+    AgentCoordinator.register_agent(
+        "hermes", "sales_manager",
+        capabilities=["goal_planning", "propose_outreach"],
+        description="Goal-based planner — turns a target metric into a plan and executes it every heartbeat.",
+    )
+    AgentCoordinator.register_agent(
+        "copilot", "custom",
+        capabilities=["chat", "run_scoring", "create_goal", "run_goal_check"],
+        description="Founder-facing chat interface — reads live data and runs platform actions on request.",
+    )
+    AgentCoordinator.register_agent(
+        "workflow_engine", "operations",
+        capabilities=["event_automation"],
+        description="Event-driven automation — runs conditions/actions when platform events fire.",
+    )
+    AgentCoordinator.register_agent(
+        "n8n_bridge", "custom",
+        capabilities=["external_automation"],
+        description="Bridges platform events to n8n and receives results back via inbound webhooks.",
+    )
+
+
 class WorkflowOrchestrator:
     """Orchestrate multi-agent workflows."""
 
@@ -275,61 +309,178 @@ class WorkflowOrchestrator:
         return list(executions)
 
 
+def _agents_db():
+    """Open a DB session for agent-registry persistence. Returns None if unavailable."""
+    try:
+        from revenue_os.database import SessionLocal
+        return SessionLocal()
+    except Exception:
+        return None
+
+
 class AgentCoordinator:
-    """Coordinate multiple autonomous agents."""
+    """Coordinate multiple autonomous agents.
+
+    Runs from in-memory dicts for speed, but every mutation writes through
+    to AgentRegistryRecord/AgentMessageRecord and both are hydrated from
+    those tables once per process — otherwise the registry (and every
+    inter-agent handoff) evaporates on restart, same issue WorkflowEngine
+    had before M4.
+    """
 
     _agent_registry: dict[str, dict[str, Any]] = {}
     _inter_agent_messages: dict[str, list[dict[str, Any]]] = {}
+    _hydrated: bool = False
+
+    @classmethod
+    def _hydrate_from_db(cls) -> None:
+        if cls._hydrated:
+            return
+        cls._hydrated = True
+        db = _agents_db()
+        if db is None:
+            return
+        try:
+            from revenue_os.models.agents import AgentMessageRecord, AgentRegistryRecord
+
+            for row in db.query(AgentRegistryRecord).all():
+                if row.name in cls._agent_registry:
+                    continue
+                cls._agent_registry[row.name] = {
+                    "type": row.agent_type,
+                    "capabilities": row.capabilities or [],
+                    "status": row.status,
+                    "description": row.description or "",
+                    "registered_at": row.registered_at,
+                }
+                cls._inter_agent_messages.setdefault(row.name, [])
+
+            for row in db.query(AgentMessageRecord).order_by(AgentMessageRecord.created_at).all():
+                cls._inter_agent_messages.setdefault(row.to_agent, [])
+                cls._inter_agent_messages[row.to_agent].append({
+                    "id": row.id,
+                    "from": row.from_agent,
+                    "timestamp": row.created_at.isoformat() if row.created_at else None,
+                    "message": row.message,
+                    "data": row.data or {},
+                    "read": bool(row.is_read),
+                })
+        except Exception as e:
+            logger.warning(f"Agent registry hydration skipped: {e}")
+        finally:
+            db.close()
 
     @classmethod
     def register_agent(
-        cls, agent_name: str, agent_type: str, capabilities: list[str]
+        cls, agent_name: str, agent_type: str, capabilities: list[str], description: str = "",
     ) -> None:
-        """Register an autonomous agent."""
+        """Register an autonomous agent (persisted)."""
+        cls._hydrate_from_db()
         cls._agent_registry[agent_name] = {
             "type": agent_type,
             "capabilities": capabilities,
             "status": "active",
+            "description": description,
             "registered_at": datetime.now(timezone.utc),
         }
-        cls._inter_agent_messages[agent_name] = []
+        cls._inter_agent_messages.setdefault(agent_name, [])
+
+        db = _agents_db()
+        if db is not None:
+            try:
+                from revenue_os.models.agents import AgentRegistryRecord
+
+                row = db.get(AgentRegistryRecord, agent_name)
+                if row is None:
+                    row = AgentRegistryRecord(name=agent_name)
+                    db.add(row)
+                row.agent_type = agent_type
+                row.capabilities = capabilities
+                row.description = description
+                row.status = "active"
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Agent registration not persisted ({agent_name}): {e}")
+            finally:
+                db.close()
         logger.info(f"Agent registered: {agent_name} ({agent_type})")
+
+    @classmethod
+    def touch_agent(cls, agent_name: str) -> None:
+        """Record that an agent just acted — updates last_active_at."""
+        db = _agents_db()
+        if db is None:
+            return
+        try:
+            from revenue_os.models.agents import AgentRegistryRecord
+
+            row = db.get(AgentRegistryRecord, agent_name)
+            if row is not None:
+                row.last_active_at = datetime.now(timezone.utc)
+                db.commit()
+        except Exception as e:
+            logger.warning(f"Agent activity not recorded ({agent_name}): {e}")
+        finally:
+            db.close()
 
     @classmethod
     def get_agent_info(cls, agent_name: str) -> dict[str, Any] | None:
         """Get agent information."""
+        cls._hydrate_from_db()
         return cls._agent_registry.get(agent_name)
 
     @classmethod
     def list_agents(cls, agent_type: str | None = None) -> list[dict[str, Any]]:
         """List registered agents."""
-        agents = cls._agent_registry.values()
+        cls._hydrate_from_db()
+        agents = [{"name": name, **info} for name, info in cls._agent_registry.items()]
         if agent_type:
             agents = [a for a in agents if a.get("type") == agent_type]
-        return list(agents)
+        return agents
 
     @classmethod
     def send_message(
         cls, from_agent: str, to_agent: str, message: str, data: dict[str, Any] | None = None
     ) -> bool:
-        """Send message between agents."""
-        if to_agent not in cls._inter_agent_messages:
+        """Send message between agents (persisted)."""
+        cls._hydrate_from_db()
+        if to_agent not in cls._agent_registry:
             logger.error(f"Agent not found: {to_agent}")
             return False
 
+        now = datetime.now(timezone.utc)
         msg = {
             "from": from_agent,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now.isoformat(),
             "message": message,
             "data": data or {},
+            "read": False,
         }
-        cls._inter_agent_messages[to_agent].append(msg)
+        cls._inter_agent_messages.setdefault(to_agent, []).append(msg)
+
+        db = _agents_db()
+        if db is not None:
+            try:
+                from revenue_os.models.agents import AgentMessageRecord
+
+                row = AgentMessageRecord(
+                    from_agent=from_agent, to_agent=to_agent, message=message, data=data or {},
+                )
+                db.add(row)
+                db.commit()
+                msg["id"] = row.id
+            except Exception as e:
+                logger.warning(f"Message not persisted ({from_agent} -> {to_agent}): {e}")
+            finally:
+                db.close()
+
         logger.info(f"Message sent from {from_agent} to {to_agent}")
         return True
 
     @classmethod
     def get_messages(cls, agent_name: str, unread_only: bool = True) -> list[dict[str, Any]]:
         """Get messages for agent."""
+        cls._hydrate_from_db()
         messages = cls._inter_agent_messages.get(agent_name, [])
         if unread_only:
             messages = [m for m in messages if not m.get("read", False)]
@@ -337,9 +488,26 @@ class AgentCoordinator:
 
     @classmethod
     def mark_message_read(cls, agent_name: str, message_index: int) -> bool:
-        """Mark message as read."""
+        """Mark message as read (persisted)."""
+        cls._hydrate_from_db()
         messages = cls._inter_agent_messages.get(agent_name, [])
-        if 0 <= message_index < len(messages):
-            messages[message_index]["read"] = True
-            return True
-        return False
+        if not (0 <= message_index < len(messages)):
+            return False
+        messages[message_index]["read"] = True
+
+        msg_id = messages[message_index].get("id")
+        if msg_id:
+            db = _agents_db()
+            if db is not None:
+                try:
+                    from revenue_os.models.agents import AgentMessageRecord
+
+                    row = db.get(AgentMessageRecord, msg_id)
+                    if row is not None:
+                        row.is_read = 1
+                        db.commit()
+                except Exception as e:
+                    logger.warning(f"Message read-state not persisted ({msg_id}): {e}")
+                finally:
+                    db.close()
+        return True

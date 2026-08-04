@@ -91,6 +91,10 @@ def _handle_priorities(message: str) -> dict[str, Any]:
     at_risk = len(f["at_risk_deals"])
     overdue = len(f["overdue_tasks"])
 
+    from revenue_os.agents.orchestration import AgentCoordinator
+
+    handoffs = AgentCoordinator.get_messages("copilot", unread_only=True)
+
     items = []
     if overdue:
         items.append({"title": f"{overdue} task(s) overdue", "subtitle": "Clear these first", "link": "/copilot"})
@@ -98,6 +102,8 @@ def _handle_priorities(message: str) -> dict[str, Any]:
         items.append({"title": f"{pending} approval(s) waiting for you", "subtitle": "Approve or reject proposed actions", "link": "/approvals"})
     if at_risk:
         items.append({"title": f"{at_risk} deal(s) flagged at risk", "subtitle": "Review before they slip", "link": "/deals"})
+    for h in handoffs[:3]:
+        items.append({"title": h["message"], "subtitle": f"from {h['from']}", "link": "/agents"})
     items.extend(goal_items)
 
     reply = (
@@ -105,7 +111,8 @@ def _handle_priorities(message: str) -> dict[str, Any]:
         f"{health.get('total_deals', 0)} open deals "
         f"(weighted forecast ${health.get('weighted_forecast', 0):,.0f}). "
         f"{overdue} tasks overdue, {pending} approvals pending, {at_risk} deals at risk, "
-        f"{len(goal_items)} active goal(s)."
+        f"{len(goal_items)} active goal(s)"
+        + (f", {len(handoffs)} update(s) from other agents." if handoffs else ".")
     )
     return _resp(reply, items)
 
