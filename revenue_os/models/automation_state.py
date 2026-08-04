@@ -96,3 +96,24 @@ class AnalyticsDataPointRecord(Base):
     dimension = Column(String(128), nullable=True)
     meta = Column(JSON, nullable=True)
     timestamp = Column(DateTime(timezone=True), default=_now, index=True)
+
+
+class WorkflowDefinitionRecord(Base):
+    """Persisted definition for a WorkflowEngine workflow (event → conditions → actions).
+
+    WorkflowEngine itself runs in-memory for speed; this is the write-through
+    + startup-hydration store so workflows survive a restart instead of
+    vanishing the moment the process recycles.
+    """
+
+    __tablename__ = "workflow_definitions"
+
+    id = Column(String(64), primary_key=True)  # matches the in-memory wf_xxxxxxxx id
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    event_type = Column(String(64), nullable=True)
+    conditions = Column(JSON, nullable=False, default=list)
+    actions = Column(JSON, nullable=False, default=list)
+    is_enabled = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)

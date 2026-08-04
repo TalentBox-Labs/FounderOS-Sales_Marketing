@@ -50,6 +50,7 @@ from revenue_os.models.automation_state import (
     AnalyticsDataPointRecord,
     AnalyticsMetricRecord,
     HeartbeatRun,
+    WorkflowDefinitionRecord,
 )
 from revenue_os.models.goals import Goal, GoalStep
 from revenue_os.models.approvals import ApprovalRequest
@@ -103,4 +104,5 @@ __all__ = [
     "ApprovalRequest",
     "SEOKeyword",
     "SEORankCheck",
+    "WorkflowDefinitionRecord",
 ]
