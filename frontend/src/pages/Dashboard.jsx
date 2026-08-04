@@ -9,6 +9,7 @@ export default function Dashboard() {
   const [heartbeat, setHeartbeat] = useState(null)
   const [stats, setStats] = useState({ totalContacts: 0, totalDeals: 0, pipelineValue: 0, closedDeals: 0 })
   const [followups, setFollowups] = useState(null)
+  const [seo, setSeo] = useState(null)
 
   useEffect(() => {
     api.get('/health')
@@ -44,6 +45,10 @@ export default function Dashboard() {
     api.get('/api/v1/crm/followups')
       .then(res => setFollowups(res.data))
       .catch(() => setFollowups(null))
+
+    api.get('/api/v1/seo/summary')
+      .then(res => setSeo(res.data))
+      .catch(() => setSeo(null))
   }, [])
 
   return (
@@ -148,6 +153,37 @@ export default function Dashboard() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {seo && seo.keywords_tracked > 0 && (
+        <div className="card">
+          <h2 className="card-title">SEO &amp; GEO Visibility</h2>
+          <div className="grid">
+            <div className="stat-card">
+              <div className="stat-label">Keywords Tracked</div>
+              <div className="stat-number">{seo.keywords_tracked}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Avg Rank</div>
+              <div className="stat-number">{seo.avg_rank ?? '—'}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Improved / Declined</div>
+              <div className="stat-number" style={{ fontSize: '1.4rem' }}>
+                <span style={{ color: '#06A77D' }}>▲{seo.improved_count}</span>
+                {' / '}
+                <span style={{ color: '#D62828' }}>▼{seo.declined_count}</span>
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">AI-Visible Keywords</div>
+              <div className="stat-number">{seo.ai_visible_count}</div>
+            </div>
+          </div>
+          <Link to="/marketing" style={{ display: 'inline-block', marginTop: '1rem', color: '#667eea' }}>
+            Manage keywords on the Marketing page →
+          </Link>
         </div>
       )}
 

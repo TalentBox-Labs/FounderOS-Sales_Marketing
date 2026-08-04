@@ -59,6 +59,8 @@ def _activity_dict(a: Activity) -> dict[str, Any]:
         "activity_type": a.activity_type.value if a.activity_type else None,
         "subject": a.subject,
         "body": a.body,
+        "status": a.status,
+        "scheduled_at": a.scheduled_at.isoformat() if a.scheduled_at else None,
         "due_date": a.due_date.isoformat() if a.due_date else None,
         "is_completed": bool(a.is_completed),
         "completed_at": a.completed_at.isoformat() if a.completed_at else None,

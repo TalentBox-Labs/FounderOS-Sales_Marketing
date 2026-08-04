@@ -156,6 +156,9 @@ export default function Timeline({ contactId, dealId }) {
                     {a.is_completed && a.completed_at && (
                       <span style={{ marginLeft: '0.5rem' }}>· completed {fmt(a.completed_at)}</span>
                     )}
+                    {!a.due_date && a.status === 'scheduled' && a.scheduled_at && (
+                      <span style={{ marginLeft: '0.5rem' }}>· scheduled for {fmt(a.scheduled_at)}</span>
+                    )}
                   </div>
                 </div>
                 {a.activity_type === 'task' && !a.is_completed && (
