@@ -57,6 +57,7 @@ from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.seo import SEOKeyword, SEORankCheck
 from revenue_os.models.agents import AgentRegistryRecord, AgentMessageRecord
 from revenue_os.models.integrations import ConnectorCredentialRecord
+from revenue_os.models.analytics_depth import MarketingSpendRecord
 
 __all__ = [
     "Company",
@@ -110,4 +111,5 @@ __all__ = [
     "AgentRegistryRecord",
     "AgentMessageRecord",
     "ConnectorCredentialRecord",
+    "MarketingSpendRecord",
 ]
