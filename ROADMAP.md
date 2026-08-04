@@ -36,13 +36,13 @@ closed n8n loop, auth, single-container deploy.
 
 ## 3. Milestones (build order)
 
-1. **M1 — Founder Copilot (this milestone)**: one chat interface that answers
+1. **M1 — Founder Copilot** ✅: one chat interface that answers
    "what needs follow-up / today's priorities / show pipeline" and *executes*
    (create goals, run scoring, surface approvals) through existing services.
    Deterministic intent router now; LLM slot-in later without API changes.
-2. **M2 — CRM depth**: activities/notes/tasks + timeline per contact/deal,
+2. **M2 — CRM depth** ✅: activities/notes/tasks + timeline per contact/deal,
    follow-up engine feeding Dashboard + Copilot.
-3. **M3 — Marketing OS core**: email-sequence REST + UI, SEO/GEO tracking
+3. **M3 — Marketing OS core (next)**: email-sequence REST + UI, SEO/GEO tracking
    models (keywords, rankings, AI-visibility checks) with scores on Dashboard.
 4. **M4 — Visual workflow builder** on the existing event→action engine.
 5. **M5 — Agent registry & collaboration**: agent status page, inter-agent
