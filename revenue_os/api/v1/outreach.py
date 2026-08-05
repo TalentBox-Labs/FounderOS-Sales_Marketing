@@ -309,14 +309,15 @@ def track_open(activity_id: str, db: Session = Depends(get_db)):
             if ea and not ea.opened_at:
                 ea.opened_at = datetime.now(timezone.utc)
 
-            open_activity = Activity(
-                contact_id=activity.contact_id,
-                activity_type=ActivityType.EMAIL_OPEN,
-                subject=f"Open: {activity.subject}",
-                direction="inbound",
-                status="tracked",
-            )
-            db.add(open_activity)
+                open_activity = Activity(
+                    contact_id=activity.contact_id,
+                    activity_type=ActivityType.EMAIL_OPEN,
+                    subject=activity.subject,
+                    direction="inbound",
+                    status="tracked",
+                )
+                db.add(open_activity)
+
             db.commit()
     except Exception:
         db.rollback()
