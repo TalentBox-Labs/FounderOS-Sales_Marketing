@@ -114,7 +114,7 @@ def sync_gmail_inbox(self):
                 reply_activity = Activity(
                     contact_id=matched_contact.id,
                     activity_type=ActivityType.EMAIL_REPLY,
-                    subject=f"Reply: {msg.get('subject', '')}",
+                    subject=msg.get("subject", ""),
                     direction="inbound",
                     status="tracked",
                 )
