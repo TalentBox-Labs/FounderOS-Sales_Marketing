@@ -215,9 +215,7 @@ def update_task(
         update_data["related_entity_id"] = uuid.UUID(body.related_entity_id) if body.related_entity_id else None
 
     for key, value in update_data.items():
-        if value is not None:
-            setattr(task, key, value)
-
+        setattr(task, key, value)
     db.commit()
     db.refresh(task)
     return TaskResponse.from_orm_with_users(task)
