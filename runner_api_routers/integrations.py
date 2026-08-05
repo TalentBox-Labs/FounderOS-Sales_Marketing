@@ -60,6 +60,18 @@ CONNECTOR_CATALOG: list[dict[str, Any]] = [
             {"key": "access_token", "label": "Access Token", "type": "password"},
         ],
     },
+    {
+        "name": "linkedin_enrichment", "label": "LinkedIn Enrichment (Proxycurl)", "category": "enrichment", "source": "vault",
+        "fields": [{"key": "api_key", "label": "Proxycurl API Key", "type": "password"}],
+    },
+    {
+        "name": "gmail", "label": "Gmail Sync", "category": "email", "source": "vault", "oauth": True,
+        "fields": [
+            {"key": "client_id", "label": "OAuth Client ID", "type": "text"},
+            {"key": "client_secret", "label": "OAuth Client Secret", "type": "password"},
+            {"key": "redirect_uri", "label": "Redirect URI (must match the OAuth client's registered URI)", "type": "text"},
+        ],
+    },
     {"name": "n8n", "label": "n8n", "category": "automation", "source": "env",
      "env_vars": ["N8N_WEBHOOK_BASE_URL", "N8N_API_KEY"]},
     {"name": "openai", "label": "OpenAI", "category": "ai", "source": "env",
@@ -105,6 +117,8 @@ def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
     """
     from revenue_os.services.credentials_vault import list_configured_connectors
 
+    from revenue_os.services.credentials_vault import load_credentials
+
     vaulted = list_configured_connectors()
     result = []
     for c in CONNECTOR_CATALOG:
@@ -115,10 +129,19 @@ def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
         else:
             configured = bool(c.get("env_vars")) and all(os.environ.get(v) for v in c["env_vars"])
             updated_at = None
+
+        connected = None
+        if c.get("oauth"):
+            # OAuth connectors have two states: fields saved (configured) vs.
+            # consent completed (connected, has a refresh_token). Only decrypt
+            # for the presence check — never expose the token itself.
+            connected = configured and bool((load_credentials(c["name"]) or {}).get("refresh_token"))
+
         result.append({
             "name": c["name"], "label": c["label"], "category": c["category"],
             "source": c["source"], "configured": configured, "updated_at": updated_at,
             "fields": c.get("fields", []), "env_vars": c.get("env_vars", []),
+            "oauth": bool(c.get("oauth")), "connected": connected,
         })
     return {"ok": True, "count": len(result), "connectors": result}
 
@@ -542,3 +565,65 @@ def integrations_health(
         "webhook_subscriptions": subscriptions,
         "status": "healthy",
     }
+
+
+@router.get("/gmail/authorize", tags=["integrations"])
+def gmail_authorize(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Build the Google consent URL for the founder to open and approve."""
+    from revenue_os.integrations.gmail_sync import build_authorize_url
+    from revenue_os.services.credentials_vault import load_credentials
+
+    config = load_credentials("gmail")
+    if not config or not config.get("client_id") or not config.get("redirect_uri"):
+        raise HTTPException(
+            status_code=400,
+            detail="Save the Gmail OAuth client ID, secret, and redirect URI first.",
+        )
+    url = build_authorize_url(config["client_id"], config["redirect_uri"])
+    return {"ok": True, "authorize_url": url}
+
+
+@router.get("/gmail/callback", tags=["integrations"])
+def gmail_callback(code: str | None = None, error: str | None = None) -> Any:
+    """OAuth redirect target — exchanges the code for tokens and saves them.
+
+    This is opened directly by the browser (not called via the API client),
+    so it returns a small HTML page instead of JSON.
+    """
+    from fastapi.responses import HTMLResponse
+
+    from revenue_os.integrations.gmail_sync import exchange_code_for_tokens
+    from revenue_os.services.credentials_vault import load_credentials, save_credentials
+
+    def _page(message: str, ok: bool) -> HTMLResponse:
+        color = "#06A77D" if ok else "#D62828"
+        return HTMLResponse(
+            f"<html><body style='font-family: sans-serif; padding: 3rem; text-align: center;'>"
+            f"<h2 style='color: {color}'>{message}</h2>"
+            f"<p>You can close this tab and return to the Integrations page.</p>"
+            f"</body></html>"
+        )
+
+    if error:
+        return _page(f"Gmail connection failed: {error}", ok=False)
+    if not code:
+        return _page("Missing authorization code.", ok=False)
+
+    config = load_credentials("gmail")
+    if not config:
+        return _page("Gmail OAuth client is not configured.", ok=False)
+
+    tokens = exchange_code_for_tokens(code, config["client_id"], config["client_secret"], config["redirect_uri"])
+    if not tokens.get("ok"):
+        return _page(f"Gmail connection failed: {tokens.get('error')}", ok=False)
+
+    save_credentials("gmail", "email", {**config, "refresh_token": tokens.get("refresh_token", config.get("refresh_token"))})
+    return _page("Gmail connected successfully.", ok=True)
+
+
+@router.post("/gmail/sync", tags=["integrations"])
+def gmail_sync_now(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Manually trigger a Gmail inbox sync (also runs automatically via the heartbeat)."""
+    from revenue_os.scheduler import scheduler
+
+    return scheduler.run_job_now("sync_gmail_inbox")

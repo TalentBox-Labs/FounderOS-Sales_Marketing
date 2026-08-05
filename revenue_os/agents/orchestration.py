@@ -85,7 +85,7 @@ def seed_platform_agents() -> None:
     """
     AgentCoordinator.register_agent(
         "heartbeat", "operations",
-        capabilities=["score_new_leads", "check_deals_at_risk", "snapshot_pipeline_metrics", "hermes_goal_check"],
+        capabilities=["score_new_leads", "check_deals_at_risk", "snapshot_pipeline_metrics", "hermes_goal_check", "sync_gmail_inbox"],
         description="Autonomous scheduler — runs the platform's background jobs on a fixed interval.",
     )
     AgentCoordinator.register_agent(
