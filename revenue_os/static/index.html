@@ -644,19 +644,28 @@ async function moveDealStage(dealId, stage) {
 async function openDealDetail(dealId) {
   const deal = await api('GET', `/deals/${dealId}`);
   if (!deal) return;
-  document.getElementById('dealDetailName').textContent = deal.name;
+
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
+
+  document.getElementById('dealDetailName').textContent = deal.name || '';
   document.getElementById('dealDetailBody').innerHTML = `
     <div class="deal-detail-grid">
-      <div><div class="label">Stage</div>${deal.stage}</div>
+      <div><div class="label">Stage</div>${esc(deal.stage)}</div>
       <div><div class="label">Value</div>$${(deal.value || 0).toLocaleString()}</div>
-      <div><div class="label">Probability</div>${deal.probability}%</div>
+      <div><div class="label">Probability</div>${Number(deal.probability || 0)}%</div>
       <div><div class="label">Weighted</div>$${((deal.value || 0) * (deal.probability || 0) / 100).toLocaleString()}</div>
-      <div><div class="label">Client</div>${deal.client_name || '—'}</div>
-      <div><div class="label">Contact</div>${deal.contact_name || '—'}</div>
-      <div><div class="label">Currency</div>${deal.currency}</div>
+      <div><div class="label">Client</div>${esc(deal.client_name || '—')}</div>
+      <div><div class="label">Contact</div>${esc(deal.contact_name || '—')}</div>
+      <div><div class="label">Currency</div>${esc(deal.currency)}</div>
       <div><div class="label">Expected Close</div>${deal.expected_close_date ? new Date(deal.expected_close_date).toLocaleDateString() : '—'}</div>
-      ${deal.description ? `<div style="grid-column:1/3"><div class="label">Description</div>${deal.description}</div>` : ''}
-      ${deal.tags ? `<div style="grid-column:1/3"><div class="label">Tags</div>${deal.tags}</div>` : ''}
+      ${deal.description ? `<div style="grid-column:1/3"><div class="label">Description</div>${esc(deal.description)}</div>` : ''}
+      ${deal.tags ? `<div style="grid-column:1/3"><div class="label">Tags</div>${esc(deal.tags)}</div>` : ''}
       <div><div class="label">Created</div>${new Date(deal.created_at).toLocaleDateString()}</div>
       <div><div class="label">Updated</div>${new Date(deal.updated_at).toLocaleDateString()}</div>
     </div>`;
