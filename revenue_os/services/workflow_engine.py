@@ -227,7 +227,11 @@ def run_workflow(
                     errors.append(f"Step {step.step_order}: action not found")
             elif step.step_type == "delay":
                 import time
-                delay_seconds = step.config.get("seconds", 60) if step.config else 60
+                try:
+                    cfg = json.loads(step.config) if step.config else {}
+                except (json.JSONDecodeError, TypeError):
+                    cfg = {}
+                delay_seconds = int(cfg.get("seconds", 60))
                 time.sleep(min(delay_seconds, 30))
                 results.append(f"Step {step.step_order}: delayed {delay_seconds}s")
 
