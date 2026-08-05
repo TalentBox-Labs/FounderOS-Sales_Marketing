@@ -298,10 +298,10 @@ def bulk_upload_contacts(file: UploadFile = File(...), db: Session = Depends(get
     import csv
 
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else ""
-    if ext not in ("csv", "xlsx", "xls"):
+    if ext not in ("csv", "xlsx"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: .{ext}. Use .csv, .xlsx, or .xls",
+            detail=f"Unsupported file type: .{ext}. Use .csv or .xlsx",
         )
 
     content = file.file.read()
