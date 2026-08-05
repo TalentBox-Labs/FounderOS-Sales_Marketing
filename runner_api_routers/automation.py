@@ -69,7 +69,7 @@ def create_workflow(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """Create a new workflow."""
-    logger.info("Creating workflow", extra={"name": req.name, "event_type": req.event_type})
+    logger.info("Creating workflow", extra={"workflow_name": req.name, "event_type": req.event_type})
 
     # Validate event type
     try:
@@ -147,10 +147,48 @@ def toggle_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     workflow.enabled = not workflow.enabled
+    WorkflowEngine.save_workflow(workflow)
     logger.info(
         f"Workflow toggled",
         extra={"workflow_id": workflow_id, "enabled": workflow.enabled},
     )
+
+    return {"ok": True, "workflow": workflow.to_dict()}
+
+
+@router.put("/workflows/{workflow_id}", tags=["automation"])
+def update_workflow(
+    workflow_id: str,
+    req: WorkflowRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Replace a workflow's name/description/event/conditions/actions in place."""
+    workflow = WorkflowEngine.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    try:
+        event_type = EventType(req.event_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid event type: {req.event_type}")
+
+    conditions = [Condition(c.field, c.operator, c.value) for c in req.conditions]
+
+    actions = []
+    for action_req in req.actions:
+        try:
+            action_type = ActionType(action_req.action_type)
+            actions.append(Action(action_type=action_type, config=action_req.config, enabled=action_req.enabled))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid action type: {action_req.action_type}")
+
+    workflow.name = req.name
+    workflow.description = req.description
+    workflow.event_type = event_type
+    workflow.conditions = conditions
+    workflow.actions = actions
+    workflow.enabled = req.enabled
+    WorkflowEngine.save_workflow(workflow)
 
     return {"ok": True, "workflow": workflow.to_dict()}
 

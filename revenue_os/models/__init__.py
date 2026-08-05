@@ -45,6 +45,19 @@ from revenue_os.models.automation import (
     WorkflowStep,
 )
 from revenue_os.models.user import User
+from revenue_os.models.automation_state import (
+    AgentActionLog,
+    AnalyticsDataPointRecord,
+    AnalyticsMetricRecord,
+    HeartbeatRun,
+    WorkflowDefinitionRecord,
+)
+from revenue_os.models.goals import Goal, GoalStep
+from revenue_os.models.approvals import ApprovalRequest
+from revenue_os.models.seo import SEOKeyword, SEORankCheck
+from revenue_os.models.agents import AgentRegistryRecord, AgentMessageRecord
+from revenue_os.models.integrations import ConnectorCredentialRecord
+from revenue_os.models.analytics_depth import MarketingSpendRecord
 
 __all__ = [
     "Company",
@@ -85,4 +98,18 @@ __all__ = [
     "WorkflowExecution",
     "WorkflowStep",
     "User",
+    "AgentActionLog",
+    "HeartbeatRun",
+    "AnalyticsMetricRecord",
+    "AnalyticsDataPointRecord",
+    "Goal",
+    "GoalStep",
+    "ApprovalRequest",
+    "SEOKeyword",
+    "SEORankCheck",
+    "WorkflowDefinitionRecord",
+    "AgentRegistryRecord",
+    "AgentMessageRecord",
+    "ConnectorCredentialRecord",
+    "MarketingSpendRecord",
 ]

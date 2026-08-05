@@ -1,16 +1,30 @@
-FROM python:3.13-slim
+# ── Stage 1: build the React CRM frontend ────────────────────────────────────
+FROM node:20-slim AS frontend-build
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ── Stage 2: Python runtime ──────────────────────────────────────────────────
+FROM python:3.11-slim
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev && \
+    gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements-revenue.txt .
-RUN pip install --no-cache-dir -r requirements-revenue.txt
+COPY requirements.txt requirements-api.txt requirements-revenue.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-api.txt -r requirements-revenue.txt
 
 COPY . .
+COPY --from=frontend-build /build/dist ./frontend/dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "revenue_os.main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["sh", "-c", "uvicorn runner_api:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable
 
@@ -107,21 +107,66 @@ class ActionExecutor:
 
 # Built-in action handlers
 
+def _resolve_contact_deal(context: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Pull a contact/deal id out of an event context, however it got there."""
+    contact_id = context.get("contact_id")
+    if not contact_id and context.get("entity_type") == "contact":
+        contact_id = context.get("entity_id")
+    deal_id = context.get("deal_id")
+    if not deal_id and context.get("entity_type") == "deal":
+        deal_id = context.get("entity_id")
+    return contact_id, deal_id
+
+
 def handle_create_task(config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Create a task for the sales team."""
+    """Create a task. Writes a real Activity(TASK) row when the triggering
+    event carries a contact/deal, so it shows up on the CRM timeline and the
+    M2 follow-up engine — not just a log line that vanishes."""
     title = config.get("title", "Review lead")
     description = config.get("description", "")
-    assigned_to = config.get("assigned_to")
     due_in_hours = config.get("due_in_hours", 24)
+    due_date = datetime.now(timezone.utc) + timedelta(hours=due_in_hours)
+
+    if "{" in title or "{" in description:
+        try:
+            title = title.format(**context)
+            description = description.format(**context)
+        except KeyError:
+            pass
+
+    contact_id, deal_id = _resolve_contact_deal(context)
+    task_id = f"task_{uuid.uuid4().hex[:12]}"
+
+    if contact_id or deal_id:
+        try:
+            from revenue_os.database import SessionLocal
+            from revenue_os.models.activity import Activity, ActivityType
+
+            db = SessionLocal()
+            try:
+                activity = Activity(
+                    contact_id=uuid.UUID(contact_id) if contact_id else None,
+                    deal_id=uuid.UUID(deal_id) if deal_id else None,
+                    activity_type=ActivityType.TASK,
+                    subject=title,
+                    body=description,
+                    due_date=due_date,
+                    status="pending",
+                )
+                db.add(activity)
+                db.commit()
+                db.refresh(activity)
+                task_id = str(activity.id)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Workflow task not persisted as Activity: {e}")
 
     task = {
-        "task_id": f"task_{uuid.uuid4().hex[:12]}",
+        "task_id": task_id,
         "title": title,
         "description": description,
-        "assigned_to": assigned_to,
-        "due_date": (
-            datetime.now(timezone.utc).timestamp() + (due_in_hours * 3600)
-        ),
+        "due_date": due_date.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -164,7 +209,7 @@ def handle_send_slack(config: dict[str, Any], context: dict[str, Any]) -> dict[s
         except KeyError:
             pass
 
-    logger.info(f"Slack message sent to {channel}", extra={"message": message[:100]})
+    logger.info(f"Slack message sent to {channel}", extra={"slack_message": message[:100]})
     return {
         "slack_message_id": f"slack_{uuid.uuid4().hex[:12]}",
         "channel": channel,
@@ -215,17 +260,55 @@ def handle_update_field(config: dict[str, Any], context: dict[str, Any]) -> dict
 
 
 def handle_create_activity(config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-    """Create an activity record."""
-    contact_id = context.get("contact_id")
-    activity_type = config.get("activity_type")  # email, call, task, etc
+    """Create an activity record. Writes a real Activity row when the
+    triggering event carries a contact/deal (see handle_create_task)."""
+    activity_type_raw = config.get("activity_type") or "note"
     subject = config.get("subject", "")
     body = config.get("body", "")
 
-    logger.info(f"Activity created: {activity_type}", extra={"contact_id": contact_id})
+    if "{" in subject or "{" in body:
+        try:
+            subject = subject.format(**context)
+            body = body.format(**context)
+        except KeyError:
+            pass
+
+    contact_id, deal_id = _resolve_contact_deal(context)
+    activity_id = f"activity_{uuid.uuid4().hex[:12]}"
+
+    if contact_id or deal_id:
+        try:
+            from revenue_os.database import SessionLocal
+            from revenue_os.models.activity import Activity, ActivityType
+
+            db = SessionLocal()
+            try:
+                try:
+                    resolved_type = ActivityType(activity_type_raw)
+                except ValueError:
+                    resolved_type = ActivityType.NOTE
+                activity = Activity(
+                    contact_id=uuid.UUID(contact_id) if contact_id else None,
+                    deal_id=uuid.UUID(deal_id) if deal_id else None,
+                    activity_type=resolved_type,
+                    subject=subject,
+                    body=body,
+                    status="completed",
+                )
+                db.add(activity)
+                db.commit()
+                db.refresh(activity)
+                activity_id = str(activity.id)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Workflow activity not persisted: {e}")
+
+    logger.info(f"Activity created: {activity_type_raw}", extra={"contact_id": contact_id})
     return {
-        "activity_id": f"activity_{uuid.uuid4().hex[:12]}",
+        "activity_id": activity_id,
         "contact_id": contact_id,
-        "activity_type": activity_type,
+        "activity_type": activity_type_raw,
         "subject": subject,
     }
 

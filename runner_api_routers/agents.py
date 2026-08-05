@@ -18,6 +18,7 @@ from revenue_os.agents.orchestration import (
     AgentCoordinator,
     OrchestrationStrategy,
 )
+from pydantic import BaseModel, Field
 from revenue_os.agents.safeguards import (
     SafeguardEngine,
     AgentMonitor,
@@ -28,6 +29,95 @@ from runner_api_routers.utils import _verify_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
+
+
+class RegisterAgentRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    agent_type: str
+    capabilities: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class SendMessageRequest(BaseModel):
+    to_agent: str
+    message: str = Field(..., min_length=1)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/registry", tags=["agents"])
+def list_registered_agents(
+    agent_type: str | None = None,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """List every registered agent — platform subsystems and any custom ones."""
+    agents = AgentCoordinator.list_agents(agent_type=agent_type)
+    return {"ok": True, "count": len(agents), "agents": agents}
+
+
+@router.get("/registry/{agent_name}", tags=["agents"])
+def get_registered_agent(
+    agent_name: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Get one agent's registry entry, plus its unread inbox."""
+    info = AgentCoordinator.get_agent_info(agent_name)
+    if info is None:
+        return {"ok": False, "error": "Agent not found"}
+    return {
+        "ok": True,
+        "agent": {"name": agent_name, **info},
+        "unread_messages": AgentCoordinator.get_messages(agent_name, unread_only=True),
+    }
+
+
+@router.post("/registry", tags=["agents"])
+def register_agent(
+    req: RegisterAgentRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Register a custom agent (platform subsystems are seeded automatically)."""
+    AgentCoordinator.register_agent(
+        agent_name=req.name, agent_type=req.agent_type,
+        capabilities=req.capabilities, description=req.description,
+    )
+    return {"ok": True, "agent": AgentCoordinator.get_agent_info(req.name)}
+
+
+@router.get("/registry/{agent_name}/messages", tags=["agents"])
+def get_agent_messages(
+    agent_name: str,
+    unread_only: bool = False,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Get an agent's inbox — this is the inter-agent handoff log."""
+    messages = AgentCoordinator.get_messages(agent_name, unread_only=unread_only)
+    return {"ok": True, "count": len(messages), "messages": messages}
+
+
+@router.post("/registry/{agent_name}/messages", tags=["agents"])
+def send_agent_message(
+    agent_name: str,
+    req: SendMessageRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Send a message from one agent to another (a task handoff)."""
+    sent = AgentCoordinator.send_message(
+        from_agent=agent_name, to_agent=req.to_agent, message=req.message, data=req.data,
+    )
+    if not sent:
+        return {"ok": False, "error": f"Unknown recipient agent: {req.to_agent}"}
+    return {"ok": True}
+
+
+@router.post("/registry/{agent_name}/messages/{message_index}/read", tags=["agents"])
+def mark_agent_message_read(
+    agent_name: str,
+    message_index: int,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Mark one of an agent's messages as read."""
+    ok = AgentCoordinator.mark_message_read(agent_name, message_index)
+    return {"ok": ok}
 
 
 @router.post("/tasks", tags=["agents"])
@@ -388,3 +478,66 @@ def agents_system_health(
         "workflows_available": len(WorkflowOrchestrator.list_workflows()),
         "safeguard_rules": len(SafeguardEngine.list_rules()),
     }
+
+
+# ── Sales Agent crew — five per-contact agents, all draft-then-approve ──────
+
+
+@router.post("/sales/{contact_id}/research", tags=["agents"])
+def sales_research_contact(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """ICP Research Agent — buying signals from real LinkedIn data in one pass."""
+    from revenue_os.services.sales_agents import research_contact
+
+    AgentCoordinator.touch_agent("icp_research_agent")
+    return research_contact(contact_id)
+
+
+@router.post("/sales/{contact_id}/cold-email", tags=["agents"])
+def sales_draft_cold_email(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Cold Email Agent — first-touch email from real contact context."""
+    from revenue_os.services.sales_agents import draft_cold_email
+
+    AgentCoordinator.touch_agent("cold_email_agent")
+    return draft_cold_email(contact_id)
+
+
+@router.post("/sales/{contact_id}/linkedin-opener", tags=["agents"])
+def sales_draft_linkedin_opener(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """LinkedIn Opener Agent — connection note + follow-up DM."""
+    from revenue_os.services.sales_agents import draft_linkedin_opener
+
+    AgentCoordinator.touch_agent("linkedin_opener_agent")
+    return draft_linkedin_opener(contact_id)
+
+
+@router.post("/sales/{contact_id}/sequence", tags=["agents"])
+def sales_build_sequence(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Follow-Up Sequence Agent — 5-7 touch email + LinkedIn nurture flow."""
+    from revenue_os.services.sales_agents import build_followup_sequence
+
+    AgentCoordinator.touch_agent("followup_sequence_agent")
+    return build_followup_sequence(contact_id)
+
+
+@router.post("/sales/{contact_id}/handle-reply", tags=["agents"])
+def sales_handle_reply(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Objection Handler Agent — classifies the latest inbound reply and drafts a response."""
+    from revenue_os.services.sales_agents import handle_latest_reply
+
+    AgentCoordinator.touch_agent("objection_handler_agent")
+    return handle_latest_reply(contact_id)

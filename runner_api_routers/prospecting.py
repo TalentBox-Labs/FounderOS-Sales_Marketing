@@ -282,7 +282,7 @@ def prospecting_presets_save(
     """Save a prospecting preset configuration."""
     logger.info(
         "Saving prospecting preset",
-        extra={"name": req.name, "brand": req.brand, "team": req.team},
+        extra={"preset_name": req.name, "brand": req.brand, "team": req.team},
     )
     items = _read_presets()
     now = datetime.now(timezone.utc).isoformat()
