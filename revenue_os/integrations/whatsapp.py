@@ -231,32 +231,55 @@ class WhatsAppClient:
         message_type: MessageType,
         content: dict[str, Any],
     ) -> WhatsAppMessage | None:
-        """Send a WhatsApp message."""
-        if not cls._api_key:
+        """Send a WhatsApp message via Meta's real Cloud API.
+
+        Note: Meta only allows free-form text outside an active 24-hour
+        customer-service window if it's a pre-approved message template
+        registered in Meta Business Manager. This client sends plain text
+        (correct for replies within a live conversation); using it for
+        cold outbound broadcasts in production requires registering
+        approved templates with Meta and extending this call accordingly
+        — that approval workflow isn't implemented here.
+        """
+        if not cls._api_key or not cls._phone_number_id:
             logger.warning("WhatsApp not configured")
             return None
 
+        message = WhatsAppMessage(
+            id=str(uuid.uuid4()),
+            recipient_phone=recipient_phone,
+            message_type=message_type,
+            content=content,
+            status="pending",
+        )
+        cls._messages[message.id] = message
+
         try:
-            message = WhatsAppMessage(
-                id=str(uuid.uuid4()),
-                recipient_phone=recipient_phone,
-                message_type=message_type,
-                content=content,
-                status="pending",
+            import requests
+
+            body = content.get("body") or content.get("text") or ""
+            resp = requests.post(
+                f"https://graph.facebook.com/v18.0/{cls._phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {cls._api_key}", "Content-Type": "application/json"},
+                json={"messaging_product": "whatsapp", "to": recipient_phone, "type": "text", "text": {"body": body}},
+                timeout=15,
             )
-            cls._messages[message.id] = message
-
-            # Update contact last message time
-            contact = cls.get_contact(recipient_phone)
-            if contact:
-                contact.last_message_at = datetime.now(timezone.utc)
-
-            logger.info(f"WhatsApp message queued: {message.id}")
-            return message
-
+            resp.raise_for_status()
+            sent_ids = resp.json().get("messages") or []
+            message.status = "sent"
+            message.sent_at = datetime.now(timezone.utc)
+            message.whatsapp_message_id = sent_ids[0].get("id") if sent_ids else None
         except Exception as e:
-            logger.error(f"Failed to send WhatsApp message: {str(e)}")
-            return None
+            message.status = "failed"
+            message.error = str(e)
+            logger.warning(f"WhatsApp send failed ({recipient_phone}): {e}")
+
+        contact = cls.get_contact(recipient_phone)
+        if contact:
+            contact.last_message_at = datetime.now(timezone.utc)
+
+        logger.info(f"WhatsApp message {message.status}: {message.id}")
+        return message
 
     @classmethod
     def send_template_message(

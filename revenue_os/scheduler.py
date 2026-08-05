@@ -115,6 +115,14 @@ def job_sync_gmail_inbox() -> dict[str, Any]:
     return sync_inbox()
 
 
+def job_run_marketing_cycle() -> dict[str, Any]:
+    """The AI CMO's daily cycle — market research, persona refresh, content
+    strategy, a published article, and drafted campaigns, all in one pass."""
+    from revenue_os.services.marketing_orchestrator import run_marketing_cycle
+
+    return run_marketing_cycle()
+
+
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
     """Persist a pipeline-health snapshot as analytics data points."""
     from revenue_os.analytics.core import AnalyticsEngine, AnalyticsMetric, MetricType
@@ -312,6 +320,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "sync_gmail_inbox", job_sync_gmail_inbox,
         _env_int("HEARTBEAT_GMAIL_SYNC_SEC", 900),
+    )
+    scheduler.register(
+        "run_marketing_cycle", job_run_marketing_cycle,
+        _env_int("HEARTBEAT_MARKETING_CYCLE_SEC", 86400),
     )
     if heartbeat_enabled():
         scheduler.start()

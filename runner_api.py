@@ -80,6 +80,7 @@ from runner_api_routers.copilot import router as copilot_router
 from runner_api_routers.seo import router as seo_router
 from runner_api_routers.knowledge_base import router as knowledge_base_router
 from runner_api_routers.analytics_depth import router as analytics_depth_router
+from runner_api_routers.marketing_agents import router as marketing_agents_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -241,6 +242,7 @@ app.include_router(copilot_router)
 app.include_router(seo_router)
 app.include_router(knowledge_base_router)
 app.include_router(analytics_depth_router)
+app.include_router(marketing_agents_router)
 
 # Serve the built React CRM at /app when frontend/dist exists (production).
 # The SPA uses hash routing, so a single index.html works without fallbacks.
