@@ -108,6 +108,31 @@ def seed_platform_agents() -> None:
         capabilities=["external_automation"],
         description="Bridges platform events to n8n and receives results back via inbound webhooks.",
     )
+    AgentCoordinator.register_agent(
+        "icp_research_agent", "sdr",
+        capabilities=["research_contact"],
+        description="Pulls buying signals — funding rounds, recent job changes, company fit — from real LinkedIn data in one pass.",
+    )
+    AgentCoordinator.register_agent(
+        "cold_email_agent", "sdr",
+        capabilities=["draft_cold_email"],
+        description="Drafts first-touch cold emails from a contact's real CRM context, not merge tags.",
+    )
+    AgentCoordinator.register_agent(
+        "linkedin_opener_agent", "sdr",
+        capabilities=["draft_linkedin_opener"],
+        description="Drafts LinkedIn connection requests and follow-up DMs that don't read like a pitch.",
+    )
+    AgentCoordinator.register_agent(
+        "followup_sequence_agent", "sdr",
+        capabilities=["build_followup_sequence"],
+        description="Builds 5-7 touch nurture sequences across email and LinkedIn.",
+    )
+    AgentCoordinator.register_agent(
+        "objection_handler_agent", "sdr",
+        capabilities=["handle_latest_reply"],
+        description="Classifies inbound replies (not interested / send more info / wrong person) and drafts a matching response for approval.",
+    )
 
 
 class WorkflowOrchestrator:

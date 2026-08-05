@@ -478,3 +478,66 @@ def agents_system_health(
         "workflows_available": len(WorkflowOrchestrator.list_workflows()),
         "safeguard_rules": len(SafeguardEngine.list_rules()),
     }
+
+
+# ── Sales Agent crew — five per-contact agents, all draft-then-approve ──────
+
+
+@router.post("/sales/{contact_id}/research", tags=["agents"])
+def sales_research_contact(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """ICP Research Agent — buying signals from real LinkedIn data in one pass."""
+    from revenue_os.services.sales_agents import research_contact
+
+    AgentCoordinator.touch_agent("icp_research_agent")
+    return research_contact(contact_id)
+
+
+@router.post("/sales/{contact_id}/cold-email", tags=["agents"])
+def sales_draft_cold_email(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Cold Email Agent — first-touch email from real contact context."""
+    from revenue_os.services.sales_agents import draft_cold_email
+
+    AgentCoordinator.touch_agent("cold_email_agent")
+    return draft_cold_email(contact_id)
+
+
+@router.post("/sales/{contact_id}/linkedin-opener", tags=["agents"])
+def sales_draft_linkedin_opener(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """LinkedIn Opener Agent — connection note + follow-up DM."""
+    from revenue_os.services.sales_agents import draft_linkedin_opener
+
+    AgentCoordinator.touch_agent("linkedin_opener_agent")
+    return draft_linkedin_opener(contact_id)
+
+
+@router.post("/sales/{contact_id}/sequence", tags=["agents"])
+def sales_build_sequence(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Follow-Up Sequence Agent — 5-7 touch email + LinkedIn nurture flow."""
+    from revenue_os.services.sales_agents import build_followup_sequence
+
+    AgentCoordinator.touch_agent("followup_sequence_agent")
+    return build_followup_sequence(contact_id)
+
+
+@router.post("/sales/{contact_id}/handle-reply", tags=["agents"])
+def sales_handle_reply(
+    contact_id: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Objection Handler Agent — classifies the latest inbound reply and drafts a response."""
+    from revenue_os.services.sales_agents import handle_latest_reply
+
+    AgentCoordinator.touch_agent("objection_handler_agent")
+    return handle_latest_reply(contact_id)

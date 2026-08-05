@@ -57,9 +57,28 @@ def _execute_create_deal(db: Session, payload: dict) -> dict[str, Any]:
     return {"created": True, "deal_id": str(deal.id)}
 
 
+def _execute_send_linkedin_message(db: Session, payload: dict) -> dict[str, Any]:
+    """LinkedIn has no compliant API for sending arbitrary connection
+    requests or DMs — approving this doesn't send it, it marks the draft
+    ready to copy and send by hand."""
+    return {
+        "delivery": "manual",
+        "note": "LinkedIn has no compliant send API — copy the approved text and send it yourself.",
+        "connection_note": payload.get("connection_note"),
+        "follow_up_dm": payload.get("follow_up_dm"),
+    }
+
+
 EXECUTORS: dict[str, Callable[[Session, dict], dict[str, Any]]] = {
     "send_outreach_email": _execute_send_outreach_email,
     "create_deal": _execute_create_deal,
+    "send_linkedin_message": _execute_send_linkedin_message,
+    # Same delivery mechanism as send_outreach_email, kept as a distinct
+    # action_type so a reply draft never dedupes against (and gets silently
+    # dropped by) an unrelated pending cold-outreach draft for the same
+    # contact — request_approval() collapses duplicates by (action_type,
+    # target_id) alone.
+    "send_reply_email": _execute_send_outreach_email,
 }
 
 
