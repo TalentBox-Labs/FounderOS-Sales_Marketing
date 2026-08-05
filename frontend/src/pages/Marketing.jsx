@@ -15,6 +15,101 @@ function trendBadge(trend) {
   return <span style={{ color: '#999' }}>= 0</span>
 }
 
+const MARKETING_AGENT_GROUPS = [
+  {
+    title: 'Research & Monitoring', agents: [
+      { key: 'market_research', label: 'Market Research', endpoint: 'market-research',
+        blurb: 'Competitors, trends, and pain points from real Reddit + Hacker News signals.',
+        fields: [{ key: 'query', label: 'Topic', placeholder: 'e.g. CRM software for staffing agencies' }] },
+      { key: 'community', label: 'Community Engagement', endpoint: 'community-engagement',
+        blurb: 'Finds relevant Reddit discussions and drafts thoughtful (non-pitchy) replies.',
+        fields: [{ key: 'query', label: 'Topic', placeholder: 'e.g. staffing agency software' }] },
+      { key: 'brand', label: 'Brand Monitoring', endpoint: 'brand-monitoring',
+        blurb: 'Scans Reddit for brand mentions and flags negative sentiment.',
+        fields: [{ key: 'brand_name', label: 'Brand name', placeholder: 'e.g. WorkCrew' }] },
+      { key: 'partnership', label: 'Partnership & Influencer', endpoint: 'partnership/discover',
+        blurb: 'Discovers potential partners/podcasts/communities via Reddit + HN.',
+        fields: [{ key: 'query', label: 'Topic', placeholder: 'e.g. B2B SaaS podcasts' }] },
+    ],
+  },
+  {
+    title: 'Strategy & Planning', agents: [
+      { key: 'persona', label: 'Customer Persona', endpoint: 'persona/update',
+        blurb: 'Refreshes the buyer persona from real CRM data.', fields: [] },
+      { key: 'content_strategy', label: 'Content Strategy', endpoint: 'content-strategy',
+        blurb: 'A content calendar grounded in tracked SEO keywords and active goals.',
+        fields: [{ key: 'business_context', label: 'Business context', placeholder: 'e.g. B2B CRM for staffing agencies' }] },
+      { key: 'seo_strategy', label: 'SEO Strategy', endpoint: 'seo-strategy',
+        blurb: 'Keyword gaps, topic clusters, and linking opportunities from tracked keywords.',
+        fields: [{ key: 'business_context', label: 'Business context', placeholder: 'optional' }] },
+      { key: 'geo', label: 'GEO (AI Search)', endpoint: 'geo',
+        blurb: 'Evaluates content for ChatGPT/Claude/Gemini/Perplexity visibility.',
+        fields: [{ key: 'title', label: 'Title' }, { key: 'content', label: 'Content excerpt' }] },
+      { key: 'product_marketing', label: 'Product Marketing', endpoint: 'product-marketing',
+        blurb: 'Launch announcement, one-pager, demo talking points for a feature.',
+        fields: [{ key: 'feature', label: 'Feature / launch' }] },
+    ],
+  },
+  {
+    title: 'Content Creation', agents: [
+      { key: 'content_writer', label: 'Content Writer', endpoint: 'content-writer',
+        blurb: 'Writes a blog post and publishes it to the Knowledge Base.',
+        fields: [{ key: 'topic', label: 'Topic' }], extraBody: { content_type: 'blog post', publish: true } },
+      { key: 'linkedin_content', label: 'LinkedIn Content', endpoint: 'linkedin-content',
+        blurb: 'Founder-voice post, filed for approval before posting.',
+        fields: [{ key: 'topic', label: 'Topic' }], extraBody: { post_type: 'educational' } },
+      { key: 'social_media', label: 'Social Media', endpoint: 'social-media',
+        blurb: 'Platform-native variants for LinkedIn/X/Instagram, filed for approval.',
+        fields: [{ key: 'topic', label: 'Topic' }], extraBody: { platforms: ['linkedin', 'x', 'instagram'] } },
+      { key: 'video_strategy', label: 'Video Strategy', endpoint: 'video-strategy',
+        blurb: 'Hook, talking points, B-roll, and caption for a short video.',
+        fields: [{ key: 'topic', label: 'Topic' }] },
+      { key: 'creative_design', label: 'Creative Design', endpoint: 'creative-design',
+        blurb: 'A creative brief for a designer or image-gen tool.',
+        fields: [{ key: 'topic', label: 'Topic' }], extraBody: { asset_type: 'social graphic' } },
+    ],
+  },
+  {
+    title: 'Campaigns & Automation', agents: [
+      { key: 'email_campaign', label: 'Email Marketing', endpoint: 'email-campaign',
+        blurb: 'Drafts a campaign email, filed for approval before sending.',
+        fields: [{ key: 'context', label: 'Campaign context', placeholder: 'e.g. monthly product update' }], extraBody: { campaign_type: 'newsletter' } },
+      { key: 'whatsapp_campaign', label: 'WhatsApp Marketing', endpoint: 'whatsapp-campaign',
+        blurb: 'Drafts a WhatsApp campaign, filed for approval before sending.',
+        fields: [{ key: 'context', label: 'Campaign context', placeholder: 'e.g. webinar reminder' }], extraBody: { campaign_type: 'promotional' } },
+      { key: 'campaign_manager', label: 'Campaign Manager', endpoint: 'campaign/plan',
+        blurb: 'Plans a multi-channel campaign with a timeline and KPIs.',
+        fields: [{ key: 'name', label: 'Campaign name' }, { key: 'goal', label: 'Goal' }],
+        extraBody: { channels: ['seo', 'email', 'linkedin', 'social'] } },
+      { key: 'automation', label: 'Marketing Automation', endpoint: 'automation/trigger',
+        blurb: 'Fires a named n8n workflow with real payload data.',
+        fields: [{ key: 'workflow_name', label: 'n8n workflow name', placeholder: 'e.g. publish-content' }], extraBody: { payload: {} } },
+    ],
+  },
+  {
+    title: 'Analytics & Optimization', agents: [
+      { key: 'analytics', label: 'Analytics & Attribution', endpoint: 'analytics-report',
+        blurb: 'Real attribution, LTV, CAC, and an executive summary.', fields: [] },
+      { key: 'cro', label: 'Conversion Rate Optimization', endpoint: 'cro',
+        blurb: 'Recommendations from the real deal-stage funnel.', fields: [] },
+    ],
+  },
+]
+
+function resultLines(result) {
+  if (!result) return []
+  const skip = new Set(['ok', 'configured'])
+  return Object.entries(result)
+    .filter(([k]) => !skip.has(k))
+    .map(([k, v]) => {
+      const label = k.replace(/_/g, ' ')
+      let val = v
+      if (Array.isArray(val)) val = val.length ? val.map(x => (typeof x === 'object' ? JSON.stringify(x) : x)).join('; ') : '(none)'
+      else if (val && typeof val === 'object') val = JSON.stringify(val)
+      return { label, val: String(val ?? '') }
+    })
+}
+
 export default function Marketing() {
   const [contacts, setContacts] = useState([])
   const [broadcasts, setBroadcasts] = useState([])
@@ -42,6 +137,14 @@ export default function Marketing() {
   const [keywordForm, setKeywordForm] = useState(EMPTY_KEYWORD)
   const [checkFormFor, setCheckFormFor] = useState(null)
   const [checkForm, setCheckForm] = useState(EMPTY_CHECK)
+
+  // Marketing Agent Crew
+  const [orchestratorContext, setOrchestratorContext] = useState('')
+  const [orchestratorBusy, setOrchestratorBusy] = useState(false)
+  const [orchestratorResult, setOrchestratorResult] = useState(null)
+  const [agentInputs, setAgentInputs] = useState({})
+  const [agentBusy, setAgentBusy] = useState({})
+  const [agentResults, setAgentResults] = useState({})
 
   const load = useCallback(async () => {
     try {
@@ -224,6 +327,36 @@ export default function Marketing() {
     }
   }
 
+  const runOrchestrator = async () => {
+    setOrchestratorBusy(true)
+    setOrchestratorResult(null)
+    try {
+      const res = await api.post('/api/v1/marketing-agents/orchestrator/run', { business_context: orchestratorContext })
+      setOrchestratorResult(res.data)
+      await load()
+    } catch (err) {
+      setOrchestratorResult({ ok: false, error: err.response?.data?.detail || 'Orchestrator run failed' })
+    } finally {
+      setOrchestratorBusy(false)
+    }
+  }
+
+  const runAgent = async (agent) => {
+    const body = { ...(agent.extraBody || {}) }
+    for (const f of agent.fields) body[f.key] = (agentInputs[`${agent.key}.${f.key}`] || '').trim()
+    setAgentBusy(prev => ({ ...prev, [agent.key]: true }))
+    setAgentResults(prev => ({ ...prev, [agent.key]: null }))
+    try {
+      const res = await api.post(`/api/v1/marketing-agents/${agent.endpoint}`, body)
+      setAgentResults(prev => ({ ...prev, [agent.key]: res.data }))
+      if (['content_writer', 'persona', 'campaign_manager'].includes(agent.key)) await load()
+    } catch (err) {
+      setAgentResults(prev => ({ ...prev, [agent.key]: { ok: false, reason: err.response?.data?.detail || 'Agent failed' } }))
+    } finally {
+      setAgentBusy(prev => ({ ...prev, [agent.key]: false }))
+    }
+  }
+
   return (
     <div>
       <h1>Marketing</h1>
@@ -263,6 +396,91 @@ export default function Marketing() {
           <div className="stat-number">{keywords.length}</div>
         </div>
       </div>
+
+      <div className="card" style={{ borderLeft: '4px solid #667eea' }}>
+        <h2 className="card-title">Marketing Orchestrator — the AI CMO</h2>
+        <p style={{ color: '#666', fontSize: '0.85rem', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+          Runs the full pipeline: research → persona → content strategy → SEO/writer/video → creative/social →
+          email/WhatsApp → campaign → automation → analytics. Also runs automatically once a day.
+        </p>
+        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem' }}>
+          <input type="text" value={orchestratorContext} onChange={e => setOrchestratorContext(e.target.value)}
+            placeholder="Business context (optional) — e.g. B2B CRM for staffing agencies"
+            style={{ flex: 1, padding: '0.6rem', border: '1px solid #ddd', borderRadius: '4px' }} />
+          <button className="btn btn-primary" disabled={orchestratorBusy} onClick={runOrchestrator}>
+            {orchestratorBusy ? 'Running full cycle…' : 'Run Marketing Cycle'}
+          </button>
+        </div>
+        {orchestratorResult && (
+          <div style={{ padding: '1rem', backgroundColor: '#f8f9ff', borderRadius: '8px', fontSize: '0.85rem' }}>
+            {!orchestratorResult.ok && <p style={{ color: '#D62828' }}>{orchestratorResult.error}</p>}
+            {orchestratorResult.ok && (
+              <>
+                <p style={{ fontWeight: 600, marginTop: 0 }}>{orchestratorResult.executive_summary}</p>
+                <table className="table">
+                  <thead><tr><th>Stage</th><th>Result</th></tr></thead>
+                  <tbody>
+                    {Object.entries(orchestratorResult.stages || {}).map(([stage, data]) => (
+                      <tr key={stage}>
+                        <td style={{ textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{stage.replace(/_/g, ' ')}</td>
+                        <td style={{ color: '#444' }}>
+                          {resultLines(data).slice(0, 2).map(l => `${l.label}: ${l.val}`).join(' · ').slice(0, 200) || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {MARKETING_AGENT_GROUPS.map(group => (
+        <div className="card" key={group.title}>
+          <h2 className="card-title">{group.title}</h2>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {group.agents.map(agent => (
+              <div key={agent.key} style={{ border: '1px solid #eee', borderRadius: '8px', padding: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 260px' }}>
+                    <strong>{agent.label}</strong>
+                    <p style={{ margin: '0.2rem 0 0.6rem', color: '#666', fontSize: '0.85rem' }}>{agent.blurb}</p>
+                    {agent.fields.length > 0 && (
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        {agent.fields.map(f => (
+                          <input key={f.key} type="text"
+                            value={agentInputs[`${agent.key}.${f.key}`] || ''}
+                            onChange={e => setAgentInputs(prev => ({ ...prev, [`${agent.key}.${f.key}`]: e.target.value }))}
+                            placeholder={f.placeholder || f.label}
+                            style={{ padding: '0.45rem', border: '1px solid #ddd', borderRadius: '4px', minWidth: '180px', flex: 1 }} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                    disabled={agentBusy[agent.key]} onClick={() => runAgent(agent)}>
+                    {agentBusy[agent.key] ? 'Working…' : 'Run'}
+                  </button>
+                </div>
+                {agentResults[agent.key] && (
+                  <div style={{ marginTop: '0.75rem', padding: '0.8rem', backgroundColor: agentResults[agent.key].ok === false ? '#fff2f2' : '#f8f9ff', borderRadius: '6px', fontSize: '0.82rem' }}>
+                    {agentResults[agent.key].ok === false ? (
+                      <span style={{ color: '#D62828' }}>{agentResults[agent.key].reason || agentResults[agent.key].error || 'No result'}</span>
+                    ) : (
+                      <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                        {resultLines(agentResults[agent.key]).map((l, i) => (
+                          <li key={i}><strong style={{ textTransform: 'capitalize' }}>{l.label}:</strong> {l.val.slice(0, 300)}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
 
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

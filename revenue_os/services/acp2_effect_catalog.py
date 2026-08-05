@@ -29,6 +29,7 @@ from revenue_os.services.acp2_work_contract import (
     WORK_HERMES_QUALIFY_RECOMMEND,
     WORK_HERMES_SCORE,
     WORK_LEAD_SCORE,
+    WORK_MARKETING_CYCLE,
     WORK_METRICS_SNAPSHOT,
     WORK_OUTBOUND_SEND,
     WORK_QD_DECIDE,
@@ -102,6 +103,13 @@ _CATALOG: dict[str, EffectSpec] = {
         ExecutionMode.AUTONOMOUS,
         frozenset({"heartbeat", "gmail_sync"}),
         "gmail_inbound_activity",
+    ),
+    WORK_MARKETING_CYCLE: EffectSpec(
+        WORK_MARKETING_CYCLE,
+        EFFECT_PROPOSE,
+        ExecutionMode.AUTONOMOUS,
+        frozenset({"heartbeat", "marketing_orchestrator"}),
+        "marketing_cycle_run",
     ),
     WORK_METRICS_SNAPSHOT: EffectSpec(
         WORK_METRICS_SNAPSHOT,
