@@ -662,8 +662,5 @@ def find_duplicates(
     )
 
 
-@router.get("/export/csv")
-def export_contacts_csv_endpoint(db: Session = Depends(get_db)):
-    from fastapi.responses import Response
-    csv_data = export_contacts_csv(db)
-    return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=contacts.csv"})
+# NOTE: /contacts/export/csv is already defined above as export_contacts();
+# avoid duplicate route registration here.
