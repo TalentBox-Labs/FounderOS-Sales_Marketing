@@ -766,6 +766,15 @@ async function bulkUpload(event) {
   if (!file) return;
   const form = new FormData();
   form.append('file', file);
+
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
+
   try {
     const r = await fetch(`${API}/contacts/bulk-upload`, {
       method: 'POST',
@@ -777,8 +786,8 @@ async function bulkUpload(event) {
     const el = document.getElementById('uploadResult');
     el.innerHTML = `<div class="card" style="margin-top:8px">
       <strong>Upload complete</strong><br>
-      Created: ${result.created} | Skipped: ${result.skipped} | Errors: ${result.errors.length} / ${result.total_rows} rows
-      ${result.errors.length ? '<br><span style="color:#f87171;font-size:12px">' + result.errors.map(e => `Row ${e.row}: ${e.error}`).join('<br>') + '</span>' : ''}
+      Created: ${Number(result.created || 0)} | Skipped: ${Number(result.skipped || 0)} | Errors: ${result.errors.length} / ${Number(result.total_rows || 0)} rows
+      ${result.errors.length ? '<br><span style="color:#f87171;font-size:12px">' + result.errors.map(e => `Row ${esc(e.row)}: ${esc(e.error)}`).join('<br>') + '</span>' : ''}
     </div>`;
     showToast(`Created ${result.created} contacts`);
     loadContacts();
