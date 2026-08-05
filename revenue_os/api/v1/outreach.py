@@ -354,7 +354,7 @@ def track_click(activity_id: str, url: str = Query(...), db: Session = Depends(g
             click_activity = Activity(
                 contact_id=activity.contact_id,
                 activity_type=ActivityType.EMAIL_CLICK,
-                subject=f"Click: {activity.subject}",
+                subject=activity.subject,
                 body=url,
                 direction="inbound",
                 status="tracked",
@@ -363,6 +363,11 @@ def track_click(activity_id: str, url: str = Query(...), db: Session = Depends(g
             db.commit()
     except Exception:
         db.rollback()
+
+    from urllib.parse import urlparse
+
+    if urlparse(url).scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Invalid redirect URL")
 
     return RedirectResponse(url=url)
 
