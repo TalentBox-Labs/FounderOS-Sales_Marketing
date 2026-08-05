@@ -196,8 +196,10 @@ def process_outreach_sequences(self):
                 body_text = f"{composed.get('hook', '')}\n\n{composed.get('body', '')}"
                 body_html = body_text.replace("\n", "<br>\n")
                 domain = settings.TRACKING_DOMAIN.rstrip("/")
-                body_html = inject_tracking(body_html, str(activity.id), domain)
 
+                from revenue_os.services.gmail_client import inject_tracking
+
+                body_html = inject_tracking(body_html, str(activity.id), domain)
                 try:
                     from revenue_os.services.gmail_client import send_email
                     result = send_email(
