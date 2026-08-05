@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from revenue_os.automation.events import Event, EventBus, EventType
 from revenue_os.database import SessionLocal
 from revenue_os.models.activity import Activity, ActivityType
-from revenue_os.models.contact import Contact, ContactStatus
+from revenue_os.models.contact import Company, Contact, ContactStatus, Industry
 from revenue_os.models.deal import Deal, DealStage
 from runner_api_routers.utils import _verify_api_key
 
@@ -29,7 +29,9 @@ def _contact_dict(c: Contact) -> dict[str, Any]:
         "name": f"{c.first_name} {c.last_name}".strip(),
         "email": c.email,
         "phone": getattr(c, "phone", None),
-        "title": getattr(c, "title", None),
+        "title": c.designation,
+        "designation": c.designation,
+        "linkedin_url": c.linkedin_url,
         "status": c.status.value if c.status else None,
         "lead_score": c.lead_score or 0,
         "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -74,7 +76,12 @@ class ContactCreateRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
     title: str | None = Field(default=None, max_length=255)
+    linkedin_url: str | None = Field(default=None, max_length=500)
     status: str = Field(default="prospect")
+
+
+class EnrichRequest(BaseModel):
+    linkedin_url: str | None = Field(default=None, max_length=500)
 
 
 class DealCreateRequest(BaseModel):
@@ -151,6 +158,115 @@ def get_contact(
         db.close()
 
 
+@router.post("/contacts/{contact_id}/enrich")
+def enrich_contact(
+    contact_id: str,
+    req: EnrichRequest,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Enrich a contact (and their company) from LinkedIn via Proxycurl.
+
+    Updates real fields from a licensed data provider — never guesses.
+    Logs the result to the contact's timeline either way.
+    """
+    from revenue_os.services.linkedin_enrichment import (
+        enrich_company,
+        enrich_person,
+        map_industry,
+        score_icp_fit,
+    )
+
+    db = SessionLocal()
+    try:
+        try:
+            cid = uuid_lib.UUID(contact_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid contact_id")
+        contact = db.get(Contact, cid)
+        if contact is None:
+            raise HTTPException(status_code=404, detail="Contact not found")
+
+        linkedin_url = req.linkedin_url or contact.linkedin_url
+        if not linkedin_url:
+            raise HTTPException(
+                status_code=422,
+                detail="No LinkedIn URL on this contact — pass one or set it on the contact first",
+            )
+        if req.linkedin_url and req.linkedin_url != contact.linkedin_url:
+            contact.linkedin_url = req.linkedin_url
+
+        person = enrich_person(linkedin_url)
+        if not person.get("configured"):
+            return {"ok": False, "configured": False, "reason": person.get("reason")}
+        if not person.get("ok"):
+            return {"ok": False, "configured": True, "reason": person.get("reason")}
+
+        profile = person["profile"]
+        if profile.get("occupation"):
+            contact.designation = str(profile["occupation"])[:255]
+
+        icp = None
+        company_dict = None
+        experiences = profile.get("experiences") or []
+        current_exp = next((e for e in experiences if not e.get("ends_at")), experiences[0] if experiences else None)
+        company_linkedin_url = (current_exp or {}).get("company_linkedin_profile_url")
+
+        if company_linkedin_url:
+            company_res = enrich_company(company_linkedin_url)
+            if company_res.get("ok"):
+                c_profile = company_res["profile"]
+                industry = map_industry(c_profile.get("industry"))
+                employee_count = None
+                size = c_profile.get("company_size")
+                if isinstance(size, list) and len(size) == 2 and size[1]:
+                    employee_count = size[1]
+
+                company = contact.company
+                if company is None:
+                    company = Company(name=c_profile.get("name") or (current_exp or {}).get("company") or "Unknown")
+                    db.add(company)
+                    db.flush()
+                    contact.company_id = company.id
+                company.industry = Industry(industry)
+                if employee_count:
+                    company.employee_count = employee_count
+                if c_profile.get("description"):
+                    company.description = str(c_profile["description"])[:2000]
+                if c_profile.get("website"):
+                    company.website_url = c_profile["website"]
+                company.linkedin_url = company_linkedin_url
+                db.add(company)
+
+                icp = score_icp_fit(industry, employee_count)
+                company_dict = {
+                    "name": company.name, "industry": industry, "employee_count": employee_count,
+                }
+
+        db.add(contact)
+        db.commit()
+        db.refresh(contact)
+
+        note_body = f"Enriched from LinkedIn — {icp['fit']} ICP fit ({icp['score']}/100)." if icp else \
+            "Enriched from LinkedIn (person profile only — no current employer match on LinkedIn)."
+        db.add(Activity(
+            contact_id=cid, activity_type=ActivityType.NOTE,
+            subject="LinkedIn enrichment", body=note_body, status="completed",
+        ))
+        db.commit()
+
+        result = _contact_dict(contact)
+    finally:
+        db.close()
+
+    return {
+        "ok": True, "configured": True,
+        "contact": result,
+        "headline": profile.get("headline"),
+        "company": company_dict,
+        "icp_fit": icp,
+    }
+
+
 @router.post("/contacts")
 def create_contact(
     req: ContactCreateRequest,
@@ -171,10 +287,12 @@ def create_contact(
             email=req.email,
             status=status,
         )
-        if req.phone and hasattr(contact, "phone"):
+        if req.phone:
             contact.phone = req.phone
-        if req.title and hasattr(contact, "title"):
-            contact.title = req.title
+        if req.title:
+            contact.designation = req.title
+        if req.linkedin_url:
+            contact.linkedin_url = req.linkedin_url
         db.add(contact)
         db.commit()
         db.refresh(contact)

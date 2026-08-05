@@ -4,6 +4,7 @@ import api from '../api.js'
 const CATEGORY_LABELS = {
   email: 'Email', notifications: 'Notifications', messaging: 'Messaging',
   calendar: 'Calendar', automation: 'Automation', ai: 'AI', content: 'Content Publishing',
+  enrichment: 'Enrichment',
 }
 
 function fmt(iso) {
@@ -61,6 +62,35 @@ export default function Integrations() {
       await api.delete(`/api/v1/integrations/connectors/${connector.name}`)
       setNotice(`${connector.label} credentials removed`)
       await load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const connectOauth = async (connector) => {
+    setBusy(true)
+    try {
+      const res = await api.get(`/api/v1/integrations/${connector.name}/authorize`)
+      window.open(res.data.authorize_url, '_blank', 'noopener')
+      setNotice(`Complete the consent screen in the new tab, then come back and refresh.`)
+    } catch (err) {
+      setNotice(err.response?.data?.detail || `Failed to start ${connector.label} connection`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const syncNow = async (connector) => {
+    setBusy(true)
+    try {
+      const res = await api.post(`/api/v1/integrations/${connector.name}/sync`)
+      const r = res.data.result || {}
+      setNotice(
+        r.ok === false ? (r.reason || 'Sync did not run')
+          : `Synced ${connector.label}: checked ${r.checked ?? 0}, matched ${r.matched ?? 0}, logged ${r.created ?? 0} new`,
+      )
+    } catch (err) {
+      setNotice(err.response?.data?.detail || `Sync failed for ${connector.label}`)
     } finally {
       setBusy(false)
     }
@@ -128,9 +158,9 @@ export default function Integrations() {
                       </span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className={`badge ${c.configured ? 'badge-success' : 'badge-warning'}`}>
-                      {c.configured ? 'configured' : 'not configured'}
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span className={`badge ${c.oauth ? (c.connected ? 'badge-success' : c.configured ? 'badge-warning' : 'badge-warning') : (c.configured ? 'badge-success' : 'badge-warning')}`}>
+                      {c.oauth ? (c.connected ? 'connected' : c.configured ? 'awaiting consent' : 'not configured') : (c.configured ? 'configured' : 'not configured')}
                     </span>
                     {c.source === 'vault' && (
                       <>
@@ -138,6 +168,18 @@ export default function Integrations() {
                           onClick={() => openForm === c.name ? setOpenForm(null) : openConfigure(c)}>
                           {openForm === c.name ? 'Cancel' : c.configured ? 'Reconfigure' : 'Configure'}
                         </button>
+                        {c.oauth && c.configured && (
+                          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                            disabled={busy} onClick={() => connectOauth(c)}>
+                            {c.connected ? 'Reconnect' : 'Connect'}
+                          </button>
+                        )}
+                        {c.oauth && c.connected && (
+                          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                            disabled={busy} onClick={() => syncNow(c)}>
+                            Sync now
+                          </button>
+                        )}
                         {c.configured && (
                           <button className="btn btn-secondary" style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem', color: '#D62828' }}
                             disabled={busy} onClick={() => removeConnector(c)}>

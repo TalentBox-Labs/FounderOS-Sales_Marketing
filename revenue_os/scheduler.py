@@ -103,6 +103,18 @@ def job_hermes_goal_check() -> dict[str, Any]:
     return check_all_active_goals()
 
 
+def job_sync_gmail_inbox() -> dict[str, Any]:
+    """Pull recent Gmail inbox messages, log matched-contact ones to their timeline.
+
+    No-ops cleanly (returns ok:false with a reason) when Gmail isn't
+    connected — this job is always registered, but does nothing until a
+    founder completes OAuth on the Integrations page.
+    """
+    from revenue_os.integrations.gmail_sync import sync_inbox
+
+    return sync_inbox()
+
+
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
     """Persist a pipeline-health snapshot as analytics data points."""
     from revenue_os.analytics.core import AnalyticsEngine, AnalyticsMetric, MetricType
@@ -296,6 +308,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "hermes_goal_check", job_hermes_goal_check,
         _env_int("HEARTBEAT_GOAL_CHECK_SEC", 3600),
+    )
+    scheduler.register(
+        "sync_gmail_inbox", job_sync_gmail_inbox,
+        _env_int("HEARTBEAT_GMAIL_SYNC_SEC", 900),
     )
     if heartbeat_enabled():
         scheduler.start()

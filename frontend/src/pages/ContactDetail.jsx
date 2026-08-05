@@ -12,16 +12,23 @@ const STAGE_COLORS = {
   negotiation: '#00D4FF', closed_won: '#06A77D', closed_lost: '#D62828',
 }
 
+const ICP_COLORS = { high: '#06A77D', medium: '#FFB800', low: '#999' }
+
 export default function ContactDetail() {
   const { id } = useParams()
   const [contact, setContact] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const [linkedinInput, setLinkedinInput] = useState('')
+  const [enriching, setEnriching] = useState(false)
+  const [enrichResult, setEnrichResult] = useState(null)
+
   const load = useCallback(async () => {
     try {
       const res = await api.get(`/api/v1/crm/contacts/${id}`)
       setContact(res.data.contact)
+      setLinkedinInput(res.data.contact.linkedin_url || '')
       setError(null)
     } catch (err) {
       setError(err.response?.status === 404 ? 'Contact not found' : 'Backend offline — start the API on port 8000')
@@ -31,6 +38,21 @@ export default function ContactDetail() {
   }, [id])
 
   useEffect(() => { load() }, [load])
+
+  const runEnrich = async () => {
+    if (!linkedinInput.trim()) return
+    setEnriching(true)
+    setEnrichResult(null)
+    try {
+      const res = await api.post(`/api/v1/crm/contacts/${id}/enrich`, { linkedin_url: linkedinInput.trim() })
+      setEnrichResult(res.data)
+      if (res.data.ok) await load()
+    } catch (err) {
+      setEnrichResult({ ok: false, configured: true, reason: err.response?.data?.detail || 'Enrichment failed' })
+    } finally {
+      setEnriching(false)
+    }
+  }
 
   if (loading) return <div className="loading">Loading contact…</div>
   if (error) return <div className="card" style={{ borderLeft: '4px solid #D62828' }}>{error}</div>
@@ -62,6 +84,54 @@ export default function ContactDetail() {
           <div className="stat-label">Title</div>
           <div className="stat-number" style={{ fontSize: '1.1rem' }}>{contact.title || '—'}</div>
         </div>
+      </div>
+
+      <div className="card">
+        <h2 className="card-title">LinkedIn Enrichment</h2>
+        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem' }}>
+          <input type="text" value={linkedinInput} onChange={e => setLinkedinInput(e.target.value)}
+            placeholder="https://linkedin.com/in/..."
+            style={{ flex: 1, padding: '0.6rem', border: '1px solid #ddd', borderRadius: '4px' }} />
+          <button className="btn btn-primary" disabled={enriching || !linkedinInput.trim()} onClick={runEnrich}>
+            {enriching ? 'Enriching…' : 'Enrich'}
+          </button>
+        </div>
+
+        {enrichResult && !enrichResult.ok && !enrichResult.configured && (
+          <div style={{ padding: '0.9rem', backgroundColor: '#fff8e6', borderRadius: '8px', fontSize: '0.9rem' }}>
+            {enrichResult.reason} <Link to="/integrations" style={{ color: '#667eea' }}>Configure it →</Link>
+          </div>
+        )}
+        {enrichResult && !enrichResult.ok && enrichResult.configured && (
+          <div style={{ padding: '0.9rem', backgroundColor: '#fff2f2', borderRadius: '8px', fontSize: '0.9rem', color: '#D62828' }}>
+            {enrichResult.reason}
+          </div>
+        )}
+        {enrichResult?.ok && (
+          <div style={{ padding: '1rem', backgroundColor: '#f8f9ff', borderRadius: '8px' }}>
+            {enrichResult.headline && <p style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>{enrichResult.headline}</p>}
+            {enrichResult.company && (
+              <p style={{ margin: '0 0 0.5rem', color: '#444' }}>
+                {enrichResult.company.name} · {enrichResult.company.industry}
+                {enrichResult.company.employee_count ? ` · ${enrichResult.company.employee_count} employees` : ''}
+              </p>
+            )}
+            {enrichResult.icp_fit && (
+              <div>
+                <span style={{
+                  backgroundColor: ICP_COLORS[enrichResult.icp_fit.fit], color: 'white',
+                  padding: '0.25rem 0.7rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
+                  textTransform: 'uppercase',
+                }}>
+                  {enrichResult.icp_fit.fit} ICP fit ({enrichResult.icp_fit.score}/100)
+                </span>
+                <ul style={{ margin: '0.6rem 0 0', paddingLeft: '1.2rem', fontSize: '0.85rem', color: '#666' }}>
+                  {enrichResult.icp_fit.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="card">
