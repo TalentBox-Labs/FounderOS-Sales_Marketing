@@ -2,9 +2,7 @@
 
 Run with: pytest revenue_os/tests/test_api.py -v
 """
-import sys
-sys.path.insert(0, '/Volumes/Macintosh HD - Data/S&M - CSM OS ')
-
+# NOTE: avoid hard-coded sys.path modifications; run pytest from the repo root so `revenue_os` is importable.
 import pytest
 from fastapi.testclient import TestClient
 from revenue_os.main import app
