@@ -168,28 +168,91 @@ class DataPoint:
         }
 
 
+def _analytics_db():
+    """Open a DB session for analytics persistence. Returns None if unavailable."""
+    try:
+        from revenue_os.database import SessionLocal
+        return SessionLocal()
+    except Exception:
+        return None
+
+
 class AnalyticsEngine:
-    """Core analytics engine."""
+    """Core analytics engine.
+
+    Metrics and data points are written through to the database so they
+    survive restarts; the in-memory dicts act as a cache. If the database
+    is unavailable the engine degrades gracefully to memory-only mode.
+    """
 
     _metrics: dict[str, AnalyticsMetric] = {}
     _dashboards: dict[str, Dashboard] = {}
     _reports: dict[str, AnalyticsReport] = {}
     _data_points: list[DataPoint] = []
+    _hydrated: bool = False
+
+    @classmethod
+    def _hydrate_from_db(cls) -> None:
+        """Load persisted metrics into memory once per process."""
+        if cls._hydrated:
+            return
+        cls._hydrated = True
+        db = _analytics_db()
+        if db is None:
+            return
+        try:
+            from revenue_os.models.automation_state import AnalyticsMetricRecord
+            for row in db.query(AnalyticsMetricRecord).all():
+                if row.id not in cls._metrics:
+                    cls._metrics[row.id] = AnalyticsMetric(
+                        id=row.id,
+                        name=row.name,
+                        metric_type=MetricType(row.metric_type),
+                        calculation=row.calculation,
+                        unit=row.unit,
+                        description=row.description,
+                        target_value=row.target_value,
+                    )
+        except Exception as e:
+            logger.warning(f"Analytics hydration skipped: {e}")
+        finally:
+            db.close()
 
     @classmethod
     def register_metric(cls, metric: AnalyticsMetric) -> None:
-        """Register a metric."""
+        """Register a metric (persisted)."""
         cls._metrics[metric.id] = metric
+        db = _analytics_db()
+        if db is not None:
+            try:
+                from revenue_os.models.automation_state import AnalyticsMetricRecord
+                if db.get(AnalyticsMetricRecord, metric.id) is None:
+                    db.add(AnalyticsMetricRecord(
+                        id=metric.id,
+                        name=metric.name,
+                        metric_type=metric.metric_type.value,
+                        calculation=metric.calculation,
+                        unit=metric.unit,
+                        description=metric.description,
+                        target_value=metric.target_value,
+                    ))
+                    db.commit()
+            except Exception as e:
+                logger.warning(f"Metric not persisted ({metric.id}): {e}")
+            finally:
+                db.close()
         logger.info(f"Metric registered: {metric.id} ({metric.name})")
 
     @classmethod
     def get_metric(cls, metric_id: str) -> AnalyticsMetric | None:
         """Get metric by ID."""
+        cls._hydrate_from_db()
         return cls._metrics.get(metric_id)
 
     @classmethod
     def list_metrics(cls, metric_type: MetricType | None = None) -> list[AnalyticsMetric]:
         """List all metrics."""
+        cls._hydrate_from_db()
         metrics = cls._metrics.values()
         if metric_type:
             metrics = [m for m in metrics if m.metric_type == metric_type]
@@ -263,7 +326,7 @@ class AnalyticsEngine:
         dimension: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> DataPoint:
-        """Record a data point."""
+        """Record a data point (persisted)."""
         data_point = DataPoint(
             timestamp=datetime.now(timezone.utc),
             metric_id=metric_id,
@@ -272,6 +335,22 @@ class AnalyticsEngine:
             metadata=metadata or {},
         )
         cls._data_points.append(data_point)
+        db = _analytics_db()
+        if db is not None:
+            try:
+                from revenue_os.models.automation_state import AnalyticsDataPointRecord
+                db.add(AnalyticsDataPointRecord(
+                    metric_id=metric_id,
+                    value=value,
+                    dimension=dimension,
+                    meta=metadata or {},
+                    timestamp=data_point.timestamp,
+                ))
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Data point not persisted ({metric_id}): {e}")
+            finally:
+                db.close()
         return data_point
 
     @classmethod
@@ -282,21 +361,47 @@ class AnalyticsEngine:
         end_date: datetime | None = None,
         dimension: str | None = None,
     ) -> list[DataPoint]:
-        """Get data points for a metric."""
+        """Get data points for a metric, preferring the persisted store."""
         if start_date is None:
             start_date = datetime.now(timezone.utc) - timedelta(days=30)
         if end_date is None:
             end_date = datetime.now(timezone.utc)
 
+        db = _analytics_db()
+        if db is not None:
+            try:
+                from revenue_os.models.automation_state import AnalyticsDataPointRecord
+                query = db.query(AnalyticsDataPointRecord).filter(
+                    AnalyticsDataPointRecord.metric_id == metric_id,
+                    AnalyticsDataPointRecord.timestamp >= start_date,
+                    AnalyticsDataPointRecord.timestamp <= end_date,
+                )
+                if dimension:
+                    query = query.filter(AnalyticsDataPointRecord.dimension == dimension)
+                rows = query.order_by(AnalyticsDataPointRecord.timestamp.asc()).all()
+                return [
+                    DataPoint(
+                        timestamp=row.timestamp,
+                        metric_id=row.metric_id,
+                        value=row.value,
+                        dimension=row.dimension,
+                        metadata=row.meta or {},
+                    )
+                    for row in rows
+                ]
+            except Exception as e:
+                logger.warning(f"DB read failed for metric data ({metric_id}): {e}")
+            finally:
+                db.close()
+
+        # Memory fallback
         data = [
             p for p in cls._data_points
             if p.metric_id == metric_id
             and start_date <= p.timestamp <= end_date
         ]
-
         if dimension:
             data = [p for p in data if p.dimension == dimension]
-
         return data
 
     @classmethod

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from revenue_os.database import SessionLocal
 from revenue_os.integrations.email import EmailNotifier, ScheduledEmailQueue, EmailTemplate
 from revenue_os.integrations.webhooks import WebhookManager, WebhookEventType
@@ -18,16 +19,188 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/integrations", tags=["integrations"])
 
 
+# Every integration the platform knows about — the "connector registry".
+# Vault-backed connectors are configured (and encrypted) through this API;
+# env-backed ones are set at deploy time and only reported as configured/not.
+CONNECTOR_CATALOG: list[dict[str, Any]] = [
+    {
+        "name": "email_smtp", "label": "Email (SMTP)", "category": "email", "source": "vault",
+        "fields": [
+            {"key": "host", "label": "SMTP Host", "type": "text"},
+            {"key": "port", "label": "Port", "type": "number"},
+            {"key": "username", "label": "Username", "type": "text"},
+            {"key": "password", "label": "Password", "type": "password"},
+            {"key": "from_email", "label": "From Address", "type": "text"},
+        ],
+    },
+    {
+        "name": "slack", "label": "Slack", "category": "notifications", "source": "vault",
+        "fields": [{"key": "webhook_url", "label": "Webhook URL", "type": "password"}],
+    },
+    {
+        "name": "whatsapp", "label": "WhatsApp Business", "category": "messaging", "source": "vault",
+        "fields": [
+            {"key": "api_key", "label": "API Key", "type": "password"},
+            {"key": "phone_number_id", "label": "Phone Number ID", "type": "text"},
+            {"key": "business_account_id", "label": "Business Account ID", "type": "text"},
+        ],
+    },
+    {
+        "name": "google_calendar", "label": "Google Calendar", "category": "calendar", "source": "vault",
+        "fields": [
+            {"key": "access_token", "label": "Access Token", "type": "password"},
+            {"key": "refresh_token", "label": "Refresh Token", "type": "password"},
+            {"key": "calendar_id", "label": "Calendar ID", "type": "text"},
+        ],
+    },
+    {
+        "name": "outlook_calendar", "label": "Outlook Calendar", "category": "calendar", "source": "vault",
+        "fields": [
+            {"key": "tenant_id", "label": "Tenant ID", "type": "text"},
+            {"key": "access_token", "label": "Access Token", "type": "password"},
+        ],
+    },
+    {
+        "name": "linkedin_enrichment", "label": "LinkedIn Enrichment (Proxycurl)", "category": "enrichment", "source": "vault",
+        "fields": [{"key": "api_key", "label": "Proxycurl API Key", "type": "password"}],
+    },
+    {
+        "name": "gmail", "label": "Gmail Sync", "category": "email", "source": "vault", "oauth": True,
+        "fields": [
+            {"key": "client_id", "label": "OAuth Client ID", "type": "text"},
+            {"key": "client_secret", "label": "OAuth Client Secret", "type": "password"},
+            {"key": "redirect_uri", "label": "Redirect URI (must match the OAuth client's registered URI)", "type": "text"},
+        ],
+    },
+    {"name": "n8n", "label": "n8n", "category": "automation", "source": "env",
+     "env_vars": ["N8N_WEBHOOK_BASE_URL", "N8N_API_KEY"]},
+    {"name": "openai", "label": "OpenAI", "category": "ai", "source": "env",
+     "env_vars": ["OPENAI_API_KEY"]},
+    {"name": "hashnode", "label": "Hashnode", "category": "content", "source": "env",
+     "env_vars": ["HASHNODE_ACCESS_TOKEN"]},
+    {"name": "linkedin", "label": "LinkedIn", "category": "content", "source": "env",
+     "env_vars": ["LINKEDIN_ACCESS_TOKEN"]},
+    {"name": "instagram", "label": "Instagram", "category": "content", "source": "env",
+     "env_vars": ["INSTAGRAM_ACCESS_TOKEN"]},
+    {"name": "youtube", "label": "YouTube", "category": "content", "source": "env",
+     "env_vars": ["YOUTUBE_API_KEY"]},
+]
+
+_VAULT_CONFIGURE_HANDLERS = {
+    "email_smtp": lambda config: EmailNotifier.configure_smtp(config),
+    "slack": lambda config: SlackNotifier.set_webhook_url(config.get("webhook_url", "")),
+    "google_calendar": lambda config: GoogleCalendarClient.configure(config),
+    "outlook_calendar": lambda config: OutlookCalendarClient.configure(
+        tenant_id=config.get("tenant_id", ""), access_token=config.get("access_token", ""),
+    ),
+}
+
+
+def _configure_whatsapp(config: dict[str, Any]) -> None:
+    from revenue_os.integrations.whatsapp import WhatsAppClient
+
+    WhatsAppClient.configure(
+        api_key=config.get("api_key", ""),
+        phone_number_id=config.get("phone_number_id", ""),
+        business_account_id=config.get("business_account_id", ""),
+    )
+
+
+_VAULT_CONFIGURE_HANDLERS["whatsapp"] = _configure_whatsapp
+
+
+@router.get("/connectors", tags=["integrations"])
+def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Every integration the platform knows about, merged with live status.
+
+    Never returns secret values — only whether each connector is configured.
+    """
+    from revenue_os.services.credentials_vault import list_configured_connectors
+
+    from revenue_os.services.credentials_vault import load_credentials
+
+    vaulted = list_configured_connectors()
+    result = []
+    for c in CONNECTOR_CATALOG:
+        if c["source"] == "vault":
+            entry = vaulted.get(c["name"])
+            configured = entry is not None
+            updated_at = entry["updated_at"] if entry else None
+        else:
+            configured = bool(c.get("env_vars")) and all(os.environ.get(v) for v in c["env_vars"])
+            updated_at = None
+
+        connected = None
+        if c.get("oauth"):
+            # OAuth connectors have two states: fields saved (configured) vs.
+            # consent completed (connected, has a refresh_token). Only decrypt
+            # for the presence check — never expose the token itself.
+            connected = configured and bool((load_credentials(c["name"]) or {}).get("refresh_token"))
+
+        result.append({
+            "name": c["name"], "label": c["label"], "category": c["category"],
+            "source": c["source"], "configured": configured, "updated_at": updated_at,
+            "fields": c.get("fields", []), "env_vars": c.get("env_vars", []),
+            "oauth": bool(c.get("oauth")), "connected": connected,
+        })
+    return {"ok": True, "count": len(result), "connectors": result}
+
+
+@router.post("/connectors/{connector_name}/configure", tags=["integrations"])
+def configure_connector(
+    connector_name: str,
+    config: dict[str, Any],
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Configure any vault-backed connector — encrypted at rest, survives restart."""
+    catalog_entry = next((c for c in CONNECTOR_CATALOG if c["name"] == connector_name), None)
+    if catalog_entry is None:
+        raise HTTPException(status_code=404, detail="Unknown connector")
+    if catalog_entry["source"] != "vault":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{catalog_entry['label']} is configured via environment variables "
+                   f"({', '.join(catalog_entry.get('env_vars', []))}), not this API.",
+        )
+
+    handler = _VAULT_CONFIGURE_HANDLERS.get(connector_name)
+    if handler:
+        try:
+            handler(config)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid configuration: {e}")
+
+    from revenue_os.services.credentials_vault import save_credentials
+
+    save_credentials(connector_name, catalog_entry["category"], config)
+    return {"ok": True, "message": f"{catalog_entry['label']} configured"}
+
+
+@router.delete("/connectors/{connector_name}", tags=["integrations"])
+def remove_connector_credentials(
+    connector_name: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Remove a connector's stored credentials."""
+    from revenue_os.services.credentials_vault import delete_credentials
+
+    deleted = delete_credentials(connector_name)
+    return {"ok": deleted}
+
+
 @router.post("/email/configure", tags=["integrations"])
 def configure_email(
     config: dict[str, Any],
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Configure email (SMTP) settings."""
+    """Configure email (SMTP) settings — persisted encrypted, survives restart."""
     logger.info("Configuring email settings")
 
     try:
         EmailNotifier.configure_smtp(config)
+        from revenue_os.services.credentials_vault import save_credentials
+
+        save_credentials("email_smtp", "email", config)
         return {"ok": True, "message": "Email configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure email: {str(e)}")
@@ -206,11 +379,14 @@ def configure_slack(
     config: dict[str, Any],
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Configure Slack webhook URL."""
+    """Configure Slack webhook URL — persisted encrypted, survives restart."""
     logger.info("Configuring Slack")
 
     try:
         SlackNotifier.set_webhook_url(config.get("webhook_url", ""))
+        from revenue_os.services.credentials_vault import save_credentials
+
+        save_credentials("slack", "notifications", config)
         return {"ok": True, "message": "Slack configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Slack: {str(e)}")
@@ -270,11 +446,15 @@ def configure_google_calendar(
     config: dict[str, Any],
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Configure Google Calendar."""
+    """Configure Google Calendar — persisted encrypted, survives restart."""
     logger.info("Configuring Google Calendar")
 
     try:
-        GoogleCalendarClient.configure(config.get("credentials", {}))
+        credentials = config.get("credentials", {})
+        GoogleCalendarClient.configure(credentials)
+        from revenue_os.services.credentials_vault import save_credentials
+
+        save_credentials("google_calendar", "calendar", credentials)
         return {"ok": True, "message": "Google Calendar configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Google Calendar: {str(e)}")
@@ -317,7 +497,7 @@ def configure_outlook_calendar(
     config: dict[str, Any],
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Configure Outlook Calendar."""
+    """Configure Outlook Calendar — persisted encrypted, survives restart."""
     logger.info("Configuring Outlook Calendar")
 
     try:
@@ -325,6 +505,9 @@ def configure_outlook_calendar(
             tenant_id=config.get("tenant_id", ""),
             access_token=config.get("access_token", ""),
         )
+        from revenue_os.services.credentials_vault import save_credentials
+
+        save_credentials("outlook_calendar", "calendar", config)
         return {"ok": True, "message": "Outlook Calendar configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Outlook Calendar: {str(e)}")
@@ -382,3 +565,65 @@ def integrations_health(
         "webhook_subscriptions": subscriptions,
         "status": "healthy",
     }
+
+
+@router.get("/gmail/authorize", tags=["integrations"])
+def gmail_authorize(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Build the Google consent URL for the founder to open and approve."""
+    from revenue_os.integrations.gmail_sync import build_authorize_url
+    from revenue_os.services.credentials_vault import load_credentials
+
+    config = load_credentials("gmail")
+    if not config or not config.get("client_id") or not config.get("redirect_uri"):
+        raise HTTPException(
+            status_code=400,
+            detail="Save the Gmail OAuth client ID, secret, and redirect URI first.",
+        )
+    url = build_authorize_url(config["client_id"], config["redirect_uri"])
+    return {"ok": True, "authorize_url": url}
+
+
+@router.get("/gmail/callback", tags=["integrations"])
+def gmail_callback(code: str | None = None, error: str | None = None) -> Any:
+    """OAuth redirect target — exchanges the code for tokens and saves them.
+
+    This is opened directly by the browser (not called via the API client),
+    so it returns a small HTML page instead of JSON.
+    """
+    from fastapi.responses import HTMLResponse
+
+    from revenue_os.integrations.gmail_sync import exchange_code_for_tokens
+    from revenue_os.services.credentials_vault import load_credentials, save_credentials
+
+    def _page(message: str, ok: bool) -> HTMLResponse:
+        color = "#06A77D" if ok else "#D62828"
+        return HTMLResponse(
+            f"<html><body style='font-family: sans-serif; padding: 3rem; text-align: center;'>"
+            f"<h2 style='color: {color}'>{message}</h2>"
+            f"<p>You can close this tab and return to the Integrations page.</p>"
+            f"</body></html>"
+        )
+
+    if error:
+        return _page(f"Gmail connection failed: {error}", ok=False)
+    if not code:
+        return _page("Missing authorization code.", ok=False)
+
+    config = load_credentials("gmail")
+    if not config:
+        return _page("Gmail OAuth client is not configured.", ok=False)
+
+    tokens = exchange_code_for_tokens(code, config["client_id"], config["client_secret"], config["redirect_uri"])
+    if not tokens.get("ok"):
+        return _page(f"Gmail connection failed: {tokens.get('error')}", ok=False)
+
+    save_credentials("gmail", "email", {**config, "refresh_token": tokens.get("refresh_token", config.get("refresh_token"))})
+    return _page("Gmail connected successfully.", ok=True)
+
+
+@router.post("/gmail/sync", tags=["integrations"])
+def gmail_sync_now(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Manually trigger a Gmail inbox sync (also runs automatically via the heartbeat)."""
+    from revenue_os.scheduler import scheduler
+
+    return scheduler.run_job_now("sync_gmail_inbox")

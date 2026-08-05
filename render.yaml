@@ -1,0 +1,33 @@
+# Render.com blueprint — deploys API + CRM frontend as one Docker service
+# with a managed PostgreSQL database.
+#
+# Usage: push this repo to GitHub, then in Render choose
+# "New > Blueprint" and point it at the repository.
+
+services:
+  - type: web
+    name: workcrew-crm
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: RUNNER_API_KEY
+        generateValue: true          # this is the team login key for the CRM UI
+      - key: DATABASE_URL
+        fromDatabase:
+          name: workcrew-crm-db
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false                  # set manually in the dashboard if using LLM features
+      - key: HEARTBEAT_ENABLED
+        value: "1"
+      - key: N8N_WEBHOOK_BASE_URL
+        sync: false                  # set when you connect an n8n instance
+      - key: N8N_INBOUND_SECRET
+        generateValue: true
+
+databases:
+  - name: workcrew-crm-db
+    plan: starter

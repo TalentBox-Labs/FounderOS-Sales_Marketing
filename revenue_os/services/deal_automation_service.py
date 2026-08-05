@@ -279,17 +279,25 @@ def get_deals_at_risk(db: Session) -> list[dict[str, Any]]:
 
     now = datetime.now(timezone.utc)
 
+    def _aware(dt: datetime | None) -> datetime | None:
+        # SQLite returns naive datetimes; treat stored values as UTC.
+        if dt is not None and dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
     for deal in deals:
         risk_score = 0
+        expected_close = _aware(deal.expected_close_date)
+        updated_at = _aware(deal.updated_at)
 
         # Past expected close date
-        if deal.expected_close_date and deal.expected_close_date < now:
-            days_overdue = (now - deal.expected_close_date).days
+        if expected_close and expected_close < now:
+            days_overdue = (now - expected_close).days
             risk_score += min(30, days_overdue)
 
         # Old deal (not updated recently)
-        if deal.updated_at:
-            days_stale = (now - deal.updated_at).days
+        if updated_at:
+            days_stale = (now - updated_at).days
             if days_stale > 14:
                 risk_score += 20
 
@@ -301,8 +309,8 @@ def get_deals_at_risk(db: Session) -> list[dict[str, Any]]:
                     "stage": deal.stage.value,
                     "value": deal.value,
                     "risk_score": risk_score,
-                    "days_overdue": (now - deal.expected_close_date).days
-                    if deal.expected_close_date
+                    "days_overdue": (now - expected_close).days
+                    if expected_close
                     else 0,
                 }
             )

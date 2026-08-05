@@ -71,6 +71,15 @@ from runner_api_routers.reporting import router as reporting_router
 from runner_api_routers.agents import router as agents_router
 from runner_api_routers.whatsapp import router as whatsapp_router
 from runner_api_routers.analytics import router as analytics_router
+from runner_api_routers.heartbeat import router as heartbeat_router
+from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
+from runner_api_routers.goals import router as goals_router
+from runner_api_routers.approvals import router as approvals_router
+from runner_api_routers.crm import router as crm_router
+from runner_api_routers.copilot import router as copilot_router
+from runner_api_routers.seo import router as seo_router
+from runner_api_routers.knowledge_base import router as knowledge_base_router
+from runner_api_routers.analytics_depth import router as analytics_depth_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -99,6 +108,7 @@ from revenue_os.models.activity import (
 )
 from revenue_os.models.contact import Contact, ContactStatus
 from revenue_os.models.deal import Deal, DealStage
+from revenue_os.services.outreach_service import schedule_contact_sequence as _schedule_contact_sequence
 from revenue_os.services.go_to_market_orchestrator import (
     GTMOrchestrationRequest,
     build_strategy,
@@ -222,11 +232,147 @@ app.include_router(reporting_router)
 app.include_router(agents_router)
 app.include_router(whatsapp_router)
 app.include_router(analytics_router)
+app.include_router(heartbeat_router)
+app.include_router(n8n_webhooks_router)
+app.include_router(goals_router)
+app.include_router(approvals_router)
+app.include_router(crm_router)
+app.include_router(copilot_router)
+app.include_router(seo_router)
+app.include_router(knowledge_base_router)
+app.include_router(analytics_depth_router)
+
+# Serve the built React CRM at /app when frontend/dist exists (production).
+# The SPA uses hash routing, so a single index.html works without fallbacks.
+_frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/app", StaticFiles(directory=str(_frontend_dist), html=True), name="crm-frontend")
+    logger.info("CRM frontend mounted at /app")
+
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
 
 # Initialize automation system
 initialize_automation()
+
+
+def _migrate_missing_columns() -> None:
+    """Add columns introduced after a table already exists.
+
+    ``Base.metadata.create_all()`` only creates missing tables, it never
+    alters existing ones — so a fresh column on an old table needs an
+    explicit ``ALTER TABLE``. This is a lightweight, additive-only patch
+    list (no drops, no renames), safe to run on every startup.
+    """
+    from sqlalchemy import inspect, text
+
+    from revenue_os.database import engine
+
+    patches = {
+        "activities": [
+            ("due_date", "DATETIME"),
+            ("is_completed", "INTEGER DEFAULT 0"),
+            ("completed_at", "DATETIME"),
+        ],
+        "hermes_goals": [
+            ("agent_name", "VARCHAR(64)"),
+        ],
+    }
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, columns in patches.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl_type in columns:
+                if name in existing:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+                logger.info(f"Migrated: added {table}.{name}")
+
+        # activities.contact_id used to be NOT NULL; deal-only activities need
+        # it nullable. Postgres can alter in place. SQLite can't alter a
+        # column constraint — only safe to rebuild the table when it's empty.
+        if inspector.has_table("activities"):
+            contact_col = next(
+                (c for c in inspector.get_columns("activities") if c["name"] == "contact_id"), None
+            )
+            if contact_col is not None and not contact_col["nullable"]:
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("ALTER TABLE activities ALTER COLUMN contact_id DROP NOT NULL"))
+                    logger.info("Migrated: activities.contact_id is now nullable")
+                elif engine.dialect.name == "sqlite":
+                    row_count = conn.execute(text("SELECT COUNT(*) FROM activities")).scalar()
+                    if row_count == 0:
+                        conn.execute(text("DROP TABLE activities"))
+                        logger.info("Migrated: dropped empty activities table for nullable rebuild")
+                        # Base.metadata.create_all() above already ran this
+                        # startup — recreate it now from the current model.
+                        from revenue_os.models.activity import Activity
+
+                        Activity.__table__.create(bind=conn)
+                    else:
+                        logger.warning(
+                            "activities.contact_id is NOT NULL on SQLite with existing rows — "
+                            "deal-only activities will fail until manually migrated"
+                        )
+
+
+@app.on_event("startup")
+async def _startup_persistence_and_heartbeat() -> None:
+    """Create any missing tables, then start the autonomous heartbeat."""
+    try:
+        import revenue_os.models  # noqa: F401 - registers all tables on Base.metadata
+        from revenue_os.database import engine
+        from revenue_os.models.base import Base
+
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created")
+    except Exception as e:
+        logger.error(f"Table creation failed (continuing): {e}")
+
+    try:
+        _migrate_missing_columns()
+    except Exception as e:
+        logger.error(f"Column migration failed (continuing): {e}")
+
+    try:
+        from revenue_os.scheduler import initialize_heartbeat
+
+        initialize_heartbeat()
+    except Exception as e:
+        logger.error(f"Heartbeat initialization failed: {e}")
+
+    try:
+        from revenue_os.integrations.n8n import initialize_n8n_bridge
+
+        initialize_n8n_bridge()
+    except Exception as e:
+        logger.error(f"n8n bridge initialization failed: {e}")
+
+    try:
+        from revenue_os.agents.orchestration import seed_platform_agents
+
+        seed_platform_agents()
+    except Exception as e:
+        logger.error(f"Agent registry seeding failed: {e}")
+
+    try:
+        from revenue_os.services.credentials_vault import hydrate_all_connectors
+
+        hydrate_all_connectors()
+    except Exception as e:
+        logger.error(f"Connector hydration failed: {e}")
+
+
+@app.on_event("shutdown")
+async def _shutdown_heartbeat() -> None:
+    from revenue_os.scheduler import scheduler
+
+    scheduler.stop()
 
 
 class WeekRequest(BaseModel):
@@ -679,81 +825,6 @@ def _parse_statuses(raw: list[str]) -> list[ContactStatus]:
     if not statuses:
         raise HTTPException(status_code=400, detail="at least one status is required")
     return statuses
-
-
-def _map_activity_type(step_action: str, sequence_channel: str) -> ActivityType:
-    action = (step_action or "").strip().lower()
-    channel = (sequence_channel or "").strip().lower()
-    if action in {"send_email", "email"} or channel == "email":
-        return ActivityType.EMAIL
-    if action in {"linkedin_message", "linkedin"}:
-        return ActivityType.LINKEDIN_MESSAGE
-    if action in {"linkedin_connect"}:
-        return ActivityType.LINKEDIN_CONNECT
-    if action in {"whatsapp"} or channel == "whatsapp":
-        return ActivityType.WHATSAPP
-    if action in {"call"}:
-        return ActivityType.CALL
-    return ActivityType.TASK
-
-
-def _schedule_contact_sequence(db, sequence: OutreachSequence, contact_id: str) -> dict[str, Any]:
-    steps = (
-        db.query(SequenceStep)
-        .filter(SequenceStep.sequence_id == sequence.id)
-        .order_by(SequenceStep.step_order)
-        .all()
-    )
-    if not steps:
-        activity = Activity(
-            contact_id=uuid.UUID(contact_id),
-            activity_type=_map_activity_type("", sequence.channel),
-            subject=f"{sequence.name} - outreach",
-            body="Imported from prospecting plan",
-            direction="outbound",
-            status="scheduled",
-            scheduled_at=datetime.now(timezone.utc),
-        )
-        db.add(activity)
-        return {"contact_id": contact_id, "steps": 1}
-
-    cumulative_days = 0
-    for step in steps:
-        cumulative_days += max(0, int(step.delay_days or 0))
-        activity = Activity(
-            contact_id=uuid.UUID(contact_id),
-            activity_type=_map_activity_type(step.action_type, sequence.channel),
-            subject=step.subject or f"{sequence.name} - step {step.step_order}",
-            body=step.template or "",
-            direction="outbound",
-            status="scheduled",
-            scheduled_at=datetime.now(timezone.utc) + timedelta(days=cumulative_days),
-        )
-        db.add(activity)
-    return {"contact_id": contact_id, "steps": len(steps)}
-
-
-@app.get("/api/v1/outreach/sequences")
-def outreach_sequences_proxy(
-    _: str | None = Depends(_verify_api_key),
-) -> dict:
-    db = SessionLocal()
-    try:
-        rows = db.query(OutreachSequence).filter(OutreachSequence.is_active == 1).all()
-        return {
-            "ok": True,
-            "sequences": [
-                {
-                    "id": str(r.id),
-                    "name": r.name,
-                    "channel": r.channel,
-                    "steps_count": r.steps_count,
-                }
-                for r in rows
-            ],
-        }
-    finally:
-        db.close()
 
 
 @app.get("/api/v1/prospecting/providers")
