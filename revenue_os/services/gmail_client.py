@@ -64,11 +64,13 @@ def inject_tracking(body_html: str, activity_id: str, domain: str) -> str:
     )
 
     def wrap_link(match: re.Match) -> str:
+        from urllib.parse import quote
+
         original = match.group(0)
         url = match.group(1) or match.group(2)
         if not url:
             return original
-        wrapped = f"{domain}/track/click/{activity_id}?url={url}"
+        wrapped = f"{domain}/track/click/{activity_id}?url={quote(url, safe='')}"
         return match.group(0).replace(url, wrapped)
 
     body_html = re.sub(
