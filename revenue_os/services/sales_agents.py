@@ -341,7 +341,8 @@ def handle_latest_reply(contact_id: str, *, organization_id: str) -> dict[str, A
 
         reply = (
             db.query(Activity)
-            .filter(Activity.contact_id == contact.id, Activity.activity_type == ActivityType.EMAIL,
+            .filter(Activity.contact_id == contact.id,
+                     Activity.activity_type.in_([ActivityType.EMAIL, ActivityType.EMAIL_REPLY]),
                      Activity.direction == "inbound")
             .order_by(Activity.created_at.desc())
             .first()
