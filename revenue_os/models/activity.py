@@ -45,6 +45,14 @@ class Activity(Base):
     deal_id = Column(
         UUID(as_uuid=True), ForeignKey("deals.id"), nullable=True
     )
+    # Set only on Activities created by schedule_contact_sequence() — lets a
+    # reply cancel just that contact's remaining steps in a sequence.
+    sequence_id = Column(
+        UUID(as_uuid=True), ForeignKey("outreach_sequences.id"), nullable=True
+    )
+    sequence_step_id = Column(
+        UUID(as_uuid=True), ForeignKey("sequence_steps.id"), nullable=True
+    )
 
     activity_type = Column(Enum(ActivityType), nullable=False)
     subject = Column(String(500))

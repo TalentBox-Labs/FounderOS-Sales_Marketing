@@ -275,6 +275,8 @@ def _migrate_missing_columns() -> None:
             ("due_date", "DATETIME"),
             ("is_completed", "INTEGER DEFAULT 0"),
             ("completed_at", "DATETIME"),
+            ("sequence_id", "UUID"),
+            ("sequence_step_id", "UUID"),
         ],
         "hermes_goals": [
             ("agent_name", "VARCHAR(64)"),

@@ -11,7 +11,7 @@ const TYPE_OPTIONS = [
 
 const TYPE_ICON = {
   note: '📝', task: '✅', call: '📞', meeting: '🗓️',
-  email: '✉️', whatsapp: '💬', linkedin_message: '💼',
+  email: '✉️', email_reply: '↩️', whatsapp: '💬', linkedin_message: '💼',
 }
 
 function fmt(iso) {
@@ -158,6 +158,9 @@ export default function Timeline({ contactId, dealId }) {
                     )}
                     {!a.due_date && a.status === 'scheduled' && a.scheduled_at && (
                       <span style={{ marginLeft: '0.5rem' }}>· scheduled for {fmt(a.scheduled_at)}</span>
+                    )}
+                    {a.status === 'cancelled' && (
+                      <span style={{ marginLeft: '0.5rem', color: '#999' }}>· cancelled (contact replied)</span>
                     )}
                   </div>
                 </div>
