@@ -151,3 +151,19 @@ class TestObjectionHandlerAgent:
         assert result["ok"] is True
         assert result["category"] == "not_interested"
         assert result["approval_id"] != pre_existing["id"]
+
+    def test_handle_latest_reply_finds_gmail_synced_reply_type(self, contact, revenue_db) -> None:
+        """Gmail sync logs inbound mail as EMAIL_REPLY (not EMAIL) — Agent 5 must still find it."""
+        from revenue_os.models.activity import Activity, ActivityType
+        from revenue_os.services.sales_agents import handle_latest_reply
+
+        reply = Activity(
+            contact_id=contact.id, activity_type=ActivityType.EMAIL_REPLY, direction="inbound",
+            subject="Re: intro", body="Sounds good, send over pricing", status="completed",
+        )
+        revenue_db.add(reply)
+        revenue_db.commit()
+
+        result = handle_latest_reply(str(contact.id))
+        assert result["ok"] is True
+        assert result["original_reply"] == "Sounds good, send over pricing"
