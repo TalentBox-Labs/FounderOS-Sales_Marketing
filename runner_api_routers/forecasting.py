@@ -217,40 +217,32 @@ def analyze_scenarios(
 def get_model_performance(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Get ML model performance metrics."""
+    """Get information about the prediction models in use."""
     logger.info("Fetching model performance")
-
-    # Placeholder: in production, would track actual prediction accuracy
 
     return {
         "ok": True,
         "models": {
             "churn_prediction": {
-                "accuracy": 0.84,
-                "precision": 0.81,
-                "recall": 0.79,
-                "training_samples": 250,
-                "last_retrained": "2024-06-15",
+                "type": "heuristic",
+                "description": "Weighted combination of health score, contact recency, "
+                "payment history, and renewal signals.",
+                "trained": False,
             },
             "revenue_forecast": {
-                "mape": 0.12,  # Mean Absolute Percentage Error
-                "rmse": 18500,  # Root Mean Squared Error
-                "r_squared": 0.87,
-                "training_samples": 48,
-                "last_retrained": "2024-06-10",
+                "type": "heuristic",
+                "description": "Pipeline-stage-weighted projection with seasonal adjustment.",
+                "trained": False,
             },
             "deal_win_probability": {
-                "accuracy": 0.78,
-                "auc_roc": 0.85,
-                "training_samples": 500,
-                "last_retrained": "2024-06-15",
+                "type": "heuristic",
+                "description": "Stage-based base rate adjusted for deal age and size.",
+                "trained": False,
             },
         },
-        "recommendations": [
-            "Churn model accuracy is strong (84%)",
-            "Revenue forecast MAPE is acceptable (12%)",
-            "Consider retraining models monthly with latest data",
-        ],
+        "note": "These are rule-based heuristic models, not trained ML models. There is no "
+        "training pipeline or accuracy-tracking mechanism yet, so accuracy/precision/recall "
+        "metrics are not available.",
     }
 
 
@@ -261,10 +253,16 @@ def forecasting_health(
     """Get forecasting system health."""
     logger.info("Checking forecasting system health")
 
+    scenarios = ScenarioEngine.get_preset_scenarios()
+
     return {
         "ok": True,
-        "models_loaded": 4,
-        "scenarios_available": 6,
-        "last_forecast_run": "2024-06-16T18:30:00Z",
+        "models_available": [
+            "churn_prediction",
+            "revenue_forecast",
+            "deal_win_probability",
+            "expansion_prediction",
+        ],
+        "scenarios_available": len(scenarios),
         "status": "healthy",
     }
