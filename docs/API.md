@@ -366,13 +366,27 @@ List active outreach sequences.
 
 #### GET /health
 
-Service health check.
+Service health check (canonical liveness; use for probes / load balancers).
 
 **Response:**
 ```json
 {
   "status": "ok",
   "service": "WorkCrew CMS OS"
+}
+```
+
+#### GET /health/debug
+
+Operator diagnostics (project root, Python executable). Not for probes.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "service": "WorkCrew CMS OS",
+  "project_root": "/path/to/repo",
+  "python": "/path/to/python"
 }
 ```
 
@@ -387,6 +401,12 @@ API health check.
   "service": "WorkCrew CMS OS API"
 }
 ```
+
+#### POST /run-pipeline
+
+Legacy pipeline alias (optional week apply, then `pipeline_orchestrator`).
+
+**Response `status` values:** `"ok"` | `"failed"` (not `"success"`).
 
 ## Error Codes
 

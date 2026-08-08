@@ -40,14 +40,16 @@ def get_metrics_prometheus(
     return MetricsExporter.to_prometheus_format(snapshot)
 
 
-@router.get("/health", tags=["health"])
-def get_health() -> dict[str, Any]:
-    """Get overall system health status."""
+# Canonical GET /api/v1/health is owned by ui.api_health (status + service name).
+# Observability aggregate/component checks live under /api/v1/system/health*.
+@router.get("/system/health", tags=["health"])
+def get_system_health() -> dict[str, Any]:
+    """Get overall observability health status (component aggregate)."""
     logger.info("Fetching system health status")
     return HealthChecker.get_status()
 
 
-@router.get("/health/{component}", tags=["health"])
+@router.get("/system/health/{component}", tags=["health"])
 def get_component_health(
     component: str,
     _: str | None = Depends(_verify_api_key),

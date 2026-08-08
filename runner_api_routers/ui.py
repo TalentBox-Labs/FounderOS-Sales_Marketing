@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +75,35 @@ def _enrich_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return enriched
 
 
+def _validator_results(week_id: str) -> list[tuple[str, str]]:
+    """Read QA report verdicts for the week detail template."""
+    qa_dir = PROJECT_ROOT / "output" / "qa_reports"
+    suffix_map = {
+        "research_mapper": f"{week_id}_Research_Map.md",
+        "draft_validator": f"{week_id}_Draft_Validation.md",
+        "structure_checker": f"{week_id}_Structure_Check.md",
+        "metadata_checker": f"{week_id}_Metadata_Check.md",
+        "publish_checklist_checker": f"{week_id}_Publish_Checklist_Check.md",
+    }
+    results: list[tuple[str, str]] = []
+    for name, fname in suffix_map.items():
+        path = qa_dir / fname
+        if not path.is_file():
+            results.append((name, "—"))
+            continue
+        text = path.read_text(encoding="utf-8")
+        verdict = "—"
+        for line in reversed(text.splitlines()):
+            if "PASS" in line:
+                verdict = "PASS"
+                break
+            if "FAIL" in line:
+                verdict = "FAIL"
+                break
+        results.append((name, verdict))
+    return results
+
+
 def _dashboard_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Calculate dashboard statistics from tracker rows."""
     total = len(rows)
@@ -110,8 +141,9 @@ def page_dashboard(request: Request) -> HTMLResponse:
     last_run = _last_run_summary()
 
     return templates.TemplateResponse(
-        "dashboard.html",
-        {
+        request=request,
+        name="dashboard.html",
+        context={
             "request": request,
             "active_page": "dashboard",
             "active_week": runtime.get("active_week", "—"),
@@ -131,8 +163,9 @@ def page_weeks(request: Request) -> HTMLResponse:
     runtime = _load_runtime()
 
     return templates.TemplateResponse(
-        "weeks.html",
-        {
+        request=request,
+        name="weeks.html",
+        context={
             "request": request,
             "active_page": "weeks",
             "active_week": runtime.get("active_week", "—"),
@@ -144,7 +177,10 @@ def page_weeks(request: Request) -> HTMLResponse:
 @router.get("/weeks/{week_id}", response_class=HTMLResponse)
 def page_week_detail(week_id: str, request: Request) -> HTMLResponse:
     """Week detail page."""
-    _validate_week_id(week_id)
+    try:
+        _validate_week_id(week_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info("Loading week detail", extra={"week_id": week_id})
 
     rows = _read_tracker()
@@ -156,15 +192,29 @@ def page_week_detail(week_id: str, request: Request) -> HTMLResponse:
     enriched = enriched_rows[0] if enriched_rows else row
 
     runtime = _load_runtime()
+    profile_path = PROJECT_ROOT / "data" / "week_runtime" / f"{week_id}.json"
+    if profile_path.is_file():
+        runtime_json = json.dumps(
+            json.loads(profile_path.read_text(encoding="utf-8")), indent=2
+        )
+    else:
+        runtime_json = json.dumps(runtime, indent=2)
 
     return templates.TemplateResponse(
-        "week_detail.html",
-        {
+        request=request,
+        name="week_detail.html",
+        context={
             "request": request,
             "active_page": "week_detail",
             "active_week": runtime.get("active_week", "—"),
+            # Template binds tracker fields as `row.*`; keep `week` alias too.
+            "row": enriched,
             "week": enriched,
             "week_id": week_id,
+            "artifacts": _week_artifacts(week_id),
+            "validators": _validator_results(week_id),
+            "qa_report_html": None,
+            "runtime_json": runtime_json,
         },
     )
 
@@ -174,7 +224,12 @@ def page_file_view(
     week_id: str, filename: str, request: Request
 ) -> HTMLResponse:
     """File viewer page."""
-    _validate_week_id(week_id)
+    try:
+        _validate_week_id(week_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not any(r.get("content_id") == week_id for r in _read_tracker()):
+        raise HTTPException(status_code=404, detail="Week not found")
     logger.info("Loading file view", extra={"week_id": week_id, "filename": filename})
 
     file_path = PROJECT_ROOT / "input" / week_id / filename
@@ -185,8 +240,9 @@ def page_file_view(
     runtime = _load_runtime()
 
     return templates.TemplateResponse(
-        "file_view.html",
-        {
+        request=request,
+        name="file_view.html",
+        context={
             "request": request,
             "active_page": "file_view",
             "active_week": runtime.get("active_week", "—"),
@@ -208,8 +264,9 @@ def page_pipeline(request: Request) -> HTMLResponse:
     active_week = runtime.get("active_week", "—")
 
     return templates.TemplateResponse(
-        "pipeline.html",
-        {
+        request=request,
+        name="pipeline.html",
+        context={
             "request": request,
             "active_page": "pipeline",
             "active_week": active_week,
@@ -226,8 +283,9 @@ def page_mcp(request: Request) -> HTMLResponse:
     runtime = _load_runtime()
 
     return templates.TemplateResponse(
-        "mcp.html",
-        {
+        request=request,
+        name="mcp.html",
+        context={
             "request": request,
             "active_page": "mcp",
             "active_week": runtime.get("active_week", "—"),
@@ -248,8 +306,9 @@ def page_marketing(request: Request) -> HTMLResponse:
     )
 
     return templates.TemplateResponse(
-        "marketing.html",
-        {
+        request=request,
+        name="marketing.html",
+        context={
             "request": request,
             "active_page": "marketing",
             "active_week": runtime.get("active_week", "—"),
@@ -266,8 +325,9 @@ def page_sales(request: Request) -> HTMLResponse:
     runtime = _load_runtime()
 
     return templates.TemplateResponse(
-        "sales.html",
-        {
+        request=request,
+        name="sales.html",
+        context={
             "request": request,
             "active_page": "sales",
             "active_week": runtime.get("active_week", "—"),
@@ -282,8 +342,9 @@ def page_analytics(request: Request) -> HTMLResponse:
     runtime = _load_runtime()
 
     return templates.TemplateResponse(
-        "analytics.html",
-        {
+        request=request,
+        name="analytics.html",
+        context={
             "request": request,
             "active_page": "analytics",
             "active_week": runtime.get("active_week", "—"),
@@ -293,11 +354,22 @@ def page_analytics(request: Request) -> HTMLResponse:
 
 @router.get("/health")
 def health() -> dict[str, str]:
-    """Health check endpoint."""
+    """Canonical service liveness check."""
     return {"status": "ok", "service": "WorkCrew CMS OS"}
+
+
+@router.get("/health/debug")
+def health_debug() -> dict[str, str]:
+    """Process diagnostics (not for load-balancer probes)."""
+    return {
+        "status": "ok",
+        "service": "WorkCrew CMS OS",
+        "project_root": str(PROJECT_ROOT),
+        "python": sys.executable,
+    }
 
 
 @router.get("/api/v1/health")
 def api_health() -> dict[str, str]:
-    """API health check endpoint."""
+    """Canonical API liveness check."""
     return {"status": "ok", "service": "WorkCrew CMS OS API"}
