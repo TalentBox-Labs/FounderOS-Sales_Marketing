@@ -268,11 +268,19 @@ class EditorCrew(BaseCrew):
             )
 
 
-# ── Compatibility exports for tests ──────────────────────────────────────────
+# ── Compatibility exports for tests / procedural callers ─────────────────────
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 def _staging_guard(staging_root: str) -> None:
     """Backward compatibility export."""
     return EditorCrew._staging_guard(staging_root)
+
+
+def _maybe_strip_outer_fence(text: str) -> str:
+    """Module-level fence strip (delegates to EditorCrew)."""
+    return EditorCrew._maybe_strip_outer_fence(text)
 
 
 def extract_canonical_url_from_seo_plan(text: str) -> str | None:
@@ -285,9 +293,13 @@ def extract_canonical_url_from_seo_plan(text: str) -> str | None:
 
 
 def _seo_canonical_section(staging_root: str) -> str:
-    """Backward compatibility export."""
-    crew = EditorCrew()
-    return crew._seo_canonical_section(staging_root)
+    """Compatibility export; respects module ``BASE_DIR`` (tests may monkeypatch).
+
+    Uses an unbound instance so callers/tests do not need YAML/LLM crew init.
+    """
+    helper = EditorCrew.__new__(EditorCrew)
+    helper.repo_root = Path(BASE_DIR)
+    return EditorCrew._seo_canonical_section(helper, staging_root)
 
 
 if __name__ == "__main__":

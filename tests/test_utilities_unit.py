@@ -21,10 +21,12 @@ class TestCSVReader:
         self, monkeypatch: pytest.MonkeyPatch, fake_active_content
     ) -> None:
         """get_active_content returns row with specific content_id."""
-        def fake_read(*args, **kwargs):
-            return [fake_active_content]
+        import pandas as pd
 
-        monkeypatch.setattr("src.tools.csv_reader.read_tracker_rows", fake_read)
+        monkeypatch.setattr(
+            "src.tools.csv_reader.read_runtime_tracker",
+            lambda *args, **kwargs: pd.DataFrame([fake_active_content]),
+        )
 
         result = get_active_content(content_id="W99")
         assert result["content_id"] == "W99"
@@ -34,10 +36,12 @@ class TestCSVReader:
         self, monkeypatch: pytest.MonkeyPatch, fake_active_content, fake_runtime_config
     ) -> None:
         """get_active_content uses active_week from runtime config."""
-        def fake_read(*args, **kwargs):
-            return [fake_active_content]
+        import pandas as pd
 
-        monkeypatch.setattr("src.tools.csv_reader.read_tracker_rows", fake_read)
+        monkeypatch.setattr(
+            "src.tools.csv_reader.read_runtime_tracker",
+            lambda *args, **kwargs: pd.DataFrame([fake_active_content]),
+        )
         monkeypatch.setattr(
             "src.tools.csv_reader.load_runtime_config",
             lambda: fake_runtime_config,
@@ -259,9 +263,15 @@ class TestConfigLoading:
 
     def test_yaml_agent_config_structure(self, monkeypatch: pytest.MonkeyPatch, fake_yaml_config) -> None:
         """Agent configs have required fields."""
-        monkeypatch.setattr("src.base_crew.load_yaml", lambda p: fake_yaml_config)
+        from unittest.mock import MagicMock
 
+        from src.base_crew import BaseCrew
         from src.qa_crew import QACrew
+
+        monkeypatch.setattr(
+            BaseCrew, "_load_yaml", lambda self, p: fake_yaml_config
+        )
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
         crew = QACrew()
         agent_cfg = crew.agents_config.get("test_agent", {})
@@ -272,9 +282,15 @@ class TestConfigLoading:
 
     def test_yaml_task_config_structure(self, monkeypatch: pytest.MonkeyPatch, fake_yaml_config) -> None:
         """Task configs have required fields."""
-        monkeypatch.setattr("src.base_crew.load_yaml", lambda p: fake_yaml_config)
+        from unittest.mock import MagicMock
 
+        from src.base_crew import BaseCrew
         from src.qa_crew import QACrew
+
+        monkeypatch.setattr(
+            BaseCrew, "_load_yaml", lambda self, p: fake_yaml_config
+        )
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
         crew = QACrew()
         task_cfg = crew.tasks_config.get("test_task", {})

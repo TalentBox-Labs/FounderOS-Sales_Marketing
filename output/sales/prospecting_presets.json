@@ -1,0 +1,18 @@
+[
+  {
+    "key": "workcrew:sales:smb default",
+    "name": "SMB Default",
+    "brand": "workcrew",
+    "team": "sales",
+    "target_count": 40,
+    "min_score": 25,
+    "statuses": [
+      "lead",
+      "prospect"
+    ],
+    "allow_scraper": true,
+    "allow_mcp": false,
+    "sequence_id": null,
+    "updated_at": "2026-08-08T09:48:46.335340+00:00"
+  }
+]
