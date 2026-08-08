@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/prospecting", tags=["prospecting"])
 
 
+def _parse_uuid(value: str, *, field: str) -> uuid.UUID:
+    """Parse a UUID string for DB filters; raise 400 on invalid input."""
+    try:
+        return uuid.UUID(str(value).strip())
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"invalid {field}: must be a UUID"
+        ) from exc
+
+
 class ProspectingRequest(BaseModel):
     """Lead prospecting parameters."""
 
@@ -218,16 +228,17 @@ def prospecting_execute(
             selected = plan.get("selected_existing_linkedin_contacts", [])
             ids = [x.get("id") for x in selected if x.get("id")][: req.max_import]
             if ids:
+                seq_id = _parse_uuid(req.sequence_id, field="sequence_id")
                 sequence = (
                     db.query(OutreachSequence)
-                    .filter(OutreachSequence.id == req.sequence_id)
+                    .filter(OutreachSequence.id == seq_id)
                     .first()
                 )
                 if sequence:
                     scheduled = []
                     for cid in ids:
                         activity = Activity(
-                            contact_id=uuid.UUID(cid),
+                            contact_id=_parse_uuid(str(cid), field="contact_id"),
                             activity_type=_map_activity_type("", sequence.channel),
                             subject=f"{sequence.name} - imported",
                             body="Imported from prospecting plan",
@@ -320,9 +331,10 @@ def prospecting_import(
     try:
         if not req.contact_ids:
             raise HTTPException(status_code=400, detail="contact_ids is required")
+        seq_id = _parse_uuid(req.sequence_id, field="sequence_id")
         sequence = (
             db.query(OutreachSequence)
-            .filter(OutreachSequence.id == req.sequence_id)
+            .filter(OutreachSequence.id == seq_id)
             .first()
         )
         if not sequence:
@@ -331,7 +343,7 @@ def prospecting_import(
         scheduled = []
         for cid in req.contact_ids:
             activity = Activity(
-                contact_id=uuid.UUID(cid),
+                contact_id=_parse_uuid(str(cid), field="contact_id"),
                 activity_type=_map_activity_type("", sequence.channel),
                 subject=f"{sequence.name} - imported",
                 body="Imported from prospecting",
