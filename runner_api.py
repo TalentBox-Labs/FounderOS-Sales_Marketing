@@ -23,7 +23,8 @@ API routes:
   POST /switch-week   — Apply week profile
   POST /go-live       — Record live URL
   POST /run-pipeline  — Legacy alias
-  GET  /health        — Health check
+  GET  /health        — Liveness ({status, service})
+  GET  /health/debug  — Diagnostics (project_root, python)
 
 Marketing routes:
   GET  /marketing          — Marketing agent UI
@@ -1459,15 +1460,6 @@ def api_analytics(period: str = "monthly") -> dict:
     return _analytics_data(period)
 
 
-# ── Health ───────────────────────────────────────────────────────────────────
-
-@app.get("/health")
-def health() -> dict:
-    return {
-        "status": "ok",
-        "project_root": str(PROJECT_ROOT),
-        "python": sys.executable,
-    }
-
-
+# Canonical GET /health is owned by runner_api_routers.ui.health
+# ({status, service}). Diagnostics live at GET /health/debug on the UI router.
 # /run-pipeline endpoint has been moved to runner_api_routers/pipeline.py

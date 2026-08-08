@@ -28,7 +28,10 @@ def _get_runner_api_key() -> str:
 async def _verify_api_key(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str | None:
-    """Verify Bearer token using timing-safe comparison. Returns None if auth disabled."""
+    """Verify Bearer token using timing-safe comparison. Returns None if auth disabled.
+
+    Invalid credentials raise ``HTTPException(401)`` (never a bare ValueError).
+    """
     key = _get_runner_api_key()
     if not key:
         return None
@@ -47,19 +50,20 @@ async def _verify_api_key(
 
 
 def _validate_week_id(week_id: str) -> None:
-    """Validate week_id against tracker to prevent path traversal attacks."""
-    if not week_id or "/" in week_id or "\\" in week_id or week_id.startswith("."):
-        raise HTTPException(status_code=400, detail="Invalid week ID format")
-    # Load tracker to get valid weeks
-    tracker = PROJECT_ROOT / "tracker.csv"
-    if not tracker.is_file():
-        raise HTTPException(status_code=500, detail="Tracker not found")
-    import csv
+    """Validate week_id format to prevent path traversal / injection.
 
-    with tracker.open(encoding="utf-8", newline="") as f:
-        valid_weeks = {row["content_id"] for row in csv.DictReader(f)}
-    if week_id not in valid_weeks:
-        raise HTTPException(status_code=404, detail="Week not found")
+    Raises ``ValueError`` on unsafe format. Membership in the content tracker is
+    a separate concern (callers check ``_read_tracker()``).
+    """
+    if not week_id or not isinstance(week_id, str):
+        raise ValueError("Invalid week ID format")
+    if (
+        "/" in week_id
+        or "\\" in week_id
+        or week_id.startswith(".")
+        or any(ch in week_id for ch in ";|&`$<>(){}[]!")
+    ):
+        raise ValueError("Invalid week ID format")
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -115,8 +119,14 @@ def _last_run_summary() -> dict[str, Any] | None:
 
 
 def _week_artifacts(week_id: str) -> dict[str, bool]:
-    """Check which artifacts exist for a week."""
-    _validate_week_id(week_id)
+    """Check which artifacts exist for a week.
+
+    Path-safety only — does not 404 on unknown weeks. Calendar enrichment calls
+    this for every tracker row. Tracker membership must be enforced by callers
+    (e.g. ``page_week_detail`` / ``page_file_view`` via ``_read_tracker()``).
+    """
+    if not week_id or "/" in week_id or "\\" in week_id or week_id.startswith("."):
+        return {}
     base = PROJECT_ROOT / "input" / week_id
     pipeline_steps = [
         ("Brief", "01_Content_Brief.md", "brief"),
