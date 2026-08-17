@@ -155,6 +155,29 @@ def stamp_agent_action_log_organization(
         db.commit()
 
 
+def get_approval_for_tenant(
+    db: Session, organization_id: str, request_id: str
+) -> Any:
+    """Resolve ApprovalRequest only when tenant-bound via payload or contact."""
+    from revenue_os.models.approvals import ApprovalRequest
+
+    row = db.get(ApprovalRequest, request_id.strip())
+    if row is None:
+        raise TenantAccessError("ApprovalRequest not in tenant scope")
+
+    payload = row.payload or {}
+    org_in_payload = payload.get("organization_id")
+    if org_in_payload is not None:
+        if not _org_match(org_in_payload, organization_id):
+            raise TenantAccessError("ApprovalRequest not in tenant scope")
+    elif row.target_type == "contact" and row.target_id:
+        get_contact_for_tenant(db, organization_id, str(row.target_id))
+    else:
+        raise TenantAccessError("ApprovalRequest not in tenant scope")
+
+    return row
+
+
 def stamp_contact_organization_if_missing(
     db: Session, contact_id: str, organization_id: str
 ) -> None:

@@ -23,9 +23,19 @@ def log_agent_action(
     target_id: str | None = None,
     status: str = "completed",
     detail: dict[str, Any] | None = None,
+    organization_id: str | None = None,
 ) -> None:
     """Persist one audit-trail entry. Never raises."""
     try:
+        import uuid as uuid_lib
+
+        org_uuid = None
+        if organization_id:
+            try:
+                org_uuid = uuid_lib.UUID(str(organization_id))
+            except ValueError:
+                org_uuid = None
+
         db = SessionLocal()
         try:
             db.add(AgentActionLog(
@@ -35,6 +45,7 @@ def log_agent_action(
                 target_id=target_id,
                 status=status,
                 detail=detail,
+                organization_id=org_uuid,
             ))
             db.commit()
         finally:
