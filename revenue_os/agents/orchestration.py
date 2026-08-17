@@ -19,6 +19,10 @@ REV_ORCH_M1_AGENT_STEP = "rev_orch_m1_pipeline"
 REV_ORCH_M2_WORKFLOW_KEY = "rev_orch_follow_up_to_outreach"
 REV_ORCH_M2_AGENT_STEP = "rev_orch_m2_pipeline"
 
+# REV-ORCH M3 — governed inbound reply handling
+REV_ORCH_M3_WORKFLOW_KEY = "rev_orch_inbound_reply_handling"
+REV_ORCH_M3_AGENT_STEP = "rev_orch_m3_pipeline"
+
 
 class OrchestrationStrategy(Enum):
     """Agent orchestration strategies."""
@@ -368,6 +372,23 @@ class WorkflowOrchestrator:
                 trigger_condition="api:follow-up-propose",
             )
 
+        if REV_ORCH_M3_AGENT_STEP not in cls._revenue_step_handlers:
+            cls.register_revenue_step_handler(
+                REV_ORCH_M3_AGENT_STEP, cls._handle_m3_inbound_reply
+            )
+
+        if not any(w.name == REV_ORCH_M3_WORKFLOW_KEY for w in cls._workflows.values()):
+            cls.create_workflow(
+                name=REV_ORCH_M3_WORKFLOW_KEY,
+                description=(
+                    "M3: inbound reply → ReplyAnalysisWorker → deterministic routing "
+                    "(recommendation only)"
+                ),
+                strategy=OrchestrationStrategy.SEQUENTIAL,
+                agents=[REV_ORCH_M3_AGENT_STEP],
+                trigger_condition="webhook:email.replied",
+            )
+
     @classmethod
     def _handle_m1_research_to_outreach(cls, context: dict[str, Any]) -> dict[str, Any]:
         """Dispatch M1 pipeline to RevenueOrchestrationService (subordinate implementation)."""
@@ -435,6 +456,41 @@ class WorkflowOrchestrator:
             }
 
     @classmethod
+    def _handle_m3_inbound_reply(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch M3 inbound-reply pipeline to RevenueOrchestrationService."""
+        from revenue_os.services.revenue_orchestration_service import (
+            RevenueOrchestrationError,
+            run_inbound_reply_handling,
+        )
+
+        db = context["db"]
+        tenant = context["tenant"]
+        contact_id = context["contact_id"]
+        execution_id = context.get("execution_id")
+        try:
+            result = run_inbound_reply_handling(
+                db,
+                tenant,
+                contact_id,
+                activity_id=context.get("activity_id"),
+                message_id=context.get("message_id"),
+                workflow_run_id=str(execution_id) if execution_id else None,
+            )
+            return {
+                "ok": True,
+                "result": result,
+                "decision": result.get("routing", {}).get("recommended_next_action", "assessed"),
+                "confidence": 1.0,
+            }
+        except RevenueOrchestrationError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "decision": "failed",
+                "confidence": 0.0,
+            }
+
+    @classmethod
     def execute_revenue_workflow(
         cls,
         workflow_key: str,
@@ -442,6 +498,7 @@ class WorkflowOrchestrator:
         db: Any,
         tenant: Any,
         contact_id: str,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Canonical revenue workflow dispatch — routes to registered implementation steps."""
         from revenue_os.services.revenue_orchestration_service import RevenueOrchestrationError
@@ -454,9 +511,12 @@ class WorkflowOrchestrator:
         if workflow is None:
             raise ValueError(f"Unknown revenue workflow: {workflow_key}")
 
+        context: dict[str, Any] = {"db": db, "tenant": tenant, "contact_id": contact_id}
+        if extra:
+            context.update(extra)
         execution = cls.execute_workflow(
             workflow.id,
-            context={"db": db, "tenant": tenant, "contact_id": contact_id},
+            context=context,
         )
         if execution is None:
             raise RuntimeError("Workflow execution failed to start")

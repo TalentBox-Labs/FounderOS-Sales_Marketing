@@ -18,6 +18,7 @@ from revenue_os.services import ai_service
 WORKER_RESEARCH = "research_worker"
 WORKER_PERSONALIZATION = "personalization_worker"
 WORKER_FOLLOWUP = "followup_worker"
+WORKER_REPLY_ANALYSIS = "reply_analysis_worker"
 
 
 def _build_contact_context(db: Session, contact: Contact) -> dict[str, Any]:
@@ -317,4 +318,50 @@ def run_followup_worker(
             "eligibility_state": eligibility.get("state"),
             "follow_ups_sent": eligibility.get("follow_ups_sent"),
         },
+    }
+
+
+def run_reply_analysis_worker(
+    db: Session,
+    contact: Contact,
+    organization_id: str,
+    *,
+    reply_body: str,
+    activity_id: str | None = None,
+) -> dict[str, Any]:
+    """ReplyAnalysisWorker — classify inbound reply. No CRM mutation or send."""
+    ctx = _build_contact_context(db, contact)
+    summary = _context_summary(ctx)
+    analysis = ai_service.analyze_inbound_reply(
+        ctx["name"],
+        ctx["company_name"] or "their company",
+        reply_body or "",
+        context=summary,
+    )
+    if not analysis.get("ok"):
+        return {
+            "ok": False,
+            "reason": analysis.get("reason", "Reply analysis failed"),
+            "worker": WORKER_REPLY_ANALYSIS,
+            "reply_type": "UNKNOWN",
+            "confidence": 0.0,
+            "contact_id": str(contact.id),
+            "organization_id": organization_id,
+        }
+
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": organization_id,
+        "worker": WORKER_REPLY_ANALYSIS,
+        "worker_classification": "SPECIALIZED_AI_WORKER",
+        "activity_id": activity_id,
+        "reply_type": analysis["reply_type"],
+        "confidence": analysis["confidence"],
+        "summary": analysis.get("summary", ""),
+        "objection_category": analysis.get("objection_category"),
+        "meeting_interest": bool(analysis.get("meeting_interest")),
+        "recommended_next_action": analysis.get("recommended_next_action"),
+        "qualification_recommendation": analysis.get("qualification_recommendation"),
+        "source_refs": ["inbound_activity", "crm_context"],
     }

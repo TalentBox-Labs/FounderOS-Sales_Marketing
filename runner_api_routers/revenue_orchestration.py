@@ -17,6 +17,7 @@ from revenue_os.agents.orchestration import (
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
     inspect_follow_up_eligibility,
+    inspect_latest_reply_assessment,
 )
 from revenue_os.services.tenant_resolution import require_tenant_context
 from runner_api_routers.utils import _verify_api_key
@@ -102,5 +103,22 @@ def follow_up_propose(
     except Exception as exc:
         logger.exception("M2 follow-up orchestration failed for contact %s", contact_id)
         raise HTTPException(status_code=500, detail="Orchestration failed") from exc
+    finally:
+        db.close()
+
+
+@router.get("/contacts/{contact_id}/reply/latest-assessment")
+def latest_reply_assessment(
+    contact_id: str,
+    http_request: Request,
+    __: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """M3: inspect last inbound-reply assessment (no AI, no mutation)."""
+    tenant = require_tenant_context(http_request)
+    db = SessionLocal()
+    try:
+        return inspect_latest_reply_assessment(db, tenant, contact_id)
+    except RevenueOrchestrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         db.close()

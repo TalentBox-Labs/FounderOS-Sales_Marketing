@@ -6,6 +6,7 @@ never from payload contact_id/deal_id. Object IDs validated within org scope.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import uuid as uuid_lib
@@ -15,12 +16,14 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException
 
 from revenue_os.automation.events import Event, EventBus, EventPriority, EventType
 from revenue_os.database import SessionLocal
+from revenue_os.models.activity import Activity, ActivityType, EmailActivity
 from revenue_os.models.contact import Contact
 from revenue_os.services.activity_log import log_agent_action
 from revenue_os.services.integration_tenant_resolution import (
     build_integration_tenant_context,
     resolve_n8n_organization_id,
 )
+from revenue_os.services.revenue_orchestration_service import wake_inbound_reply_handling
 from revenue_os.services.tenant_mutation_guard import scoped_contact
 from revenue_os.services.tenant_scoped_access import stamp_agent_action_log_organization
 from runner_api_routers.utils import _get_runner_api_key
@@ -35,7 +38,10 @@ INBOUND_CATALOG: dict[str, str] = {
     "email.delivered": "Logged to audit trail",
     "email.opened": "Logged; republished as outreach signal",
     "email.clicked": "Logged; republished as outreach signal",
-    "email.replied": f"Contact lead_score +{REPLY_SCORE_BOOST}; lead_scored event emitted",
+    "email.replied": (
+        f"Contact lead_score +{REPLY_SCORE_BOOST}; inbound Activity recorded; "
+        "M3 reply analysis via WorkflowOrchestrator when tenant binding present"
+    ),
     "email.bounced": "Logged to audit trail",
     "meeting.booked": "Recommendation logged; human gate required for Contact.status qualify",
     "enrichment.completed": "contact_enriched event emitted with payload",
@@ -96,6 +102,47 @@ def _resolve_scoped_contact(
     return _legacy_load_contact(db, contact_id)
 
 
+def _reply_message_id(payload: dict[str, Any], contact_id: str) -> str:
+    explicit = str(
+        payload.get("message_id") or payload.get("provider_message_id") or ""
+    ).strip()
+    if explicit:
+        return explicit[:255]
+    body = str(payload.get("body") or payload.get("snippet") or "")
+    digest = hashlib.sha256(f"{contact_id}:{body}".encode()).hexdigest()[:32]
+    return f"rev-orch-m3:{digest}"
+
+
+def _existing_reply_activity(db, contact_id, message_id: str) -> Activity | None:
+    rows = (
+        db.query(EmailActivity)
+        .filter(EmailActivity.message_id == message_id)
+        .all()
+    )
+    for row in rows:
+        act = db.get(Activity, row.activity_id)
+        if act is not None and act.contact_id == contact_id:
+            return act
+    return None
+
+
+def _resolve_contact_by_email(db, organization_id: str, email: str) -> Contact | None:
+    if not email or not organization_id:
+        return None
+    try:
+        org_uuid = uuid_lib.UUID(str(organization_id))
+    except (ValueError, TypeError):
+        return None
+    matches = (
+        db.query(Contact)
+        .filter(Contact.organization_id == org_uuid, Contact.email == email.strip())
+        .all()
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def _publish(event_type: EventType, entity_id: str, entity_type: str, data: dict[str, Any]) -> None:
     EventBus.publish(
         Event(
@@ -150,39 +197,81 @@ def receive_n8n_event(
 
     db = SessionLocal()
     try:
-        if event_name == "email.replied" and contact_id:
-            contact = _resolve_scoped_contact(
-                db, contact_id, organization_id=organization_id, x_n8n_secret=x_n8n_secret
-            )
-            if contact is not None:
-                old_score = contact.lead_score or 0
-                contact.lead_score = old_score + REPLY_SCORE_BOOST
-                from revenue_os.models.activity import Activity, ActivityType
+        if event_name == "email.replied":
+            email_hint = str(payload.get("email") or payload.get("from") or "")
+            if not contact_id and organization_id and email_hint:
+                by_email = _resolve_contact_by_email(db, organization_id, email_hint)
+                if by_email is not None:
+                    contact_id = str(by_email.id)
 
-                db.add(
-                    Activity(
-                        contact_id=contact.id,
-                        activity_type=ActivityType.EMAIL_REPLY,
-                        subject="Inbound email reply",
-                        body=str(payload.get("body") or payload.get("snippet") or "")[:2000],
-                        direction="inbound",
-                        status="completed",
-                    )
+            if contact_id:
+                contact = _resolve_scoped_contact(
+                    db, contact_id, organization_id=organization_id, x_n8n_secret=x_n8n_secret
                 )
-                db.commit()
-                actions.append(f"lead_score {old_score} -> {contact.lead_score}")
-                _publish(
-                    EventType.LEAD_SCORED,
-                    contact_id,
-                    "contact",
-                    {
-                        "score": contact.lead_score,
-                        "old_score": old_score,
-                        "reason": "email_reply",
-                    },
-                )
+                if contact is not None:
+                    message_id = _reply_message_id(payload, str(contact.id))
+                    existing = _existing_reply_activity(db, contact.id, message_id)
+                    if existing is not None:
+                        actions.append("duplicate reply ignored")
+                        activity = existing
+                    else:
+                        old_score = contact.lead_score or 0
+                        contact.lead_score = old_score + REPLY_SCORE_BOOST
+                        activity = Activity(
+                            contact_id=contact.id,
+                            activity_type=ActivityType.EMAIL_REPLY,
+                            subject="Inbound email reply",
+                            body=str(payload.get("body") or payload.get("snippet") or "")[:2000],
+                            direction="inbound",
+                            status="completed",
+                        )
+                        db.add(activity)
+                        db.flush()
+                        db.add(
+                            EmailActivity(
+                                activity_id=activity.id,
+                                message_id=message_id,
+                                from_address=email_hint or None,
+                            )
+                        )
+                        db.commit()
+                        actions.append(f"lead_score {old_score} -> {contact.lead_score}")
+                        _publish(
+                            EventType.LEAD_SCORED,
+                            contact_id,
+                            "contact",
+                            {
+                                "score": contact.lead_score,
+                                "old_score": old_score,
+                                "reason": "email_reply",
+                            },
+                        )
+
+                    if organization_id is not None:
+                        m3 = wake_inbound_reply_handling(
+                            db,
+                            organization_id,
+                            str(contact.id),
+                            activity_id=str(activity.id),
+                            message_id=message_id,
+                        )
+                        if m3.get("ok"):
+                            actions.append(
+                                "m3_reply:"
+                                + str(
+                                    (m3.get("routing") or {}).get(
+                                        "recommended_next_action", "assessed"
+                                    )
+                                )
+                            )
+                        else:
+                            actions.append("m3_reply_review")
+                elif organization_id is not None:
+                    raise HTTPException(status_code=404, detail="Contact not found")
+                else:
+                    actions.append("contact not found; logged only")
             elif organization_id is not None:
-                raise HTTPException(status_code=404, detail="Contact not found")
+                actions.append("unmatched inbound reply; no CRM mutation")
             else:
                 actions.append("contact not found; logged only")
 

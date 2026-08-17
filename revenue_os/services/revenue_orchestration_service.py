@@ -18,11 +18,14 @@ from revenue_os.services.follow_up_eligibility import evaluate_follow_up_eligibi
 from revenue_os.services.revenue_workers import (
     WORKER_FOLLOWUP,
     WORKER_PERSONALIZATION,
+    WORKER_REPLY_ANALYSIS,
     WORKER_RESEARCH,
     run_followup_worker,
     run_personalization_worker,
+    run_reply_analysis_worker,
     run_research_worker,
 )
+from revenue_os.services.reply_routing import merge_opt_out_tag, route_reply_assessment
 from revenue_os.services.tenant_context import TenantContext
 from revenue_os.services.tenant_scoped_access import (
     TenantAccessError,
@@ -315,6 +318,212 @@ def _run_follow_up_proposal(
         "approval_id": approval["id"],
         "approval_status": approval.get("status", "pending"),
     }
+
+
+def inspect_latest_reply_assessment(
+    db: Session,
+    tenant: TenantContext,
+    contact_id: str,
+) -> dict[str, Any]:
+    """Read last M3 reply assessment from AgentActionLog. No AI, no mutation."""
+    from revenue_os.models.automation_state import AgentActionLog
+
+    org_id = tenant.organization_id
+    try:
+        contact = get_contact_for_tenant(db, org_id, contact_id)
+    except TenantAccessError as exc:
+        raise RevenueOrchestrationError("Contact not in tenant scope") from exc
+
+    log = (
+        db.query(AgentActionLog)
+        .filter(
+            AgentActionLog.organization_id == uuid.UUID(str(org_id)),
+            AgentActionLog.target_id == str(contact.id),
+            AgentActionLog.action_type == "rev_orch_reply_assessment",
+        )
+        .order_by(AgentActionLog.created_at.desc())
+        .first()
+    )
+    if log is None:
+        return {
+            "ok": True,
+            "contact_id": str(contact.id),
+            "organization_id": org_id,
+            "assessment": None,
+        }
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": org_id,
+        "assessment": log.detail or {},
+    }
+
+
+def run_inbound_reply_handling(
+    db: Session,
+    tenant: TenantContext,
+    contact_id: str,
+    *,
+    activity_id: str | None = None,
+    message_id: str | None = None,
+    workflow_run_id: str | None = None,
+) -> dict[str, Any]:
+    """M3: inbound Activity → ReplyAnalysisWorker → deterministic routing. No CRM authority mutation."""
+    from revenue_os.models.activity import Activity
+    from revenue_os.models.automation_state import AgentActionLog
+
+    run_id = workflow_run_id or str(uuid.uuid4())
+    org_id = tenant.organization_id
+
+    try:
+        contact = get_contact_for_tenant(db, org_id, contact_id)
+    except TenantAccessError as exc:
+        raise RevenueOrchestrationError("Contact not in tenant scope") from exc
+
+    if message_id:
+        prior = (
+            db.query(AgentActionLog)
+            .filter(
+                AgentActionLog.organization_id == uuid.UUID(str(org_id)),
+                AgentActionLog.target_id == str(contact.id),
+                AgentActionLog.action_type == "rev_orch_reply_assessment",
+            )
+            .order_by(AgentActionLog.created_at.desc())
+            .all()
+        )
+        for row in prior:
+            detail = row.detail or {}
+            if detail.get("message_id") == message_id:
+                return {
+                    "ok": True,
+                    "deduplicated": True,
+                    "state": "REPLY_ASSESSED",
+                    "workflow_run_id": detail.get("workflow_run_id", run_id),
+                    "contact_id": str(contact.id),
+                    "organization_id": org_id,
+                    "activity_id": detail.get("activity_id"),
+                    "message_id": message_id,
+                    "assessment": detail.get("assessment"),
+                    "routing": detail.get("routing"),
+                }
+
+    activity = None
+    if activity_id:
+        try:
+            activity = db.get(Activity, uuid.UUID(str(activity_id)))
+        except (ValueError, TypeError):
+            activity = None
+        if activity is not None and str(activity.contact_id) != str(contact.id):
+            raise RevenueOrchestrationError("Activity not in tenant contact scope")
+
+    reply_body = (activity.body if activity is not None else "") or ""
+    status_before = contact.status.value if contact.status else None
+
+    assessment = run_reply_analysis_worker(
+        db,
+        contact,
+        org_id,
+        reply_body=reply_body,
+        activity_id=str(activity.id) if activity is not None else None,
+    )
+    routing = route_reply_assessment(assessment)
+
+    if routing.get("apply_opt_out_tag"):
+        contact.tags = merge_opt_out_tag(contact.tags)
+        db.add(contact)
+        db.commit()
+
+    log_agent_action(
+        actor=ORCHESTRATOR_ACTOR,
+        action_type="rev_orch_reply_assessment",
+        target_type="contact",
+        target_id=str(contact.id),
+        organization_id=org_id,
+        status="completed" if assessment.get("ok") else "failed",
+        detail={
+            "workflow_run_id": run_id,
+            "activity_id": str(activity.id) if activity is not None else None,
+            "message_id": message_id,
+            "assessment": {
+                "ok": assessment.get("ok"),
+                "reply_type": assessment.get("reply_type"),
+                "confidence": assessment.get("confidence"),
+                "summary": assessment.get("summary"),
+                "objection_category": assessment.get("objection_category"),
+                "meeting_interest": assessment.get("meeting_interest"),
+                "worker": WORKER_REPLY_ANALYSIS,
+            },
+            "routing": routing,
+            "contact_status_unchanged": True,
+            "status_before": status_before,
+        },
+    )
+
+    log_agent_action(
+        actor=WORKER_REPLY_ANALYSIS,
+        action_type="worker_reply_analysis",
+        target_type="contact",
+        target_id=str(contact.id),
+        organization_id=org_id,
+        status="completed" if assessment.get("ok") else "failed",
+        detail={
+            "workflow_run_id": run_id,
+            "reply_type": routing.get("reply_type"),
+            "recommended_next_action": routing.get("recommended_next_action"),
+        },
+    )
+
+    return {
+        "ok": True,
+        "deduplicated": False,
+        "state": "REPLY_ASSESSED" if assessment.get("ok") else "REPLY_HUMAN_REVIEW",
+        "workflow_run_id": run_id,
+        "contact_id": str(contact.id),
+        "organization_id": org_id,
+        "activity_id": str(activity.id) if activity is not None else None,
+        "message_id": message_id,
+        "assessment": {
+            "reply_type": routing.get("reply_type"),
+            "confidence": routing.get("confidence"),
+            "summary": assessment.get("summary"),
+            "objection_category": routing.get("objection_category")
+            or assessment.get("objection_category"),
+            "meeting_interest": routing.get("meeting_interest"),
+        },
+        "routing": routing,
+        "contact_status": contact.status.value if contact.status else None,
+        "contact_status_changed": False,
+    }
+
+
+def wake_inbound_reply_handling(
+    db: Session,
+    organization_id: str,
+    contact_id: str,
+    *,
+    activity_id: str | None = None,
+    message_id: str | None = None,
+) -> dict[str, Any]:
+    """Webhook/scheduler wake — tenant from integration binding, dispatch via orchestrator."""
+    from revenue_os.agents.orchestration import REV_ORCH_M3_WORKFLOW_KEY, WorkflowOrchestrator
+    from revenue_os.services.integration_tenant_resolution import build_integration_tenant_context
+
+    try:
+        get_contact_for_tenant(db, organization_id, contact_id)
+    except TenantAccessError:
+        return {"ok": False, "reason": "Contact not in tenant scope"}
+
+    tenant = build_integration_tenant_context(organization_id)
+    try:
+        return WorkflowOrchestrator.execute_revenue_workflow(
+            REV_ORCH_M3_WORKFLOW_KEY,
+            db=db,
+            tenant=tenant,
+            contact_id=contact_id,
+            extra={"activity_id": activity_id, "message_id": message_id},
+        )
+    except RevenueOrchestrationError as exc:
+        return {"ok": False, "reason": str(exc)}
 
 
 def _log_note(db: Session, contact_id: uuid.UUID, subject: str, body: str) -> None:
