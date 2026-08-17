@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from revenue_os.models.activity import Activity, ActivityType
 from revenue_os.models.contact import Contact, ContactSource, ContactStatus
+from revenue_os.services.mutation_authority import require_human_mutation_authority
 
 logger = logging.getLogger(__name__)
 
@@ -134,42 +135,82 @@ class LeadScorer:
         return 0  # Cold
 
     @classmethod
-    def update_contact_status(cls, contact: Contact, new_score: int) -> str:
-        """
-        Update contact status based on score.
-
-        Returns: new status value.
-        """
-        old_status = contact.status
-
-        if new_score >= 70:
-            contact.status = ContactStatus.QUALIFIED
-        elif new_score >= 40:
-            contact.status = ContactStatus.PROSPECT
-        else:
-            contact.status = ContactStatus.LEAD
-
-        if old_status != contact.status:
-            logger.info(
-                f"Contact status updated",
-                extra={
-                    "contact_id": str(contact.id),
-                    "score": new_score,
-                    "old_status": old_status,
-                    "new_status": contact.status,
-                },
-            )
-
-        return contact.status.value
+    def suggest_status_from_score(cls, score: int) -> ContactStatus:
+        """Recommend a contact status from score — does not mutate state."""
+        if score >= 70:
+            return ContactStatus.QUALIFIED
+        if score >= 40:
+            return ContactStatus.PROSPECT
+        return ContactStatus.LEAD
 
 
-def score_contact(db: Session, contact: Contact, company_context: dict | None = None) -> int:
-    """Score a single contact and update status. Returns new score."""
-    score = LeadScorer.calculate_score(contact, company_context)
-    contact.lead_score = score
-    LeadScorer.update_contact_status(contact, score)
+def apply_contact_status_update(
+    db: Session,
+    contact: Contact,
+    new_status: ContactStatus,
+    *,
+    requested_by: str,
+) -> dict[str, Any]:
+    """Human-gated Contact.status update on canonical Revenue Contact model.
+
+    Does not emit CommercialOutcome or call external integrations.
+    """
+    require_human_mutation_authority(requested_by, action="Contact.status update")
+
+    old_status = contact.status
+    if old_status == new_status:
+        return {
+            "changed": False,
+            "old_status": old_status.value,
+            "new_status": new_status.value,
+            "lead_score": contact.lead_score or 0,
+        }
+
+    contact.status = new_status
     db.add(contact)
-    return score
+    db.commit()
+
+    logger.info(
+        "Contact status updated (human gate)",
+        extra={
+            "contact_id": str(contact.id),
+            "old_status": old_status.value,
+            "new_status": new_status.value,
+            "lead_score": contact.lead_score,
+        },
+    )
+
+    return {
+        "changed": True,
+        "old_status": old_status.value,
+        "new_status": new_status.value,
+        "lead_score": contact.lead_score or 0,
+    }
+
+
+def score_contact(
+    db: Session, contact: Contact, company_context: dict | None = None
+) -> dict[str, Any]:
+    """Score a single contact without mutating Contact.status. Returns score payload."""
+    old_score = contact.lead_score or 0
+    score = LeadScorer.calculate_score(contact, company_context)
+    suggested = LeadScorer.suggest_status_from_score(score)
+    contact.lead_score = score
+    db.add(contact)
+    return {
+        "score": score,
+        "old_score": old_score,
+        "suggested_status": suggested.value,
+        "status": contact.status.value,
+        "status_changed": False,
+    }
+
+
+def score_contact_value(
+    db: Session, contact: Contact, company_context: dict | None = None
+) -> int:
+    """Backward-compatible score helper returning numeric score only."""
+    return score_contact(db, contact, company_context)["score"]
 
 
 def score_contacts_batch(
@@ -181,17 +222,24 @@ def score_contacts_batch(
     results = {
         "total": len(contact_ids),
         "scored": 0,
-        "newly_qualified": 0,
+        "suggested_qualified": 0,
         "scores": {},
     }
 
     for contact in contacts:
-        old_status = contact.status
-        score = score_contact(db, contact, company_context)
-        results["scores"][str(contact.id)] = {"score": score, "status": contact.status.value}
+        payload = score_contact(db, contact, company_context)
+        results["scores"][str(contact.id)] = {
+            "score": payload["score"],
+            "status": payload["status"],
+            "suggested_status": payload["suggested_status"],
+            "status_changed": False,
+        }
 
-        if contact.status == ContactStatus.QUALIFIED and old_status != ContactStatus.QUALIFIED:
-            results["newly_qualified"] += 1
+        if (
+            payload["suggested_status"] == ContactStatus.QUALIFIED.value
+            and payload["status"] != ContactStatus.QUALIFIED.value
+        ):
+            results["suggested_qualified"] += 1
 
         results["scored"] += 1
 

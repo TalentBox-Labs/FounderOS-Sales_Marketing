@@ -19,15 +19,22 @@ _COMPANY_URL = "https://nubela.co/proxycurl/api/v2/linkedin/company"
 _TIMEOUT = 15
 
 
-def _api_key() -> str | None:
+def _api_key(organization_id: str | None = None) -> str | None:
     from revenue_os.services.credentials_vault import load_credentials
 
-    config = load_credentials("linkedin_enrichment")
+    if organization_id is not None:
+        config = load_credentials(
+            "linkedin_enrichment",
+            organization_id=organization_id,
+            allow_global_fallback=False,
+        )
+    else:
+        config = load_credentials("linkedin_enrichment", organization_id=None)
     return config.get("api_key") if config else None
 
 
-def _fetch(url: str, linkedin_url: str) -> dict[str, Any]:
-    api_key = _api_key()
+def _fetch(url: str, linkedin_url: str, organization_id: str | None = None) -> dict[str, Any]:
+    api_key = _api_key(organization_id)
     if not api_key:
         return {
             "ok": False, "configured": False,
@@ -51,14 +58,14 @@ def _fetch(url: str, linkedin_url: str) -> dict[str, Any]:
         return {"ok": False, "configured": True, "reason": str(e)}
 
 
-def enrich_person(linkedin_url: str) -> dict[str, Any]:
+def enrich_person(linkedin_url: str, *, organization_id: str | None = None) -> dict[str, Any]:
     """Fetch a person's LinkedIn profile. Never raises."""
-    return _fetch(_PERSON_URL, linkedin_url)
+    return _fetch(_PERSON_URL, linkedin_url, organization_id)
 
 
-def enrich_company(linkedin_url: str) -> dict[str, Any]:
+def enrich_company(linkedin_url: str, *, organization_id: str | None = None) -> dict[str, Any]:
     """Fetch a company's LinkedIn profile. Never raises."""
-    return _fetch(_COMPANY_URL, linkedin_url)
+    return _fetch(_COMPANY_URL, linkedin_url, organization_id)
 
 
 _INDUSTRY_MAP = {

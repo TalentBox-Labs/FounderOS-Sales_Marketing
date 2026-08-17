@@ -7,6 +7,7 @@ same source instead of duplicating logic.
 
 from __future__ import annotations
 
+import uuid as uuid_lib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,17 +38,49 @@ def _task_dict(a: Activity) -> dict[str, Any]:
     }
 
 
-def get_open_tasks(db: Session) -> tuple[list[dict], list[dict]]:
+def _org_uuid(organization_id: str | None) -> uuid_lib.UUID | None:
+    if organization_id is None:
+        return None
+    try:
+        return uuid_lib.UUID(str(organization_id))
+    except ValueError:
+        return None
+
+
+def get_open_tasks(db: Session, *, organization_id: str | None = None) -> tuple[list[dict], list[dict]]:
     """Return (overdue, upcoming) open tasks, both due-date ascending."""
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=UPCOMING_WINDOW_DAYS)
 
-    tasks = (
+    query = (
         db.query(Activity)
         .filter(Activity.activity_type == ActivityType.TASK)
         .filter(Activity.is_completed == 0)
-        .all()
     )
+    if organization_id is not None:
+        org_uuid = _org_uuid(organization_id)
+        if org_uuid is not None:
+            org_contacts = {
+                row[0]
+                for row in db.query(Contact.id)
+                .filter(Contact.organization_id == org_uuid)
+                .all()
+            }
+            org_deals = {
+                row[0]
+                for row in db.query(Deal.id).filter(Deal.organization_id == org_uuid).all()
+            }
+            tasks = query.all()
+            tasks = [
+                t
+                for t in tasks
+                if (t.contact_id in org_contacts if t.contact_id else False)
+                or (t.deal_id in org_deals if t.deal_id else False)
+            ]
+        else:
+            tasks = query.all()
+    else:
+        tasks = query.all()
 
     overdue, upcoming = [], []
     for t in tasks:
@@ -67,13 +100,21 @@ def get_open_tasks(db: Session) -> tuple[list[dict], list[dict]]:
     )
 
 
-def get_stalled_qualified_contacts(db: Session, stale_days: int = 14) -> list[dict[str, Any]]:
+def get_stalled_qualified_contacts(
+    db: Session, stale_days: int = 14, *, organization_id: str | None = None
+) -> list[dict[str, Any]]:
     """Qualified contacts with no open deal and no recent activity."""
     now = datetime.now(timezone.utc)
-    with_deals = {d.contact_id for d in db.query(Deal).all() if d.contact_id}
+    deal_q = db.query(Deal)
+    contact_q = db.query(Contact).filter(Contact.status == ContactStatus.QUALIFIED)
+    org_uuid = _org_uuid(organization_id)
+    if org_uuid is not None:
+        deal_q = deal_q.filter(Deal.organization_id == org_uuid)
+        contact_q = contact_q.filter(Contact.organization_id == org_uuid)
+    with_deals = {d.contact_id for d in deal_q.all() if d.contact_id}
 
     stalled = []
-    for c in db.query(Contact).filter(Contact.status == ContactStatus.QUALIFIED).all():
+    for c in contact_q.all():
         if c.id in with_deals:
             continue
         last_touch = _aware(c.last_contacted_at) or _aware(c.updated_at)
@@ -90,20 +131,25 @@ def get_stalled_qualified_contacts(db: Session, stale_days: int = 14) -> list[di
     return sorted(stalled, key=lambda c: c["days_stale"], reverse=True)
 
 
-def get_followups(db: Session | None = None) -> dict[str, Any]:
+def get_followups(
+    db: Session | None = None, *, organization_id: str | None = None
+) -> dict[str, Any]:
     """Aggregate every follow-up signal the platform can currently surface."""
-    from revenue_os.services.approvals import list_requests
     from revenue_os.services.deal_automation_service import get_deals_at_risk
 
     owns_session = db is None
     db = db or SessionLocal()
     try:
-        overdue_tasks, upcoming_tasks = get_open_tasks(db)
-        stalled_contacts = get_stalled_qualified_contacts(db)
-        at_risk_deals = get_deals_at_risk(db)
+        overdue_tasks, upcoming_tasks = get_open_tasks(db, organization_id=organization_id)
+        stalled_contacts = get_stalled_qualified_contacts(
+            db, organization_id=organization_id
+        )
+        at_risk_deals = get_deals_at_risk(db, organization_id=organization_id)
     finally:
         if owns_session:
             db.close()
+
+    from revenue_os.services.approvals import list_requests
 
     pending_approvals = list_requests(status="pending", limit=20)
 

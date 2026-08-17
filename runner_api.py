@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import csv
 import json
-import html
 import logging
 import os
 import subprocess
@@ -49,7 +48,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -77,10 +76,20 @@ from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
 from runner_api_routers.goals import router as goals_router
 from runner_api_routers.approvals import router as approvals_router
 from runner_api_routers.crm import router as crm_router
+from runner_api_routers.cockpit import router as cockpit_router
+from runner_api_routers.operator_flow import router as operator_flow_router
+from runner_api_routers.identity import router as identity_router
+from runner_api_routers.tenant import router as tenant_router
+from runner_api_routers.manual_demand import router as manual_demand_router
+from runner_api_routers.qualified_demand import router as qualified_demand_router
+from runner_api_routers.commercial_outcome import router as commercial_outcome_router
 from runner_api_routers.copilot import router as copilot_router
 from runner_api_routers.seo import router as seo_router
 from runner_api_routers.knowledge_base import router as knowledge_base_router
 from runner_api_routers.analytics_depth import router as analytics_depth_router
+from runner_api_routers.content_studio import router as content_studio_router
+from runner_api_routers.editorial import router as editorial_router
+from runner_api_routers.publishing import router as publishing_router
 from runner_api_routers.utils import (
     _apply_week_if_set,
     _get_runner_api_key,
@@ -212,6 +221,14 @@ app.add_middleware(
 # Add structured logging middleware
 app.add_middleware(StructuredLoggingMiddleware)
 
+
+@app.middleware("http")
+async def bind_identity_request_context(request: Request, call_next):
+    """Bind the current HTTP request for IdentityContext / trusted human resolution."""
+    from runner_api_routers.identity import bind_request_context
+
+    return await bind_request_context(request, call_next)
+
 # Setup templates
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -238,19 +255,54 @@ app.include_router(n8n_webhooks_router)
 app.include_router(goals_router)
 app.include_router(approvals_router)
 app.include_router(crm_router)
+app.include_router(qualified_demand_router)
+app.include_router(commercial_outcome_router)
 app.include_router(copilot_router)
 app.include_router(seo_router)
 app.include_router(knowledge_base_router)
 app.include_router(analytics_depth_router)
+app.include_router(content_studio_router)
+app.include_router(editorial_router)
+app.include_router(publishing_router)
+app.include_router(cockpit_router)
+app.include_router(operator_flow_router)
+app.include_router(manual_demand_router)
+app.include_router(identity_router)
+app.include_router(tenant_router)
 
 # Serve the built React CRM at /app when frontend/dist exists (production).
 # The SPA uses hash routing, so a single index.html works without fallbacks.
+# When dist is absent (local/dev without npm build), do NOT treat /app as a
+# broken active route — Jinja shell at / is the active Founder OS UI.
 _frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
 if _frontend_dist.is_dir():
     from fastapi.staticfiles import StaticFiles
 
     app.mount("/app", StaticFiles(directory=str(_frontend_dist), html=True), name="crm-frontend")
     logger.info("CRM frontend mounted at /app")
+else:
+    logger.info(
+        "CRM frontend not mounted (frontend/dist absent); active UI is Jinja shell at /"
+    )
+
+    @app.get("/app")
+    @app.get("/app/{path:path}")
+    def crm_frontend_not_built(path: str = "") -> JSONResponse:
+        """Explicit optional-frontend signal when React CRM dist is not present."""
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "service": "crm_frontend",
+                "status": "not_built",
+                "path": f"/app/{path}" if path else "/app",
+                "detail": (
+                    "React CRM is optional and not mounted because frontend/dist "
+                    "is absent. Active Founder OS UI is the Jinja shell at /."
+                ),
+                "build_hint": "npm --prefix frontend ci && npm --prefix frontend run build",
+            },
+        )
 
 # UI routes must be last to avoid conflicts with API routes
 app.include_router(ui_router)
@@ -279,6 +331,15 @@ def _migrate_missing_columns() -> None:
         ],
         "hermes_goals": [
             ("agent_name", "VARCHAR(64)"),
+        ],
+        "contacts": [
+            ("organization_id", "VARCHAR(36)"),
+        ],
+        "deals": [
+            ("organization_id", "VARCHAR(36)"),
+        ],
+        "agent_action_log": [
+            ("organization_id", "VARCHAR(36)"),
         ],
     }
 
@@ -320,6 +381,49 @@ def _migrate_missing_columns() -> None:
                             "activities.contact_id is NOT NULL on SQLite with existing rows — "
                             "deal-only activities will fail until manually migrated"
                         )
+
+        _migrate_connector_credentials_tenant(conn, inspector)
+
+
+def _migrate_connector_credentials_tenant(conn, inspector) -> None:  # noqa: ANN001
+    """Rebuild connector_credentials for org-scoped vault rows (S4)."""
+    import uuid
+
+    from sqlalchemy import text
+
+    if not inspector.has_table("connector_credentials"):
+        return
+
+    cols = {c["name"] for c in inspector.get_columns("connector_credentials")}
+    if "id" in cols and "organization_id" in cols:
+        return
+
+    rows = conn.execute(
+        text(
+            "SELECT connector_name, category, encrypted_config, updated_at "
+            "FROM connector_credentials"
+        )
+    ).fetchall()
+    conn.execute(text("DROP TABLE connector_credentials"))
+    from revenue_os.models.integrations import ConnectorCredentialRecord
+
+    ConnectorCredentialRecord.__table__.create(bind=conn)
+    for row in rows:
+        conn.execute(
+            text(
+                "INSERT INTO connector_credentials "
+                "(id, organization_id, connector_name, category, encrypted_config, updated_at) "
+                "VALUES (:id, NULL, :name, :cat, :enc, :upd)"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "name": row[0],
+                "cat": row[1],
+                "enc": row[2],
+                "upd": row[3],
+            },
+        )
+    logger.info("Migrated connector_credentials to org-scoped schema (%d legacy rows)", len(rows))
 
 
 @app.on_event("startup")
@@ -367,6 +471,20 @@ async def _startup_persistence_and_heartbeat() -> None:
         hydrate_all_connectors()
     except Exception as e:
         logger.error(f"Connector hydration failed: {e}")
+
+    try:
+        from runner_api_routers.identity import bootstrap_owner_if_needed
+
+        bootstrap_owner_if_needed()
+    except Exception as e:
+        logger.error(f"Identity bootstrap failed (continuing): {e}")
+
+    try:
+        from revenue_os.services.tenant_bootstrap import bootstrap_tenant_if_needed
+
+        bootstrap_tenant_if_needed()
+    except Exception as e:
+        logger.error(f"Tenant bootstrap failed (continuing): {e}")
 
 
 @app.on_event("shutdown")
@@ -724,7 +842,22 @@ def page_orchestration_run(
     run = load_orchestration_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="orchestration run not found")
-    return HTMLResponse(_render_orchestration_run_detail(run, run_id, _load_runtime().get("active_week", "—")))
+    # Normalize nested maps so Jinja template never KeyErrors.
+    results = run.get("results") if isinstance(run.get("results"), dict) else {}
+    if not isinstance(results.get("executions"), dict):
+        results = {**results, "executions": {}}
+    run = {**run, "results": results, "events": run.get("events") if isinstance(run.get("events"), list) else []}
+    return templates.TemplateResponse(
+        request=request,
+        name="orchestration_run.html",
+        context={
+            "request": request,
+            "active_page": "marketing",
+            "active_week": _load_runtime().get("active_week", "—"),
+            "run_id": run_id,
+            "run": run,
+        },
+    )
 
 
 class MarketingRequest(BaseModel):
@@ -1130,139 +1263,7 @@ def marketing_publish(
         return {"ok": False, "error": str(e)}
 
 
-def _render_orchestration_run_detail(run: dict[str, Any], run_id: str, active_week: str) -> str:
-    results = run.get("results", {}) if isinstance(run.get("results"), dict) else {}
-    executions = results.get("executions", {}) if isinstance(results.get("executions"), dict) else {}
-    events = run.get("events", []) if isinstance(run.get("events"), list) else []
-    audit = results.get("audit", {}) if isinstance(results.get("audit"), dict) else {}
 
-    def esc(value: Any) -> str:
-        if isinstance(value, (dict, list)):
-            return html.escape(json.dumps(value, indent=2, ensure_ascii=True))
-        return html.escape(str(value))
-
-    summary_rows = "".join(
-        f"<tr><th>{label}</th><td>{esc(value)}</td></tr>"
-        for label, value in [
-            ("Run ID", run.get("run_id", run_id)),
-            ("Timestamp", run.get("timestamp", "—")),
-            ("Backend", run.get("backend", "—")),
-            ("Brand", run.get("brand", "—")),
-            ("Keyword", run.get("keyword", "—")),
-            ("Topic", run.get("topic", "—")),
-            ("GEO", run.get("geo_target", "—")),
-            ("Funnel Stage", run.get("funnel_stage", "—")),
-            ("Audience", run.get("audience", "—")),
-            ("Audit File", audit.get("run_file", "—") if isinstance(audit, dict) else "—"),
-            ("Active Week", active_week),
-        ]
-    )
-
-    event_cards = "".join(
-        f"""
-        <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2)\">
-          <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
-            <span class=\"pill {'green' if event.get('ok') is True else 'red' if event.get('ok') is False else 'gray'}\">{html.escape(str(event.get('channel', 'unknown')))}</span>
-            <span style=\"font-size:12px;font-weight:500\">{html.escape(str(event.get('step', 'step')))}</span>
-            <span style=\"font-size:11px;color:var(--text-muted);margin-left:auto\">{html.escape(str(event.get('timestamp', '')))}</span>
-          </div>
-          <div style=\"font-size:12px;color:var(--text-muted);margin-bottom:8px\">Run: {html.escape(str(event.get('run_id', run_id)))}</div>
-          <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:240px;overflow-y:auto;\">{esc(event.get('payload', {}))}</pre>
-        </div>
-        """
-        for event in events
-    ) or '<p style="color:var(--text-muted)">No per-channel events were recorded for this run.</p>'
-
-    failure_cards: list[str] = []
-    for key, payload in executions.items():
-        if isinstance(payload, dict) and (
-            payload.get("error") or payload.get("ok") is False or payload.get("status") == "not_configured"
-        ):
-            failure_cards.append(
-                f"""
-                <div style=\"padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08)\">
-                  <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:6px\">
-                    <span class=\"pill red\">{html.escape(str(key))}</span>
-                    <span style=\"font-size:12px;font-weight:500\">Issue detected</span>
-                  </div>
-                  <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:180px;overflow-y:auto;\">{esc(payload)}</pre>
-                </div>
-                """
-            )
-    failures_html = "".join(failure_cards) or '<p style="color:var(--text-muted)">No failures were recorded in the execution payload.</p>'
-
-    return f"""<!doctype html>
-<html lang=\"en\">
-<head>
-    <meta charset=\"utf-8\">
-    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-    <title>Orchestration Run — {html.escape(run_id)} — WorkCrew CMS OS</title>
-    <style>
-        :root {{
-            --bg:#0b0f14; --surface:#11161d; --surface2:#151b23; --border:#26303d;
-            --text:#e6edf3; --text-muted:#94a3b8; --green:#16a34a; --red:#ef4444; --accent:#60a5fa;
-            --radius-sm:12px; --radius-md:18px;
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }}
-        body {{ margin:0; background:linear-gradient(180deg,#0b0f14,#10151b 70%); color:var(--text); }}
-        .page {{ padding:24px; max-width:1400px; margin:0 auto; }}
-        .topbar {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }}
-        .topbar-title {{ font-size:28px; font-weight:700; }}
-        .topbar-meta {{ color:var(--text-muted); margin-top:4px; }}
-        .card {{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:18px; margin-bottom:18px; }}
-        .card-title {{ display:flex; align-items:center; gap:8px; font-size:16px; font-weight:600; margin-bottom:14px; }}
-        .table-wrap {{ overflow:auto; }}
-        table {{ width:100%; border-collapse:collapse; }}
-        th, td {{ text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }}
-        th {{ width:180px; color:var(--text-muted); font-weight:600; }}
-        pre {{ margin:0; }}
-        .pill {{ padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid var(--border); background:var(--surface2); }}
-        .pill.green {{ color:#bbf7d0; border-color:rgba(22,163,74,.4); }}
-        .pill.red {{ color:#fecaca; border-color:rgba(239,68,68,.4); }}
-        .pill.gray {{ color:var(--text-muted); }}
-        .btn {{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:12px; border:1px solid var(--border); color:var(--text); text-decoration:none; background:var(--surface2); }}
-        .layout {{ display:grid; grid-template-columns:1.1fr .9fr; gap:24px; align-items:start; }}
-        @media (max-width: 980px) {{ .layout {{ grid-template-columns:1fr; }} .topbar {{ flex-direction:column; align-items:flex-start; gap:12px; }} }}
-    </style>
-</head>
-<body>
-    <div class=\"page\">
-        <div class=\"topbar\">
-            <div>
-                <div class=\"topbar-title\">Orchestration Run {html.escape(run_id[:8])}</div>
-                <div class=\"topbar-meta\">Per-channel execution audit and failure trace</div>
-            </div>
-            <div><a href=\"/marketing\" class=\"btn\">← Back to Marketing</a></div>
-        </div>
-
-        <div class=\"layout\">
-            <div>
-                <div class=\"card\">
-                    <div class=\"card-title\">🧾 Run Summary</div>
-                    <div class=\"table-wrap\"><table><tbody>{summary_rows}</tbody></table></div>
-                </div>
-
-                <div class=\"card\">
-                    <div class=\"card-title\">📦 Execution Payload</div>
-                    <pre style=\"background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-size:12px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;line-height:1.7;white-space:pre-wrap;max-height:60vh;overflow-y:auto;\">{esc(run.get('results', {}))}</pre>
-                </div>
-            </div>
-
-            <div>
-                <div class=\"card\">
-                    <div class=\"card-title\">🔎 Per-Channel Events</div>
-                    <div style=\"display:flex;flex-direction:column;gap:10px\">{event_cards}</div>
-                </div>
-
-                <div class=\"card\">
-                    <div class=\"card-title\">⚠️ Failures / Notes</div>
-                    <div style=\"display:flex;flex-direction:column;gap:10px\">{failures_html}</div>
-                </div>
-            </div>
-        </div>
-    </div>
-</body>
-</html>"""
 
 
 # ── Analytics ────────────────────────────────────────────────────────────────

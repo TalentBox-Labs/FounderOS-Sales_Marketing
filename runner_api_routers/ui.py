@@ -9,9 +9,28 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from runner_api_routers.content_studio import (
+    ARTIFACT_FILES,
+    build_content_detail,
+    build_content_list,
+)
+from runner_api_routers.editorial import (
+    build_editorial_item,
+    build_editorial_pending,
+)
+from runner_api_routers.marketing import (
+    _marketing_integration_status,
+    _marketing_runs,
+)
+from revenue_os.services.go_to_market_orchestrator import (
+    load_recent_orchestration_runs,
+)
+from revenue_os.services.orchestration_runtime import backend_status
+from src.tools import publishing_engine as pe
+from src.tools.seo_engine import analyze_technical_site
 from runner_api_routers.utils import (
     _last_run_summary,
     _load_runtime,
@@ -20,9 +39,20 @@ from runner_api_routers.utils import (
     _week_artifacts,
     PROJECT_ROOT,
 )
+from revenue_os.services.cockpit_read_model import build_cockpit_snapshot
+from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
+from revenue_os.services.tenant_resolution import resolve_tenant_context
+from revenue_os.services.qualified_demand_service import SOURCE_TO_CONTACT
+from runner_api_routers.cockpit import cockpit_operator_status
+from runner_api_routers.identity import founder_login_redirect, identity_from_request
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ui"])
+
+
+def _identity_template_dict(request: Request) -> dict[str, Any] | None:
+    ctx = identity_from_request(request)
+    return ctx.as_public_dict() if ctx is not None else None
 
 # Setup templates
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -255,6 +285,315 @@ def page_file_view(
     )
 
 
+@router.get("/content-studio", response_class=HTMLResponse)
+def page_content_studio(request: Request) -> HTMLResponse:
+    """Content Studio list — data from Content Studio API builders only."""
+    logger.info("Loading Content Studio list page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    items: list[dict[str, Any]] = []
+    try:
+        payload = build_content_list()
+        if not payload.get("ok"):
+            api_error = "Content Studio API returned ok=false"
+        else:
+            items = list(payload.get("items") or [])
+    except Exception as exc:  # noqa: BLE001 — surface explicit UI error state
+        logger.exception("Content Studio list API failed")
+        api_error = str(exc) or "Content Studio API failure"
+
+    statuses = sorted(
+        {
+            str(i.get("status") or "").strip()
+            for i in items
+            if (i.get("status") or "").strip()
+        }
+    )
+    week_ids = sorted(
+        {
+            str(i.get("content_id") or "").strip()
+            for i in items
+            if (i.get("content_id") or "").strip()
+        }
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="content_studio.html",
+        context={
+            "request": request,
+            "active_page": "content_studio",
+            "active_week": runtime.get("active_week", "—"),
+            "items": items,
+            "statuses": statuses,
+            "week_ids": week_ids,
+            "api_error": api_error,
+            "artifact_files": ARTIFACT_FILES,
+        },
+    )
+
+
+@router.get("/content-studio/kanban", response_class=HTMLResponse)
+def page_content_studio_kanban(request: Request) -> HTMLResponse:
+    """Content Studio read-only Kanban — columns = exact API status strings."""
+    logger.info("Loading Content Studio Kanban page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    items: list[dict[str, Any]] = []
+    try:
+        payload = build_content_list()
+        if not payload.get("ok"):
+            api_error = "Content Studio API returned ok=false"
+        else:
+            items = list(payload.get("items") or [])
+    except Exception as exc:  # noqa: BLE001 — surface explicit UI error state
+        logger.exception("Content Studio Kanban API failed")
+        api_error = str(exc) or "Content Studio API failure"
+
+    # Columns = distinct status values as returned by the API (no invented taxonomy).
+    columns: list[str] = []
+    columns_map: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        raw = item.get("status")
+        status = "" if raw is None else str(raw)
+        if status not in columns_map:
+            columns_map[status] = []
+            columns.append(status)
+        columns_map[status].append(item)
+    # Stable presentation order: non-empty statuses sorted, blank column last if present.
+    non_empty = sorted(s for s in columns if s.strip())
+    columns = non_empty + ([""] if "" in columns_map else [])
+
+    statuses = sorted({s for s in columns if s.strip()})
+    week_ids = sorted(
+        {
+            str(i.get("content_id") or "").strip()
+            for i in items
+            if (i.get("content_id") or "").strip()
+        }
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="content_studio_kanban.html",
+        context={
+            "request": request,
+            "active_page": "content_studio_kanban",
+            "active_week": runtime.get("active_week", "—"),
+            "items": items,
+            "columns": columns,
+            "columns_map": columns_map,
+            "statuses": statuses,
+            "week_ids": week_ids,
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/content-studio/{content_id}", response_class=HTMLResponse)
+def page_content_studio_detail(content_id: str, request: Request) -> HTMLResponse:
+    """Content Studio detail — data from Content Studio API builders only."""
+    try:
+        _validate_week_id(content_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info("Loading Content Studio detail page", extra={"content_id": content_id})
+    runtime = _load_runtime()
+    api_error: str | None = None
+    not_found = False
+    item: dict[str, Any] | None = None
+    try:
+        payload = build_content_detail(content_id)
+        item = payload.get("item")
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            not_found = True
+        elif exc.status_code == 400:
+            raise
+        else:
+            api_error = str(exc.detail)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Content Studio detail API failed")
+        api_error = str(exc) or "Content Studio API failure"
+
+    prev_id: str | None = None
+    next_id: str | None = None
+    try:
+        ids = [
+            str(i.get("content_id") or "").strip()
+            for i in (build_content_list().get("items") or [])
+            if (i.get("content_id") or "").strip()
+        ]
+        if content_id in ids:
+            idx = ids.index(content_id)
+            if idx > 0:
+                prev_id = ids[idx - 1]
+            if idx + 1 < len(ids):
+                next_id = ids[idx + 1]
+    except Exception:  # noqa: BLE001 — navigation optional if list fails
+        logger.warning("Content Studio week navigation unavailable", exc_info=True)
+
+    available_files: list[tuple[str, str]] = []
+    if item and isinstance(item.get("artifacts"), dict):
+        for key, present in item["artifacts"].items():
+            if present and key in ARTIFACT_FILES:
+                available_files.append((key, ARTIFACT_FILES[key]))
+
+    return templates.TemplateResponse(
+        request=request,
+        name="content_studio_detail.html",
+        context={
+            "request": request,
+            "active_page": "content_studio",
+            "active_week": runtime.get("active_week", "—"),
+            "content_id": content_id,
+            "item": item,
+            "not_found": not_found,
+            "api_error": api_error,
+            "prev_id": prev_id,
+            "next_id": next_id,
+            "available_files": available_files,
+            "artifact_files": ARTIFACT_FILES,
+        },
+    )
+
+
+@router.get("/editorial", response_class=HTMLResponse)
+@router.get("/editorial/pending", response_class=HTMLResponse)
+def page_editorial_pending(request: Request) -> HTMLResponse:
+    """Editorial Approval pending queue — existing artifacts + decision audit only."""
+    logger.info("Loading Editorial Approval pending page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    items: list[dict[str, Any]] = []
+    try:
+        payload = build_editorial_pending()
+        if not payload.get("ok"):
+            api_error = "Editorial pending API returned ok=false"
+        else:
+            items = list(payload.get("items") or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Editorial pending failed")
+        api_error = str(exc) or "Editorial pending failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="editorial_pending.html",
+        context={
+            "request": request,
+            "active_page": "editorial",
+            "active_week": runtime.get("active_week", "—"),
+            "items": items,
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/editorial/{content_id}", response_class=HTMLResponse)
+def page_editorial_detail(content_id: str, request: Request) -> HTMLResponse:
+    """Editorial Approval detail — decision buttons; reads existing artifacts only."""
+    try:
+        _validate_week_id(content_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info("Loading Editorial Approval detail", extra={"content_id": content_id})
+    runtime = _load_runtime()
+    api_error: str | None = None
+    not_found = False
+    item: dict[str, Any] | None = None
+    try:
+        payload = build_editorial_item(content_id)
+        item = payload
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            not_found = True
+        elif exc.status_code == 400:
+            raise
+        else:
+            api_error = str(exc.detail)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Editorial detail failed")
+        api_error = str(exc) or "Editorial detail failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="editorial_detail.html",
+        context={
+            "request": request,
+            "active_page": "editorial",
+            "active_week": runtime.get("active_week", "—"),
+            "content_id": content_id.upper(),
+            "item": item,
+            "not_found": not_found,
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/publishing", response_class=HTMLResponse)
+def page_publishing_queue(request: Request) -> HTMLResponse:
+    """Publishing Engine queue — orchestration only (Architecture v2.1)."""
+    logger.info("Loading Publishing queue page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    items: list[dict[str, Any]] = []
+    try:
+        items = pe.list_queue(include_terminal=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Publishing queue failed")
+        api_error = str(exc) or "Publishing queue failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="publishing_queue.html",
+        context={
+            "request": request,
+            "active_page": "publishing",
+            "active_week": runtime.get("active_week", "—"),
+            "items": items,
+            "channels": pe.list_channels(),
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/publishing/{job_id}", response_class=HTMLResponse)
+def page_publishing_detail(job_id: str, request: Request) -> HTMLResponse:
+    """Publishing job detail — manual publish / retry / cancel."""
+    logger.info("Loading Publishing detail", extra={"job_id": job_id})
+    runtime = _load_runtime()
+    api_error: str | None = None
+    not_found = False
+    job: dict[str, Any] | None = None
+    audit: list[dict[str, Any]] = []
+    try:
+        job = pe.get_job(job_id)
+        if job is None:
+            not_found = True
+        else:
+            audit = pe.load_audit_for_job(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Publishing detail failed")
+        api_error = str(exc) or "Publishing detail failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="publishing_detail.html",
+        context={
+            "request": request,
+            "active_page": "publishing",
+            "active_week": runtime.get("active_week", "—"),
+            "job_id": job_id,
+            "job": job,
+            "audit": audit,
+            "not_found": not_found,
+            "api_error": api_error,
+        },
+    )
+
+
 @router.get("/pipeline", response_class=HTMLResponse)
 def page_pipeline(request: Request) -> HTMLResponse:
     """Pipeline trigger UI page."""
@@ -299,12 +638,6 @@ def page_marketing(request: Request) -> HTMLResponse:
     logger.info("Loading marketing page")
     runtime = _load_runtime()
 
-    # Import here to avoid circular dependencies
-    from revenue_os.services.orchestration_runtime import backend_status
-    from revenue_os.services.go_to_market_orchestrator import (
-        load_recent_orchestration_runs,
-    )
-
     return templates.TemplateResponse(
         request=request,
         name="marketing.html",
@@ -312,6 +645,8 @@ def page_marketing(request: Request) -> HTMLResponse:
             "request": request,
             "active_page": "marketing",
             "active_week": runtime.get("active_week", "—"),
+            "runs": _marketing_runs(),
+            "integration_status": _marketing_integration_status(),
             "orchestration_runs": load_recent_orchestration_runs(limit=20),
             "orchestration_status": backend_status(),
         },
@@ -331,6 +666,80 @@ def page_sales(request: Request) -> HTMLResponse:
             "request": request,
             "active_page": "sales",
             "active_week": runtime.get("active_week", "—"),
+        },
+    )
+
+
+@router.get("/operator", response_class=HTMLResponse, response_model=None)
+def page_operator(request: Request) -> HTMLResponse | RedirectResponse:
+    """OF1 — Founder operator workflow (compose frozen commercial APIs)."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    logger.info("Loading Operator Flow")
+    runtime = _load_runtime()
+    tenant = resolve_tenant_context(request)
+    org_id = tenant.organization_id if tenant else None
+
+    return templates.TemplateResponse(
+        request=request,
+        name="operator.html",
+        context={
+            "request": request,
+            "active_page": "operator",
+            "active_week": runtime.get("active_week", "—"),
+            "flow": build_operator_flow_snapshot(organization_id=org_id),
+            "operator": cockpit_operator_status(),
+            "identity": _identity_template_dict(request),
+        },
+    )
+
+
+@router.get("/operator/demand/register", response_class=HTMLResponse, response_model=None)
+def page_manual_demand_register(request: Request) -> HTMLResponse | RedirectResponse:
+    """MDG1 — Manual Founder Demand Registration (trusted human → MC04.5)."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    logger.info("Loading Manual Demand Registration")
+    runtime = _load_runtime()
+    return templates.TemplateResponse(
+        request=request,
+        name="operator_demand_register.html",
+        context={
+            "request": request,
+            "active_page": "operator",
+            "active_week": runtime.get("active_week", "—"),
+            "operator": cockpit_operator_status(),
+            "allowed_sources": sorted(SOURCE_TO_CONTACT.keys()),
+            "identity": _identity_template_dict(request),
+        },
+    )
+
+
+@router.get("/cockpit", response_class=HTMLResponse, response_model=None)
+def page_cockpit(request: Request) -> HTMLResponse | RedirectResponse:
+    """Executive Cockpit — read-model composition + bounded human actions (UI2)."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    logger.info("Loading Executive Cockpit")
+    runtime = _load_runtime()
+    tenant = resolve_tenant_context(request)
+    org_id = tenant.organization_id if tenant else None
+    snapshot = build_cockpit_snapshot(organization_id=org_id)
+    operator = cockpit_operator_status()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="cockpit.html",
+        context={
+            "request": request,
+            "active_page": "cockpit",
+            "active_week": runtime.get("active_week", "—"),
+            "snapshot": snapshot,
+            "operator": operator,
+            "identity": _identity_template_dict(request),
         },
     )
 
@@ -356,6 +765,95 @@ def page_analytics(request: Request) -> HTMLResponse:
 def health() -> dict[str, str]:
     """Canonical service liveness check."""
     return {"status": "ok", "service": "WorkCrew CMS OS"}
+
+
+@router.get("/seo", response_class=HTMLResponse)
+def page_seo_readiness(request: Request) -> HTMLResponse:
+    """SEO Readiness Engine — read-only site view (S1)."""
+    logger.info("Loading SEO readiness page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    site: dict[str, Any] | None = None
+    try:
+        from src.tools.seo_engine import analyze_site
+
+        site = analyze_site().to_dict()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("SEO readiness site scan failed")
+        api_error = str(exc) or "SEO readiness failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="seo_readiness.html",
+        context={
+            "request": request,
+            "active_page": "seo",
+            "active_week": runtime.get("active_week", "—"),
+            "site": site,
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/seo/technical", response_class=HTMLResponse)
+def page_seo_technical(request: Request) -> HTMLResponse:
+    """Technical SEO Engine — read-only site view (S2 additive)."""
+    logger.info("Loading Technical SEO page")
+    runtime = _load_runtime()
+    api_error: str | None = None
+    report: dict[str, Any] | None = None
+    try:
+        report = analyze_technical_site().to_dict()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Technical SEO site scan failed")
+        api_error = str(exc) or "Technical SEO failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="seo_technical.html",
+        context={
+            "request": request,
+            "active_page": "seo_technical",
+            "active_week": runtime.get("active_week", "—"),
+            "report": report,
+            "api_error": api_error,
+        },
+    )
+
+
+@router.get("/seo/{slug}", response_class=HTMLResponse)
+def page_seo_readiness_detail(slug: str, request: Request) -> HTMLResponse:
+    """SEO Readiness Engine — read-only page detail (S1)."""
+    logger.info("Loading SEO readiness detail", extra={"slug": slug})
+    runtime = _load_runtime()
+    api_error: str | None = None
+    not_found = False
+    page: dict[str, Any] | None = None
+    try:
+        from src.tools.seo_engine import analyze_page_artifact, default_artifact_root as _root
+
+        result = analyze_page_artifact(_root(), slug)
+        if any(c.id == "html_missing" for c in result.checks):
+            not_found = True
+        else:
+            page = result.to_dict()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("SEO readiness detail failed")
+        api_error = str(exc) or "SEO readiness detail failure"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="seo_readiness_detail.html",
+        context={
+            "request": request,
+            "active_page": "seo",
+            "active_week": runtime.get("active_week", "—"),
+            "slug": slug,
+            "page": page,
+            "not_found": not_found,
+            "api_error": api_error,
+        },
+    )
 
 
 @router.get("/health/debug")

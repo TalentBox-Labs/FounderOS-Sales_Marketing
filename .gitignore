@@ -24,9 +24,26 @@ htmlcov/
 .DS_Store
 .vscode/
 
-# Runtime files
+# Runtime files / logs
 server.log
 server.pid
+*.log
 *.db
 demo.db
 data/chroma_db/
+
+# Staging runtime JSON (may contain environment paths; keep local)
+output/.staging_runtime/
+
+# Local AI / deploy tool homes (never commit credentials or caches)
+.crewai_home/
+.crewai_storage/
+.wrangler/
+
+# Frontend build output
+frontend/dist/
+
+# Runtime website/deploy packages (qa_reports and other tracked output remain)
+output/website/
+output/website-deploy/
+output/publishing/

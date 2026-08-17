@@ -17,6 +17,13 @@ from pydantic import BaseModel, Field
 from revenue_os.database import SessionLocal
 from revenue_os.models.seo import SEOKeyword, SEORankCheck
 from runner_api_routers.utils import _verify_api_key
+from src.tools.seo_engine import (
+    analyze_page_artifact,
+    analyze_site,
+    analyze_technical_page,
+    analyze_technical_site,
+    default_artifact_root,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/seo", tags=["seo"])
@@ -201,3 +208,65 @@ def seo_summary(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
         "improved_count": len(improved),
         "declined_count": len(declined),
     }
+
+
+# ---------------------------------------------------------------------------
+# S1 — SEO Readiness Engine (read-only; additive; no mutation / indexing)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/readiness")
+def seo_readiness_list(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Read-only site SEO readiness over Website Engine artifacts."""
+    result = analyze_site()
+    payload = result.to_dict()
+    payload["ok"] = True
+    payload["production_seo_activation"] = "BLOCKED"
+    return payload
+
+
+@router.get("/readiness/{slug}")
+def seo_readiness_page(
+    slug: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Read-only page SEO readiness for a single artifact slug."""
+    result = analyze_page_artifact(default_artifact_root(), slug)
+    if any(c.id == "html_missing" for c in result.checks):
+        raise HTTPException(status_code=404, detail=f"Page artifact not found: {slug}")
+    payload = result.to_dict()
+    payload["ok"] = True
+    payload["production_seo_activation"] = "BLOCKED"
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# S2 — Technical SEO Engine (additive; S1 readiness contract unchanged)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/technical")
+@router.get("/technical/site")
+def seo_technical_site(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
+    """Read-only site technical SEO analysis over Website Engine artifacts."""
+    result = analyze_technical_site()
+    payload = result.to_dict()
+    payload["ok"] = True
+    return payload
+
+
+@router.get("/technical/{slug}")
+def seo_technical_page(
+    slug: str,
+    _: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """Read-only page technical SEO analysis."""
+    if slug in {"site", "readiness"}:
+        raise HTTPException(status_code=404, detail=f"Page artifact not found: {slug}")
+    result = analyze_technical_page(default_artifact_root(), slug)
+    if any(f.id == "tech_html_missing" for f in result.findings):
+        raise HTTPException(status_code=404, detail=f"Page artifact not found: {slug}")
+    payload = result.to_dict()
+    payload["ok"] = True
+    payload["production_seo_activation"] = "BLOCKED"
+    return payload

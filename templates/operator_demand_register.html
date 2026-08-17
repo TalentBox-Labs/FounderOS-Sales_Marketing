@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Register Demand — Founder OS{% endblock %}
+{% block topbar_title %}Manual Demand Registration{% endblock %}
+{% block topbar_meta %}MDG1 · trusted Founder only · MC04.5 handoff{% endblock %}
+
+{% block topbar_right %}
+  {% if operator.configured %}
+  <span class="pill green" data-testid="mdg1-operator-identity">Operator: {{ operator.operator_name }}</span>
+  {% else %}
+  <span class="pill amber" data-testid="mdg1-operator-unconfigured">Registration blocked — set FOUNDER_OS_OPERATOR_NAME</span>
+  {% endif %}
+  <a href="/operator" class="btn btn-ghost btn-sm">← Operator Flow</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .mdg-form { max-width: 560px; display: grid; gap: 12px; }
+  .mdg-form label { display: grid; gap: 4px; font-size: 13px; color: var(--text-muted); }
+  .mdg-form input, .mdg-form select, .mdg-form textarea {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: 13px;
+  }
+  .mdg-hint { font-size: 12px; color: var(--text-muted); margin: 0; }
+  .mdg-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .mdg-result {
+    display: none; margin-top: 16px; font-size: 12px; background: var(--surface2);
+    padding: 12px; border-radius: var(--radius-sm); white-space: pre-wrap;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:18px;border-left:3px solid var(--accent)" data-testid="mdg1-contract">
+  <div class="card-title">MDG1 contract</div>
+  <p class="mdg-hint">
+    Trusted-human manual registration only. Connects to frozen MC04.5
+    <code>register_marketing_handoff</code>. Does <strong>not</strong> create Contact or Deal
+    until Sales accept on Operator Flow. No public form · no anonymous POST · no fabricated UTM/campaign.
+  </p>
+</div>
+
+<div class="card" data-testid="mdg1-register-card">
+  <div class="card-title">Register demand</div>
+  {% if not operator.configured %}
+  <p class="mdg-hint" data-testid="mdg1-blocked">Actions blocked — configure FOUNDER_OS_OPERATOR_NAME to a valid human name.</p>
+  {% else %}
+  <form class="mdg-form" id="mdg1-form" data-testid="mdg1-form" onsubmit="return false;">
+    <label>Email (required)
+      <input type="email" id="mdg-email" name="email" required maxlength="255" data-testid="mdg-email" autocomplete="off" />
+    </label>
+    <label>Name (optional)
+      <input type="text" id="mdg-name" name="name" maxlength="255" data-testid="mdg-name" />
+    </label>
+    <label>Phone (optional)
+      <input type="text" id="mdg-phone" name="phone" maxlength="50" data-testid="mdg-phone" />
+    </label>
+    <label>Company name (optional)
+      <input type="text" id="mdg-company" name="company_name" maxlength="255" data-testid="mdg-company" />
+    </label>
+    <label>Company domain (optional)
+      <input type="text" id="mdg-domain" name="company_domain" maxlength="255" data-testid="mdg-domain" placeholder="example.com" />
+    </label>
+    <label>Source (manually asserted)
+      <select id="mdg-source" name="source" data-testid="mdg-source">
+        {% for s in allowed_sources %}
+        <option value="{{ s }}" {% if s == 'manual' %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Source detail (optional, free text — not UTM)
+      <input type="text" id="mdg-source-detail" name="source_detail" maxlength="500" data-testid="mdg-source-detail"
+        placeholder="e.g. referral from Alice, conference booth" />
+    </label>
+    <label>Context note (optional)
+      <textarea id="mdg-context" name="context_note" maxlength="2000" rows="3" data-testid="mdg-context"
+        placeholder="Why this is demand — not auto-qualification"></textarea>
+    </label>
+    <p class="mdg-hint">
+      demand_id and occurred_at are generated server-side.
+      requested_by is the server operator identity — not taken from this form.
+    </p>
+    <div class="mdg-actions">
+      <button type="button" class="btn btn-primary" data-testid="mdg-submit" onclick="mdgRegister()">
+        Register QualifiedDemand handoff
+      </button>
+      <a href="/operator#stage-demand" class="btn btn-ghost">Open Operator Flow →</a>
+    </div>
+  </form>
+  {% endif %}
+  <pre id="mdg1-result" class="mdg-result" data-testid="mdg1-result"></pre>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function mdgPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+function mdgShow(msg, ok) {
+  const el = document.getElementById('mdg1-result');
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+  if (typeof showToast === 'function') showToast(ok ? 'Registered' : 'Registration failed', ok);
+}
+async function mdgRegister() {
+  const email = (document.getElementById('mdg-email') || {}).value || '';
+  if (email.trim().length < 3) { mdgShow('Email is required', false); return; }
+  if (!confirm('Register QualifiedDemand handoff via MC04.5? Contact is NOT created until Sales accept.')) return;
+  const body = {
+    email: email.trim(),
+    name: (document.getElementById('mdg-name') || {}).value || '',
+    phone: (document.getElementById('mdg-phone') || {}).value || null,
+    company_name: (document.getElementById('mdg-company') || {}).value || null,
+    company_domain: (document.getElementById('mdg-domain') || {}).value || null,
+    source: (document.getElementById('mdg-source') || {}).value || 'manual',
+    source_detail: (document.getElementById('mdg-source-detail') || {}).value || '',
+    context_note: (document.getElementById('mdg-context') || {}).value || '',
+  };
+  // Never send requested_by — server uses FOUNDER_OS_OPERATOR_NAME.
+  const res = await mdgPost('/api/v1/mdg/manual-demand/register', body);
+  if (res.ok) {
+    mdgShow(
+      'Handoff registered. demand_id=' + (res.data.demand_id || '') +
+      '\\nidempotent=' + res.data.idempotent +
+      '\\ncontact_created=' + res.data.contact_created +
+      '\\nNext: Accept on /operator',
+      true
+    );
+  } else {
+    mdgShow('Registration failed (' + res.status + '): ' + (res.data.detail || JSON.stringify(res.data)), false);
+  }
+}
+</script>
+{% endblock %}

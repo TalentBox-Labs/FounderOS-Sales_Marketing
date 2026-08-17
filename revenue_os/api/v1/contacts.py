@@ -162,6 +162,18 @@ def update_contact(
         raise HTTPException(status_code=404, detail="Contact not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "status" in update_data:
+        new_status = update_data["status"]
+        if new_status is not None and new_status != contact.status:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Contact.status changes require human-gated runner API "
+                    "(PATCH /api/v1/crm/contacts/{id}/status with requested_by)."
+                ),
+            )
+        update_data.pop("status", None)
+
     for key, value in update_data.items():
         if key == "company_id" and value is not None:
             setattr(contact, key, uuid.UUID(value))
