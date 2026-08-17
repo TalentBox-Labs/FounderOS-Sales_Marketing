@@ -30,6 +30,11 @@ class EventType(str, Enum):
     DEAL_AT_RISK = "deal_at_risk"
     DEAL_CLOSED = "deal_closed"
 
+    # Commercial outcome events (MC06 — not DEAL_CLOSED; no finance workflows)
+    COMMERCIAL_OUTCOME_HANDED_OFF = "commercial_outcome_handed_off"
+    COMMERCIAL_OUTCOME_ACCEPTED = "commercial_outcome_accepted"
+    COMMERCIAL_OUTCOME_REJECTED = "commercial_outcome_rejected"
+
     # Crew events
     CREW_STARTED = "crew_started"
     CREW_COMPLETED = "crew_completed"

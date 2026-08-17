@@ -86,6 +86,7 @@ class Deal(Base):
     expected_close_date = Column(DateTime(timezone=True), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     tags = Column(Text)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

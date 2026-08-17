@@ -109,6 +109,12 @@ def _configure_whatsapp(config: dict[str, Any]) -> None:
 _VAULT_CONFIGURE_HANDLERS["whatsapp"] = _configure_whatsapp
 
 
+def _integration_org_id() -> str | None:
+    from revenue_os.services.integration_tenant_resolution import resolve_integration_org_id
+
+    return resolve_integration_org_id()
+
+
 @router.get("/connectors", tags=["integrations"])
 def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
     """Every integration the platform knows about, merged with live status.
@@ -119,7 +125,8 @@ def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
 
     from revenue_os.services.credentials_vault import load_credentials
 
-    vaulted = list_configured_connectors()
+    org_id = _integration_org_id()
+    vaulted = list_configured_connectors(organization_id=org_id)
     result = []
     for c in CONNECTOR_CATALOG:
         if c["source"] == "vault":
@@ -135,7 +142,9 @@ def list_connectors(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
             # OAuth connectors have two states: fields saved (configured) vs.
             # consent completed (connected, has a refresh_token). Only decrypt
             # for the presence check — never expose the token itself.
-            connected = configured and bool((load_credentials(c["name"]) or {}).get("refresh_token"))
+            connected = configured and bool(
+                (load_credentials(c["name"], organization_id=org_id) or {}).get("refresh_token")
+            )
 
         result.append({
             "name": c["name"], "label": c["label"], "category": c["category"],
@@ -172,7 +181,8 @@ def configure_connector(
 
     from revenue_os.services.credentials_vault import save_credentials
 
-    save_credentials(connector_name, catalog_entry["category"], config)
+    org_id = _integration_org_id()
+    save_credentials(connector_name, catalog_entry["category"], config, organization_id=org_id)
     return {"ok": True, "message": f"{catalog_entry['label']} configured"}
 
 
@@ -184,7 +194,8 @@ def remove_connector_credentials(
     """Remove a connector's stored credentials."""
     from revenue_os.services.credentials_vault import delete_credentials
 
-    deleted = delete_credentials(connector_name)
+    org_id = _integration_org_id()
+    deleted = delete_credentials(connector_name, organization_id=org_id)
     return {"ok": deleted}
 
 
@@ -200,7 +211,8 @@ def configure_email(
         EmailNotifier.configure_smtp(config)
         from revenue_os.services.credentials_vault import save_credentials
 
-        save_credentials("email_smtp", "email", config)
+        org_id = _integration_org_id()
+        save_credentials("email_smtp", "email", config, organization_id=org_id)
         return {"ok": True, "message": "Email configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure email: {str(e)}")
@@ -386,7 +398,8 @@ def configure_slack(
         SlackNotifier.set_webhook_url(config.get("webhook_url", ""))
         from revenue_os.services.credentials_vault import save_credentials
 
-        save_credentials("slack", "notifications", config)
+        org_id = _integration_org_id()
+        save_credentials("slack", "notifications", config, organization_id=org_id)
         return {"ok": True, "message": "Slack configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Slack: {str(e)}")
@@ -454,7 +467,8 @@ def configure_google_calendar(
         GoogleCalendarClient.configure(credentials)
         from revenue_os.services.credentials_vault import save_credentials
 
-        save_credentials("google_calendar", "calendar", credentials)
+        org_id = _integration_org_id()
+        save_credentials("google_calendar", "calendar", credentials, organization_id=org_id)
         return {"ok": True, "message": "Google Calendar configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Google Calendar: {str(e)}")
@@ -507,7 +521,8 @@ def configure_outlook_calendar(
         )
         from revenue_os.services.credentials_vault import save_credentials
 
-        save_credentials("outlook_calendar", "calendar", config)
+        org_id = _integration_org_id()
+        save_credentials("outlook_calendar", "calendar", config, organization_id=org_id)
         return {"ok": True, "message": "Outlook Calendar configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure Outlook Calendar: {str(e)}")
@@ -573,7 +588,8 @@ def gmail_authorize(_: str | None = Depends(_verify_api_key)) -> dict[str, Any]:
     from revenue_os.integrations.gmail_sync import build_authorize_url
     from revenue_os.services.credentials_vault import load_credentials
 
-    config = load_credentials("gmail")
+    org_id = _integration_org_id()
+    config = load_credentials("gmail", organization_id=org_id)
     if not config or not config.get("client_id") or not config.get("redirect_uri"):
         raise HTTPException(
             status_code=400,
@@ -609,7 +625,8 @@ def gmail_callback(code: str | None = None, error: str | None = None) -> Any:
     if not code:
         return _page("Missing authorization code.", ok=False)
 
-    config = load_credentials("gmail")
+    org_id = _integration_org_id()
+    config = load_credentials("gmail", organization_id=org_id)
     if not config:
         return _page("Gmail OAuth client is not configured.", ok=False)
 
@@ -617,7 +634,13 @@ def gmail_callback(code: str | None = None, error: str | None = None) -> Any:
     if not tokens.get("ok"):
         return _page(f"Gmail connection failed: {tokens.get('error')}", ok=False)
 
-    save_credentials("gmail", "email", {**config, "refresh_token": tokens.get("refresh_token", config.get("refresh_token"))})
+    org_id = _integration_org_id()
+    save_credentials(
+        "gmail",
+        "email",
+        {**config, "refresh_token": tokens.get("refresh_token", config.get("refresh_token"))},
+        organization_id=org_id,
+    )
     return _page("Gmail connected successfully.", ok=True)
 
 

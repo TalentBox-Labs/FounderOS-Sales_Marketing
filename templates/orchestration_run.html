@@ -60,25 +60,21 @@
 
     <div class="card">
       <div class="card-title">⚠️ Failures / Notes</div>
-      {% set failures = [] %}
-      {% for key, payload in run.results.executions.items() %}
+      {% set executions = run.results.executions if run.results is mapping else {} %}
+      {% set ns = namespace(has_failure=false) %}
+      {% for key, payload in executions.items() %}
         {% if payload is mapping and (payload.error or payload.ok is sameas false or payload.status == 'not_configured') %}
-          {% set _ = failures.append((key, payload)) %}
-        {% endif %}
-      {% endfor %}
-      {% if failures %}
-        <div style="display:flex;flex-direction:column;gap:10px">
-          {% for key, payload in failures %}
-          <div style="padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08)">
+          {% set ns.has_failure = true %}
+          <div style="padding:12px;border-radius:var(--radius-sm);border:1px solid var(--red);background:rgba(220,38,38,0.08);margin-bottom:10px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
               <span class="pill red">{{ key }}</span>
               <span style="font-size:12px;font-weight:500">Issue detected</span>
             </div>
             <pre style="background:#090b10;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;font-family:'JetBrains Mono','Fira Code',monospace;color:#c9d1d9;overflow-x:auto;white-space:pre-wrap;line-height:1.6;max-height:180px;overflow-y:auto;">{{ payload | tojson(indent=2) }}</pre>
           </div>
-          {% endfor %}
-        </div>
-      {% else %}
+        {% endif %}
+      {% endfor %}
+      {% if not ns.has_failure %}
         <p style="color:var(--text-muted)">No failures were recorded in the execution payload.</p>
       {% endif %}
     </div>

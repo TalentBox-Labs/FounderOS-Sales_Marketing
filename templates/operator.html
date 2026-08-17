@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}Operator Flow — Founder OS{% endblock %}
+{% block topbar_title %}Operator Flow{% endblock %}
+{% block topbar_meta %}Inspect · decide · execute · confirm · audit{% endblock %}
+
+{% block topbar_right %}
+  {% if operator.configured %}
+  <span class="pill green" data-testid="operator-identity">Operator: {{ operator.operator_name }}</span>
+  {% else %}
+  <span class="pill amber" data-testid="operator-unconfigured">Human actions blocked — set FOUNDER_OS_OPERATOR_NAME</span>
+  {% endif %}
+  <span class="pill gray">{{ flow.generated_at }}</span>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .of-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+  .of-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--surface2); }
+  .of-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .of-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .of-degraded { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+  select, input[type="text"], input[type="number"] {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 4px 8px; font: inherit; font-size: 12px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:18px;border-left:3px solid var(--accent)">
+  <div class="card-title">Operator contract</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Composes frozen MC04.5 / A4.5 / A3.5 / MC06.5. Server-trusted operator only.
+    No new SoT · no CRM SPA · no Audience→Demand capture · relationships shown only when proven.
+  </p>
+</div>
+
+<div class="card" style="margin-bottom:18px" data-testid="operator-attention">
+  <div class="card-title">Attention</div>
+  {% if flow.attention.state == 'unavailable' %}
+    <p class="of-degraded" data-testid="attention-unavailable">{{ flow.attention.message }}</p>
+  {% elif flow.attention.state == 'empty' %}
+    <p class="of-degraded" data-testid="attention-empty">{{ flow.attention.message }}</p>
+  {% else %}
+    {% for item in flow.attention.items %}
+    <div class="of-item" data-testid="attention-item" data-kind="{{ item.kind }}">
+      <strong>{{ item.label }}</strong>
+      <div class="of-meta">{{ item.detail }}</div>
+      <a href="{{ item.href }}" class="btn btn-ghost btn-sm">Jump →</a>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="of-grid">
+
+  <div class="card" id="stage-demand" data-testid="stage-demand">
+    <div class="card-title">1. Demand intake</div>
+    <p class="of-degraded" style="margin-bottom:8px">
+      <a href="/operator/demand/register" data-testid="mdg1-register-link">Manual demand registration →</a>
+      (trusted Founder · MC04.5 handoff · no public capture)
+    </p>
+    {% if not flow.pending_demands %}
+      <p class="of-degraded" data-testid="demand-empty">No pending QualifiedDemand</p>
+    {% endif %}
+    {% for d in flow.pending_demands %}
+    <div class="of-item" data-testid="pending-demand" data-demand-id="{{ d.demand_id }}">
+      <strong>{{ d.name or d.email or d.demand_id }}</strong>
+      <div class="of-meta">{{ d.email }} · {{ d.source }} · {{ d.occurred_at }}</div>
+      <div class="of-meta">Contact link: {{ d.contact_link }}</div>
+      {% if operator.configured %}
+      <div class="of-actions">
+        <button type="button" class="btn btn-primary btn-sm" data-testid="of-accept-demand"
+          onclick="ofAcceptDemand('{{ d.demand_id }}')">Accept</button>
+        <input type="text" id="reject-{{ d.demand_id }}" placeholder="Reject reason" maxlength="200" />
+        <button type="button" class="btn btn-ghost btn-sm" data-testid="of-reject-demand"
+          onclick="ofRejectDemand('{{ d.demand_id }}')">Reject</button>
+      </div>
+      {% else %}
+      <div class="of-degraded">Actions blocked — operator not configured</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" id="stage-qualification" data-testid="stage-qualification">
+    <div class="card-title">2. Qualification</div>
+    {% if not flow.contacts %}
+      <p class="of-degraded" data-testid="contacts-empty">No contacts</p>
+    {% endif %}
+    {% for c in flow.contacts %}
+    <div class="of-item" data-testid="operator-contact" data-contact-id="{{ c.id }}">
+      <strong>{{ c.name }}</strong>
+      <div class="of-meta">{{ c.email }} · status {{ c.status }} · score {{ c.lead_score }} · recommend {{ c.recommendation }}</div>
+      <div class="of-meta">Demand: {{ c.demand_link }}{% if c.demand_id %} ({{ c.demand_id }}){% endif %} · Deal: {{ c.deal_link }}</div>
+      {% if operator.configured %}
+      <div class="of-actions">
+        <select id="status-{{ c.id }}" data-testid="contact-status-select">
+          {% for s in flow.contact_statuses %}
+          <option value="{{ s }}" {% if s == c.status %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="btn btn-primary btn-sm" data-testid="of-contact-status"
+          onclick="ofContactStatus('{{ c.id }}')">Update status</button>
+        {% if c.deal_link == 'no_linked_record' %}
+        <input type="text" id="deal-name-{{ c.id }}" placeholder="Deal name" />
+        <button type="button" class="btn btn-ghost btn-sm" data-testid="of-create-deal"
+          onclick="ofCreateDeal('{{ c.id }}')">Create deal</button>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" id="stage-deals" data-testid="stage-deals">
+    <div class="card-title">3. Deal progression</div>
+    {% if not flow.deals %}
+      <p class="of-degraded" data-testid="deals-empty">No deals</p>
+    {% endif %}
+    {% for d in flow.deals %}
+    <div class="of-item" data-testid="operator-deal" data-deal-id="{{ d.id }}">
+      <strong>{{ d.name }}</strong>
+      <div class="of-meta">stage {{ d.stage }} · {{ d.value }} {{ d.currency }} · contact {{ d.contact_link }}</div>
+      {% if d.terminal %}
+        <div class="of-degraded">Terminal stage — no further A3.5 transition</div>
+      {% elif operator.configured and d.permitted_stages %}
+      <div class="of-actions">
+        <select id="stage-{{ d.id }}" data-testid="deal-stage-select">
+          {% for s in d.permitted_stages %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="btn btn-primary btn-sm" data-testid="of-deal-stage"
+          onclick="ofDealStage('{{ d.id }}')">Update stage</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" id="stage-outcome" data-testid="stage-outcome">
+    <div class="card-title">4. Closed-won / CommercialOutcome</div>
+    {% if not flow.outcomes.pending_handoff %}
+      <p class="of-degraded" data-testid="handoff-empty">No closed_won Deal awaiting handoff</p>
+    {% endif %}
+    {% for item in flow.outcomes.pending_handoff %}
+    <div class="of-item" data-testid="pending-handoff" data-deal-id="{{ item.deal_id }}">
+      <strong>{{ item.deal_name }}</strong>
+      <div class="of-meta">{{ item.state }} · {{ item.deal_id }}</div>
+      {% if operator.configured %}
+      <div class="of-actions">
+        <button type="button" class="btn btn-primary btn-sm" data-testid="of-co-handoff"
+          onclick="ofHandoff('{{ item.deal_id }}')">Register handoff</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" id="stage-revenue" data-testid="stage-revenue">
+    <div class="card-title">5. Revenue decision</div>
+    {% if not flow.outcomes.pending_revenue %}
+      <p class="of-degraded" data-testid="revenue-empty">No CommercialOutcome pending Revenue decision</p>
+    {% endif %}
+    {% for item in flow.outcomes.pending_revenue %}
+    <div class="of-item" data-testid="pending-revenue" data-outcome-id="{{ item.outcome_id }}">
+      <strong>{{ item.outcome_id }}</strong>
+      <div class="of-meta">Deal {{ item.deal_id or 'no_linked_record' }} · {{ item.state }}</div>
+      {% if operator.configured %}
+      <div class="of-actions">
+        <button type="button" class="btn btn-primary btn-sm" data-testid="of-co-accept"
+          onclick="ofOutcomeAccept('{{ item.outcome_id }}')">Accept</button>
+        <input type="text" id="co-reject-{{ item.outcome_id }}" placeholder="Reject reason" />
+        <button type="button" class="btn btn-ghost btn-sm" data-testid="of-co-reject"
+          onclick="ofOutcomeReject('{{ item.outcome_id }}')">Reject</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<pre id="operator-action-result" data-testid="operator-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function ofPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+function ofResult(msg, ok) {
+  const el = document.getElementById('operator-action-result');
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+  if (typeof showToast === 'function') showToast(msg, ok);
+}
+async function ofAcceptDemand(id) {
+  if (!confirm('Accept QualifiedDemand (MC04.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/qualified-demand/accept', { demand_id: id });
+  ofResult(res.ok ? ('Accepted ' + id) : ('Accept failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofRejectDemand(id) {
+  const reason = (document.getElementById('reject-' + id) || {}).value || '';
+  if (reason.length < 2) { ofResult('Reject reason required', false); return; }
+  if (!confirm('Reject QualifiedDemand (MC04.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/qualified-demand/reject', { demand_id: id, reason: reason });
+  ofResult(res.ok ? ('Rejected ' + id) : ('Reject failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofContactStatus(id) {
+  const sel = document.getElementById('status-' + id);
+  const status = sel ? sel.value : 'qualified';
+  if (!confirm('Update Contact.status to ' + status + ' (A4.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/contact-status', { contact_id: id, status: status });
+  ofResult(res.ok ? ('Status → ' + status) : ('Status failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofCreateDeal(contactId) {
+  const nameEl = document.getElementById('deal-name-' + contactId);
+  const name = (nameEl && nameEl.value.trim()) || ('Deal ' + contactId.slice(0, 8));
+  if (!confirm('Create Deal in discovery for this Contact?')) return;
+  const res = await ofPost('/api/v1/operator/actions/deal/create', { name: name, contact_id: contactId, stage: 'discovery' });
+  ofResult(res.ok ? ('Deal created') : ('Create failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofDealStage(id) {
+  const sel = document.getElementById('stage-' + id);
+  const stage = sel ? sel.value : '';
+  if (!stage) return;
+  if (!confirm('Update Deal stage to ' + stage + ' (A3.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/deal/stage', { deal_id: id, stage: stage });
+  ofResult(res.ok ? ('Stage → ' + stage) : ('Stage failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofHandoff(dealId) {
+  if (!confirm('Register CommercialOutcome handoff (MC06.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/commercial-outcome/handoff', { deal_id: dealId });
+  ofResult(res.ok ? ('Handoff registered') : ('Handoff failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofOutcomeAccept(id) {
+  if (!confirm('Revenue accept CommercialOutcome (MC06.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/commercial-outcome/accept', { outcome_id: id });
+  ofResult(res.ok ? ('Outcome accepted') : ('Accept failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+async function ofOutcomeReject(id) {
+  const reason = (document.getElementById('co-reject-' + id) || {}).value || '';
+  if (reason.length < 2) { ofResult('Reject reason required', false); return; }
+  if (!confirm('Revenue reject CommercialOutcome (MC06.5)?')) return;
+  const res = await ofPost('/api/v1/operator/actions/commercial-outcome/reject', { outcome_id: id, reason: reason });
+  ofResult(res.ok ? ('Outcome rejected') : ('Reject failed: ' + (res.data.detail || res.status)), res.ok);
+  if (res.ok) setTimeout(() => location.reload(), 800);
+}
+</script>
+{% endblock %}

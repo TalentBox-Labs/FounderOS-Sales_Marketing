@@ -31,8 +31,6 @@
               ("generate",   "✍️ Generate Content",     "Phase 2A: Brief → SEO → Research → Draft"),
               ("edit",       "✏️ Edit (Phase 2B)",      "Editor agent → staged Final"),
               ("validate",   "✅ Validate Only",        "Run all validators, no writes"),
-              ("qa",         "🤖 CrewAI QA",            "LLM QA pass on draft/final"),
-              ("sheet-sync", "📊 Sheet Sync",           "Mirror tracker to Google Sheets"),
             ] %}
             <label style="
               display:flex;align-items:flex-start;gap:10px;padding:10px 12px;
@@ -144,8 +142,6 @@ const STAGE_ENDPOINTS = {
   generate:    '/generate',
   edit:        '/edit',
   validate:    '/validate',
-  qa:          '/qa',
-  'sheet-sync':'/sheet-sync',
 };
 
 async function runSelected() {

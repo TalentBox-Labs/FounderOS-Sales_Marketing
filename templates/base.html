@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}WorkCrew CMS OS{% endblock %}</title>
+  <title>{% block title %}Founder OS{% endblock %}</title>
   <style>
     /* ─── Design Tokens ──────────────────────────────────────────────────── */
     :root {
@@ -231,15 +231,21 @@
 <!-- ░ Sidebar ─────────────────────────────────────────────────────────────── -->
 <aside class="sidebar">
   <div class="sidebar-logo">
-    <div class="logo-icon">W</div>
+    <div class="logo-icon">F</div>
     <div>
-      <div class="logo-text">WorkCrew</div>
-      <div class="logo-sub">CMS OS</div>
+      <div class="logo-text">Founder OS</div>
+      <div class="logo-sub">Executive Platform</div>
     </div>
   </div>
 
   <div class="nav-section">
     <div class="nav-section-label">Overview</div>
+    <a href="/cockpit" class="nav-item {% if active_page == 'cockpit' %}active{% endif %}">
+      <span class="icon">🎛️</span> Executive Cockpit
+    </a>
+    <a href="/operator" class="nav-item {% if active_page == 'operator' %}active{% endif %}">
+      <span class="icon">🧭</span> Operator Flow
+    </a>
     <a href="/" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
       <span class="icon">⬛</span> Dashboard
     </a>
@@ -249,6 +255,24 @@
     <a href="/weeks" class="nav-item {% if active_page == 'weeks' %}active{% endif %}">
       <span class="icon">📅</span> Content Calendar
     </a>
+    <a href="/content-studio" class="nav-item {% if active_page == 'content_studio' %}active{% endif %}">
+      <span class="icon">🗂️</span> Content Studio
+    </a>
+    <a href="/content-studio/kanban" class="nav-item {% if active_page == 'content_studio_kanban' %}active{% endif %}">
+      <span class="icon">📋</span> Studio Kanban
+    </a>
+    <a href="/editorial" class="nav-item {% if active_page == 'editorial' %}active{% endif %}">
+      <span class="icon">✍️</span> Editorial Approval
+    </a>
+    <a href="/publishing" class="nav-item {% if active_page == 'publishing' %}active{% endif %}">
+      <span class="icon">📤</span> Publishing
+    </a>
+    <a href="/seo" class="nav-item {% if active_page == 'seo' %}active{% endif %}">
+      <span class="icon">🔎</span> SEO Readiness
+    </a>
+    <a href="/seo/technical" class="nav-item {% if active_page == 'seo_technical' %}active{% endif %}">
+      <span class="icon">🛠️</span> Technical SEO
+    </a>
   </div>
 
   <div class="nav-section">
@@ -256,12 +280,8 @@
     <a href="/pipeline" class="nav-item {% if active_page == 'pipeline' %}active{% endif %}">
       <span class="icon">⚡</span> Run Pipeline
     </a>
-    <a href="/qa" class="nav-item {% if active_page == 'qa' %}active{% endif %}">
-      <span class="icon">✅</span> QA Reports
-    </a>
-    <a href="/publish" class="nav-item {% if active_page == 'publish' %}active{% endif %}">
-      <span class="icon">🚀</span> Go-Live
-    </a>
+    {# DEFERRED: /qa has no live HTML route (ui.py). QA artifacts live under output/qa_reports/; do not invent a QA page. #}
+    {# DEFERRED: /publish (Go-Live) has no live HTML route. Use Overview → Publishing (/publishing). Legacy go-live is POST /go-live only. #}
     <a href="/marketing" class="nav-item {% if active_page == 'marketing' %}active{% endif %}">
       <span class="icon">📣</span> Marketing
     </a>
@@ -275,16 +295,17 @@
     <a href="/mcp" class="nav-item {% if active_page == 'mcp' %}active{% endif %}">
       <span class="icon">🧠</span> MCP Hub
     </a>
-    <a href="/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">
-      <span class="icon">⚙️</span> Settings
-    </a>
-    <a href="/health" class="nav-item">
-      <span class="icon">💓</span> Health
-    </a>
+    {# DEFERRED: /settings has no live HTML route — do not invent a settings page. #}
+    {# R1C: /health is API-only JSON — removed from sidebar (endpoint retained). #}
   </div>
 
   <div class="sidebar-footer">
     Active week: <strong>{{ active_week or "—" }}</strong>
+    {% if identity is defined and identity and identity.is_human %}
+    <form method="post" action="/logout" style="margin-top:10px">
+      <button type="submit" class="btn btn-ghost btn-sm" data-testid="s1-logout">Sign out</button>
+    </form>
+    {% endif %}
   </div>
 </aside>
 
@@ -293,8 +314,8 @@
   {% block topbar %}
   <div class="topbar">
     <div>
-      <div class="topbar-title">{% block topbar_title %}WorkCrew CMS OS{% endblock %}</div>
-      <div class="topbar-meta">{% block topbar_meta %}Content Management & Publishing System{% endblock %}</div>
+      <div class="topbar-title">{% block topbar_title %}Founder OS{% endblock %}</div>
+      <div class="topbar-meta">{% block topbar_meta %}Unified founder visibility &amp; control{% endblock %}</div>
     </div>
     <div class="topbar-right">
       {% block topbar_right %}{% endblock %}

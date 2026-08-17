@@ -62,7 +62,7 @@ def score_contacts_endpoint(
     req: ScoreContactsRequest,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Score multiple contacts and update their lead status."""
+    """Score multiple contacts without mutating Contact.status."""
     logger.info(
         "Scoring contacts",
         extra={"contact_count": len(req.contact_ids)},
@@ -75,7 +75,8 @@ def score_contacts_endpoint(
         return {
             "ok": True,
             "total_scored": results["scored"],
-            "newly_qualified": results["newly_qualified"],
+            "suggested_qualified": results["suggested_qualified"],
+            "newly_qualified": 0,
             "scores": results["scores"],
         }
     finally:

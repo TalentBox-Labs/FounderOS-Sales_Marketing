@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid as uuid_lib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from revenue_os.models.contact import Contact, ContactStatus
 from revenue_os.models.deal import Deal, DealStage, Pipeline, PipelineType
+from revenue_os.services.mutation_authority import require_human_mutation_authority
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,23 @@ def create_deal_from_contact(
     return deal
 
 
+# Sales pipeline stages only (exclude recruitment enum values for Sales OS ops).
+SALES_PIPELINE_STAGES: frozenset[DealStage] = frozenset(
+    {
+        DealStage.DISCOVERY,
+        DealStage.QUALIFIED,
+        DealStage.PROPOSAL,
+        DealStage.NEGOTIATION,
+        DealStage.CLOSED_WON,
+        DealStage.CLOSED_LOST,
+    }
+)
+
+TERMINAL_SALES_STAGES: frozenset[DealStage] = frozenset(
+    {DealStage.CLOSED_WON, DealStage.CLOSED_LOST}
+)
+
+
 def advance_deal_stage(db: Session, deal: Deal, new_stage: DealStage) -> bool:
     """
     Advance deal to next stage with probability update.
@@ -138,12 +157,68 @@ def advance_deal_stage(db: Session, deal: Deal, new_stage: DealStage) -> bool:
     return True
 
 
-def get_pipeline_health(db: Session, pipeline_id: str | None = None) -> dict[str, Any]:
+def apply_deal_stage_update(
+    db: Session,
+    deal: Deal,
+    new_stage: DealStage,
+    *,
+    requested_by: str,
+) -> dict[str, Any]:
+    """Human Sales pipeline stage update built on ``advance_deal_stage``.
+
+    Does not emit CommercialOutcome. Raises ``ValueError`` for invalid stages
+    or attempts to reopen a terminal closed deal.
+    """
+    require_human_mutation_authority(requested_by, action="deal stage update")
+
+    if new_stage not in SALES_PIPELINE_STAGES:
+        raise ValueError(f"Invalid sales stage: {new_stage.value}")
+
+    old_stage = deal.stage
+    if old_stage == new_stage:
+        return {
+            "changed": False,
+            "old_stage": old_stage.value,
+            "new_stage": new_stage.value,
+            "probability": deal.probability,
+            "closed_at": deal.closed_at.isoformat() if deal.closed_at else None,
+            "commercial_outcome_emitted": False,
+        }
+
+    if old_stage in TERMINAL_SALES_STAGES:
+        raise ValueError(
+            f"Cannot transition from terminal stage {old_stage.value!r} "
+            f"to {new_stage.value!r}"
+        )
+
+    advance_deal_stage(db, deal, new_stage)
+    return {
+        "changed": True,
+        "old_stage": old_stage.value,
+        "new_stage": deal.stage.value,
+        "probability": deal.probability,
+        "closed_at": deal.closed_at.isoformat() if deal.closed_at else None,
+        "commercial_outcome_emitted": False,
+    }
+
+
+def get_pipeline_health(
+    db: Session, pipeline_id: str | None = None, *, organization_id: str | None = None
+) -> dict[str, Any]:
     """Get overall pipeline health metrics."""
     if pipeline_id:
-        deals = db.query(Deal).filter(Deal.pipeline_id == pipeline_id).filter(Deal.closed_at.is_(None)).all()
+        query = db.query(Deal).filter(Deal.pipeline_id == pipeline_id).filter(
+            Deal.closed_at.is_(None)
+        )
     else:
-        deals = db.query(Deal).filter(Deal.closed_at.is_(None)).all()
+        query = db.query(Deal).filter(Deal.closed_at.is_(None))
+    if organization_id is not None:
+        try:
+            org_uuid = uuid_lib.UUID(str(organization_id))
+            query = query.filter(Deal.organization_id == org_uuid)
+        except ValueError:
+            pass
+    deals = query.all()
 
     if not deals:
         return {
@@ -259,7 +334,9 @@ def forecast_close_date(db: Session, deal: Deal) -> datetime:
     return forecast
 
 
-def get_deals_at_risk(db: Session) -> list[dict[str, Any]]:
+def get_deals_at_risk(
+    db: Session, *, organization_id: str | None = None
+) -> list[dict[str, Any]]:
     """
     Identify deals at risk of being lost.
 
@@ -270,12 +347,18 @@ def get_deals_at_risk(db: Session) -> list[dict[str, Any]]:
     """
     risk_deals = []
 
-    deals = (
+    query = (
         db.query(Deal)
         .filter(Deal.closed_at.is_(None))
         .filter(Deal.stage.in_([DealStage.NEGOTIATION, DealStage.PROPOSAL]))
-        .all()
     )
+    if organization_id is not None:
+        try:
+            org_uuid = uuid_lib.UUID(str(organization_id))
+            query = query.filter(Deal.organization_id == org_uuid)
+        except ValueError:
+            pass
+    deals = query.all()
 
     now = datetime.now(timezone.utc)
 

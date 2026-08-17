@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Editorial Approval — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Editorial Approval{% endblock %}
+{% block topbar_meta %}Pending queue · human decisions only · does not authorize publish{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+  <div class="card-title">Governance</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Phase-scoped promote only · Human approval only · Editorial approval does <strong>not</strong> authorize publishing.
+  </p>
+</div>
+
+{% if api_error %}
+<div class="card" data-testid="editorial-pending-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% else %}
+
+<div class="card" data-testid="editorial-pending">
+  <div class="card-title">Pending queue ({{ items|length }})</div>
+  {% if items %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Content</th>
+          <th>Title</th>
+          <th>State</th>
+          <th>Phase</th>
+          <th>Staging</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr data-testid="editorial-pending-row">
+          <td style="font-family:monospace">{{ item.content_id }}</td>
+          <td>{{ item.title or "—" }}</td>
+          <td><span class="pill blue">{{ item.editorial_state }}</span></td>
+          <td style="font-family:monospace">{{ item.phase }}</td>
+          <td>{{ "yes" if item.staging_available else "no" }}</td>
+          <td><a class="btn btn-ghost btn-sm" href="/editorial/{{ item.content_id }}">Review</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px" data-testid="editorial-pending-empty">
+    No items awaiting editorial decision.
+  </p>
+  {% endif %}
+</div>
+
+{% endif %}
+
+{% endblock %}

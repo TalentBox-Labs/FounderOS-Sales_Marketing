@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job_id }} — Publishing — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Publish Detail{% endblock %}
+{% block topbar_meta %}Manual publish · orchestration only{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+  <a href="/publishing" class="btn btn-ghost btn-sm">← Queue</a>
+{% endblock %}
+
+{% block content %}
+
+{% if api_error %}
+<div class="card" data-testid="publishing-detail-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif not_found %}
+<div class="card" data-testid="publishing-not-found" style="border-left:3px solid var(--amber)">
+  <div class="card-title">Job not found</div>
+  <p style="color:var(--text-muted);font-size:13px">No publish job <code>{{ job_id }}</code>.</p>
+</div>
+{% elif job %}
+
+<div class="card" data-testid="publishing-detail">
+  <div class="card-title">Job metadata (read-only)</div>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><th style="width:180px">job_id</th><td style="font-family:monospace;font-size:12px">{{ job.job_id }}</td></tr>
+        <tr><th>bundle</th><td style="font-family:monospace">{{ job.bundle_id }}</td></tr>
+        <tr><th>target channel</th><td>{{ job.channel }} <span class="pill gray">{{ job.channel_owner }}</span></td></tr>
+        <tr><th>status</th><td><span class="pill blue" data-testid="pub-status">{{ job.state }}</span></td></tr>
+        <tr><th>requested_by</th><td>{{ job.requested_by }}</td></tr>
+        <tr><th>retry_count</th><td>{{ job.retry_count or 0 }}</td></tr>
+        <tr><th>bundle path</th><td style="font-family:monospace;font-size:12px">{{ job.bundle or "—" }}</td></tr>
+        <tr><th>editorial_phase</th><td>{{ job.editorial_phase or "—" }}</td></tr>
+        <tr><th>orchestration_only</th><td>true</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% if job.errors %}
+  <p style="color:var(--red);font-size:13px;margin-top:10px" data-testid="pub-errors">
+    Errors: {{ job.errors|join("; ") }}
+  </p>
+  {% endif %}
+  {% if job.adapter_result %}
+  <pre style="font-size:12px;margin-top:10px;background:var(--surface2);padding:10px;border-radius:var(--radius-sm);white-space:pre-wrap" data-testid="pub-adapter">{{ job.adapter_result | tojson(indent=2) }}</pre>
+  {% endif %}
+</div>
+
+<div class="card" data-testid="publishing-actions">
+  <div class="card-title">Manual actions</div>
+  <div style="display:grid;gap:10px;max-width:520px">
+    <label style="font-size:12px">Requested by
+      <input id="pub-requester" data-testid="pub-action-requester" type="text" placeholder="Human name"
+             style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)" />
+    </label>
+    <label style="font-size:12px">Notes
+      <textarea id="pub-notes" data-testid="pub-action-notes" rows="2"
+                style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)"></textarea>
+    </label>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <button type="button" class="btn btn-primary btn-sm" data-testid="pub-publish" data-action="publish">Manual Publish</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-testid="pub-retry" data-action="retry">Retry</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-testid="pub-cancel" data-action="cancel">Cancel</button>
+    </div>
+    <pre id="pub-action-result" data-testid="pub-action-result" style="display:none;font-size:12px;white-space:pre-wrap;background:var(--surface2);padding:10px;border-radius:var(--radius-sm)"></pre>
+  </div>
+</div>
+
+<div class="card" data-testid="publishing-audit">
+  <div class="card-title">Audit trail</div>
+  {% if audit %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Event</th>
+          <th>State</th>
+          <th>Requested By</th>
+          <th>Channel</th>
+          <th>Retries</th>
+          <th>Errors</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in audit|reverse %}
+        <tr>
+          <td style="font-family:monospace;font-size:12px">{{ row.utc_timestamp }}</td>
+          <td>{{ row.event }}</td>
+          <td>{{ row.state }}</td>
+          <td>{{ row.requested_by }}</td>
+          <td>{{ row.channel }}</td>
+          <td>{{ row.retry_count }}</td>
+          <td style="font-size:12px">{{ row.errors|join("; ") if row.errors else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px">No audit events.</p>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const jobId = {{ job_id|tojson }};
+  const resultEl = document.getElementById("pub-action-result");
+  async function act(action) {
+    const body = {
+      requested_by: (document.getElementById("pub-requester").value || "").trim(),
+      notes: (document.getElementById("pub-notes").value || "").trim(),
+    };
+    resultEl.style.display = "block";
+    resultEl.textContent = "Submitting…";
+    try {
+      const res = await fetch("/api/v1/publishing/" + jobId + "/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        resultEl.textContent = "Error " + res.status + ": " + (data.detail || JSON.stringify(data));
+        return;
+      }
+      resultEl.textContent = JSON.stringify(data, null, 2);
+      window.setTimeout(function () { window.location.reload(); }, 500);
+    } catch (err) {
+      resultEl.textContent = String(err);
+    }
+  }
+  document.querySelectorAll("[data-action]").forEach(function (btn) {
+    btn.addEventListener("click", function () { act(btn.getAttribute("data-action")); });
+  });
+})();
+</script>
+
+{% endif %}
+
+{% endblock %}

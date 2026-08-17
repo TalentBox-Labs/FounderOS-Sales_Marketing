@@ -34,7 +34,8 @@ services:
     environment:
       DATABASE_URL: postgresql://cyril.s.thomas:${POSTGRES_PASSWORD:-postgres}@db:5432/revenue_os
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      # Must be set in the environment — no insecure default (see revenue_os/config.py).
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
     depends_on:
       db:
         condition: service_healthy

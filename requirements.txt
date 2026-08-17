@@ -2,7 +2,6 @@
 # Python 3.10+ recommended (CrewAI stack).
 
 crewai>=0.80.0
-crewai-tools>=0.25.0
 pandas>=2.0.0
 PyYAML>=6.0
 pytest>=8.0.0

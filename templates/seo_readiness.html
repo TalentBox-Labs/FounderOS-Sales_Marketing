@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}SEO Readiness — Founder OS{% endblock %}
+{% block topbar_title %}SEO Readiness Engine{% endblock %}
+{% block topbar_meta %}Read-only · S1 Phase 1 · Production SEO BLOCKED{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill amber">Activation blocked</span>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+  <div class="card-title">Boundaries</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    SEO Engine inspects Website Engine artifacts only.
+    No auto-fix, publish, index, or search-engine submission.
+    Domain ratification pending — production SEO remains blocked.
+  </p>
+</div>
+
+{% if api_error %}
+<div class="card" data-testid="seo-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">Scan failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif site %}
+
+<div class="card" style="margin-bottom:14px" data-testid="seo-site-summary">
+  <div class="card-title">Site status: {{ site.status }}</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Pages: {{ site.page_count }}
+    · Origin: {{ site.configured_origin }}
+    {% if site.truncated %}· truncated at {{ site.max_pages }}{% endif %}
+  </p>
+</div>
+
+<div class="card" data-testid="seo-page-list">
+  <div class="card-title">Pages</div>
+  {% if site.pages %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Status</th>
+          <th>Score</th>
+          <th>Blockers</th>
+          <th>Errors</th>
+          <th>Warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in site.pages %}
+        <tr>
+          <td><a href="/seo/{{ p.slug }}">{{ p.slug }}</a></td>
+          <td>{{ p.status }}</td>
+          <td>{{ p.score }}</td>
+          <td>{{ p.domain_blockers|length }}</td>
+          <td>{{ p.errors|length }}</td>
+          <td>{{ p.warnings|length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px">No Website Engine page artifacts found under output/website/.</p>
+  {% endif %}
+</div>
+
+{% endif %}
+
+{% endblock %}

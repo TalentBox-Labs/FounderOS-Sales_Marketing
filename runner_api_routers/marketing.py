@@ -91,15 +91,24 @@ def marketing_generate(
     output_path = Path(output_root) / req.topic.replace(" ", "_").lower()
     output_path.mkdir(parents=True, exist_ok=True)
 
+    # Live path must invoke the existing CLI module (src.marketing_crew).
+    # revenue_os.agents.marketing_crew does not exist (Sprint C blocker).
     r = _run(
         [
             sys.executable,
             "-m",
-            "revenue_os.agents.marketing_crew",
+            "src.marketing_crew",
+            "--brand",
+            req.brand,
+            "--topic",
             req.topic,
+            "--keyword",
             req.keyword,
+            "--geo",
             req.geo,
+            "--funnel",
             req.funnel,
+            "--output",
             str(output_path),
         ]
     )

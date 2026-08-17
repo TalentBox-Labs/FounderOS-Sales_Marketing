@@ -79,9 +79,10 @@ def action_score_unscored_leads(db: Session, params: dict) -> dict[str, Any]:
 
 
 def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
-    """Promote high-scoring leads/prospects to qualified and emit events."""
-    from revenue_os.automation.events import emit_contact_qualified
+    """Identify high-scoring leads/prospects eligible for human qualification.
 
+    SALES A4: does not mutate Contact.status — human gate required via CRM API.
+    """
     threshold = int(params.get("threshold", QUALIFY_SCORE_THRESHOLD))
     candidates = (
         db.query(Contact)
@@ -92,56 +93,30 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
         .limit(int(params.get("limit", 25)))
         .all()
     )
-    qualified = []
-    for contact in candidates:
-        contact.status = ContactStatus.QUALIFIED
-        qualified.append({
+    eligible = [
+        {
             "id": str(contact.id),
             "name": f"{contact.first_name} {contact.last_name}".strip(),
             "email": contact.email,
-        })
-    db.commit()
+            "lead_score": contact.lead_score,
+            "status": contact.status.value,
+            "suggested_status": ContactStatus.QUALIFIED.value,
+        }
+        for contact in candidates
+    ]
 
-    from revenue_os.services.approvals import request_approval
+    log_agent_action(
+        actor=ACTOR,
+        action_type="qualify_high_scorers_recommendation",
+        target_type="contact_batch",
+        detail={
+            "threshold": threshold,
+            "eligible_count": len(eligible),
+            "status_mutated": False,
+        },
+    )
 
-    for contact in qualified:
-        try:
-            emit_contact_qualified(contact["id"])
-        except Exception as e:
-            logger.warning(f"emit_contact_qualified failed for {contact['id']}: {e}")
-        # Outbound email is a risky action: propose it, let a human approve.
-        try:
-            request_approval(
-                requested_by=ACTOR,
-                action_type="send_outreach_email",
-                title=f"Send intro email to {contact['name'] or contact['email']}",
-                description=(
-                    "Contact was auto-qualified by Hermes (score >= "
-                    f"{threshold}). Approving hands the intro email to the "
-                    "n8n send-email workflow."
-                ),
-                target_type="contact",
-                target_id=contact["id"],
-                payload={"contact_id": contact["id"], "name": contact["name"],
-                         "email": contact["email"], "template": "intro"},
-            )
-            # Hand off awareness of the pending approval to the founder-facing
-            # agent — the concrete example of inter-agent collaboration this
-            # platform actually does, not a demo message.
-            try:
-                from revenue_os.agents.orchestration import AgentCoordinator
-
-                AgentCoordinator.send_message(
-                    from_agent="hermes", to_agent="copilot",
-                    message=f"Qualified {contact['name'] or contact['email']} and proposed an intro email — awaiting founder approval.",
-                    data={"contact_id": contact["id"], "action_type": "send_outreach_email"},
-                )
-            except Exception as e:
-                logger.warning(f"agent handoff message failed for {contact['id']}: {e}")
-        except Exception as e:
-            logger.warning(f"approval request failed for {contact['id']}: {e}")
-    return {"qualified": len(qualified), "threshold": threshold,
-            "outreach_approvals_filed": len(qualified)}
+    return {"eligible": eligible, "qualified": 0, "status_mutated": False}
 
 
 def action_create_deals_for_qualified(db: Session, params: dict) -> dict[str, Any]:

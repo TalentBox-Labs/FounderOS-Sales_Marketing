@@ -49,14 +49,14 @@ def job_score_new_leads() -> dict[str, Any]:
         scored = 0
         for contact in contacts:
             try:
-                score = score_contact(db, contact)
+                payload = score_contact(db, contact)
                 scored += 1
                 log_agent_action(
                     actor=ACTOR,
                     action_type="lead_scored",
                     target_type="contact",
                     target_id=str(contact.id),
-                    detail={"score": score},
+                    detail={"score": payload["score"], "status_changed": False},
                 )
             except Exception as e:
                 logger.warning(f"Scoring failed for contact {contact.id}: {e}")
