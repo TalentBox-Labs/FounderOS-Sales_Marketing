@@ -75,6 +75,7 @@ from runner_api_routers.heartbeat import router as heartbeat_router
 from runner_api_routers.n8n_webhooks import router as n8n_webhooks_router
 from runner_api_routers.goals import router as goals_router
 from runner_api_routers.approvals import router as approvals_router
+from runner_api_routers.revenue_orchestration import router as revenue_orchestration_router
 from runner_api_routers.crm import router as crm_router
 from runner_api_routers.cockpit import router as cockpit_router
 from runner_api_routers.operator_flow import router as operator_flow_router
@@ -254,6 +255,7 @@ app.include_router(heartbeat_router)
 app.include_router(n8n_webhooks_router)
 app.include_router(goals_router)
 app.include_router(approvals_router)
+app.include_router(revenue_orchestration_router)
 app.include_router(crm_router)
 app.include_router(qualified_demand_router)
 app.include_router(commercial_outcome_router)
@@ -459,9 +461,10 @@ async def _startup_persistence_and_heartbeat() -> None:
         logger.error(f"n8n bridge initialization failed: {e}")
 
     try:
-        from revenue_os.agents.orchestration import seed_platform_agents
+        from revenue_os.agents.orchestration import seed_platform_agents, WorkflowOrchestrator
 
         seed_platform_agents()
+        WorkflowOrchestrator.seed_revenue_workflows()
     except Exception as e:
         logger.error(f"Agent registry seeding failed: {e}")
 

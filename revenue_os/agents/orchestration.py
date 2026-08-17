@@ -11,6 +11,10 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
+# REV-ORCH M1 — registered revenue workflow keys (not new SoTs)
+REV_ORCH_M1_WORKFLOW_KEY = "rev_orch_research_to_outreach"
+REV_ORCH_M1_AGENT_STEP = "rev_orch_m1_pipeline"
+
 
 class OrchestrationStrategy(Enum):
     """Agent orchestration strategies."""
@@ -140,6 +144,8 @@ class WorkflowOrchestrator:
 
     _workflows: dict[str, AgentWorkflow] = {}
     _executions: dict[str, WorkflowExecution] = {}
+    _revenue_step_handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+    _revenue_workflows_seeded: bool = False
 
     @classmethod
     def create_workflow(
@@ -190,16 +196,17 @@ class WorkflowOrchestrator:
             started_at=datetime.now(timezone.utc),
         )
         cls._executions[execution.id] = execution
+        run_context = {**context, "execution_id": execution.id}
 
         try:
             if workflow.strategy == OrchestrationStrategy.SEQUENTIAL:
-                cls._execute_sequential(execution, workflow, context)
+                cls._execute_sequential(execution, workflow, run_context)
             elif workflow.strategy == OrchestrationStrategy.PARALLEL:
-                cls._execute_parallel(execution, workflow, context)
+                cls._execute_parallel(execution, workflow, run_context)
             elif workflow.strategy == OrchestrationStrategy.HIERARCHICAL:
-                cls._execute_hierarchical(execution, workflow, context)
+                cls._execute_hierarchical(execution, workflow, run_context)
             elif workflow.strategy == OrchestrationStrategy.CONSENSUS:
-                cls._execute_consensus(execution, workflow, context)
+                cls._execute_consensus(execution, workflow, run_context)
 
             execution.status = "completed"
             execution.completed_at = datetime.now(timezone.utc)
@@ -310,10 +317,117 @@ class WorkflowOrchestrator:
             execution.confidence = 0.0
 
     @classmethod
+    def register_revenue_step_handler(
+        cls,
+        step_name: str,
+        handler: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> None:
+        """Register a bounded revenue workflow step (implementation layer dispatch)."""
+        cls._revenue_step_handlers[step_name] = handler
+
+    @classmethod
+    def seed_revenue_workflows(cls) -> None:
+        """Register M1+ revenue workflows and step handlers (idempotent)."""
+        if cls._revenue_workflows_seeded:
+            return
+        cls._revenue_workflows_seeded = True
+
+        if REV_ORCH_M1_AGENT_STEP not in cls._revenue_step_handlers:
+            cls.register_revenue_step_handler(
+                REV_ORCH_M1_AGENT_STEP, cls._handle_m1_research_to_outreach
+            )
+
+        if not any(w.name == REV_ORCH_M1_WORKFLOW_KEY for w in cls._workflows.values()):
+            cls.create_workflow(
+                name=REV_ORCH_M1_WORKFLOW_KEY,
+                description=(
+                    "M1: tenant-scoped contact → research → qualify → draft → ApprovalRequest"
+                ),
+                strategy=OrchestrationStrategy.SEQUENTIAL,
+                agents=[REV_ORCH_M1_AGENT_STEP],
+                trigger_condition="api:research-to-outreach",
+            )
+
+    @classmethod
+    def _handle_m1_research_to_outreach(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch M1 pipeline to RevenueOrchestrationService (subordinate implementation)."""
+        from revenue_os.services.revenue_orchestration_service import (
+            RevenueOrchestrationError,
+            run_research_to_outreach,
+        )
+
+        db = context["db"]
+        tenant = context["tenant"]
+        contact_id = context["contact_id"]
+        execution_id = context.get("execution_id")
+        try:
+            result = run_research_to_outreach(
+                db,
+                tenant,
+                contact_id,
+                workflow_run_id=str(execution_id) if execution_id else None,
+            )
+            return {
+                "ok": True,
+                "result": result,
+                "decision": "approval_pending",
+                "confidence": 1.0,
+            }
+        except RevenueOrchestrationError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "decision": "failed",
+                "confidence": 0.0,
+            }
+
+    @classmethod
+    def execute_revenue_workflow(
+        cls,
+        workflow_key: str,
+        *,
+        db: Any,
+        tenant: Any,
+        contact_id: str,
+    ) -> dict[str, Any]:
+        """Canonical revenue workflow dispatch — routes to registered implementation steps."""
+        from revenue_os.services.revenue_orchestration_service import RevenueOrchestrationError
+
+        cls.seed_revenue_workflows()
+        workflow = next(
+            (w for w in cls._workflows.values() if w.name == workflow_key and w.enabled),
+            None,
+        )
+        if workflow is None:
+            raise ValueError(f"Unknown revenue workflow: {workflow_key}")
+
+        execution = cls.execute_workflow(
+            workflow.id,
+            context={"db": db, "tenant": tenant, "contact_id": contact_id},
+        )
+        if execution is None:
+            raise RuntimeError("Workflow execution failed to start")
+
+        step_result = execution.agent_results.get(REV_ORCH_M1_AGENT_STEP, {})
+        if execution.status == "failed" or not step_result.get("ok"):
+            raise RevenueOrchestrationError(
+                step_result.get("error", "Workflow execution failed")
+            )
+
+        payload = step_result.get("result") or {}
+        return {
+            **payload,
+            "workflow_execution_id": execution.id,
+            "orchestrator": "WorkflowOrchestrator",
+        }
+
+    @classmethod
     def _execute_agent(cls, agent_name: str, context: dict[str, Any]) -> dict[str, Any]:
-        """Execute a single agent."""
-        # Placeholder for actual agent execution
-        # In production, this would call the actual agent/crew
+        """Execute a single agent or registered revenue workflow step."""
+        handler = cls._revenue_step_handlers.get(agent_name)
+        if handler is not None:
+            return handler(context)
+        # Placeholder for non-revenue agents not yet wired
         return {
             "decision": f"action_by_{agent_name}",
             "confidence": 0.75,
