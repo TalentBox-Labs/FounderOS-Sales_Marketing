@@ -230,6 +230,66 @@ def classify_and_draft_reply(
     return _fallback_classify_reply(prospect_name, reply_text)
 
 
+def generate_follow_up_email(
+    prospect_name: str,
+    company_name: str,
+    *,
+    step: int,
+    context: str | None = None,
+    prior_subject: str | None = None,
+) -> dict[str, str]:
+    """Draft a single follow-up email (proposal-only — never sends)."""
+    subject_hint = prior_subject or f"Re: Quick thought for {company_name}"
+    raw = _chat(
+        _SYSTEM_SDR,
+        (
+            f"Write follow-up #{step} for {prospect_name} at {company_name}. "
+            f"Prior subject: {subject_hint}. Context: {context or 'prior cold outreach sent'}\n\n"
+            "Return strict JSON: {\"subject\": \"...\", \"body\": \"...\", \"rationale\": \"...\"}"
+        ),
+        max_tokens=400,
+    )
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            subject = str(parsed.get("subject", "")).strip()
+            body = str(parsed.get("body", "")).strip()
+            rationale = str(parsed.get("rationale", "")).strip()
+            if subject and body:
+                return {"subject": subject[:500], "body": body, "rationale": rationale}
+        except Exception:
+            pass
+    return _fallback_follow_up_email(prospect_name, company_name, step=step, prior_subject=subject_hint)
+
+
+def _fallback_follow_up_email(
+    prospect_name: str,
+    company_name: str,
+    *,
+    step: int,
+    prior_subject: str,
+) -> dict[str, str]:
+    if step == 1:
+        body = (
+            f"Hi {prospect_name},\n\n"
+            f"Circling back on my note about {company_name} — still think there could be a fit.\n\n"
+            f"Open to a quick chat this week?\n\nBest"
+        )
+        rationale = "First bounded follow-up after initial outreach"
+    else:
+        body = (
+            f"Hi {prospect_name},\n\n"
+            f"Last quick bump in case my earlier note got buried — happy to reconnect whenever "
+            f"timing works for {company_name}.\n\nBest"
+        )
+        rationale = "Second bounded follow-up; cadence limit applies"
+    return {
+        "subject": prior_subject,
+        "body": body,
+        "rationale": rationale,
+    }
+
+
 def _fallback_classify_reply(prospect_name: str, reply_text: str) -> dict[str, str]:
     text = (reply_text or "").lower()
     if "not interested" in text or "no thanks" in text or "remove me" in text:

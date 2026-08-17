@@ -157,6 +157,18 @@ def receive_n8n_event(
             if contact is not None:
                 old_score = contact.lead_score or 0
                 contact.lead_score = old_score + REPLY_SCORE_BOOST
+                from revenue_os.models.activity import Activity, ActivityType
+
+                db.add(
+                    Activity(
+                        contact_id=contact.id,
+                        activity_type=ActivityType.EMAIL_REPLY,
+                        subject="Inbound email reply",
+                        body=str(payload.get("body") or payload.get("snippet") or "")[:2000],
+                        direction="inbound",
+                        status="completed",
+                    )
+                )
                 db.commit()
                 actions.append(f"lead_score {old_score} -> {contact.lead_score}")
                 _publish(

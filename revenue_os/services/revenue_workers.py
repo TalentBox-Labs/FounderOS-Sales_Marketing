@@ -17,6 +17,7 @@ from revenue_os.services import ai_service
 
 WORKER_RESEARCH = "research_worker"
 WORKER_PERSONALIZATION = "personalization_worker"
+WORKER_FOLLOWUP = "followup_worker"
 
 
 def _build_contact_context(db: Session, contact: Contact) -> dict[str, Any]:
@@ -250,4 +251,70 @@ def run_personalization_worker(
         "body": body,
         "rationale": summary,
         "source_refs": ["research_proposal"] if research else ["crm_context"],
+    }
+
+
+def run_followup_worker(
+    db: Session,
+    contact: Contact,
+    organization_id: str,
+    *,
+    cadence_step: int,
+    source_activity_id: str,
+    eligibility: dict[str, Any],
+) -> dict[str, Any]:
+    """FollowUpWorker — draft and recommend timing only. No ApprovalRequest or send."""
+    if not contact.email:
+        return {
+            "ok": False,
+            "reason": "Contact has no email address",
+            "worker": WORKER_FOLLOWUP,
+        }
+
+    ctx = _build_contact_context(db, contact)
+    summary = _context_summary(ctx)
+    prior_subject = None
+    from revenue_os.models.activity import Activity
+
+    try:
+        act = db.get(Activity, uuid_lib.UUID(str(source_activity_id)))
+        if act is not None:
+            prior_subject = act.subject
+    except (ValueError, TypeError):
+        pass
+
+    draft = ai_service.generate_follow_up_email(
+        ctx["name"],
+        ctx["company_name"] or "their company",
+        step=cadence_step,
+        context=summary,
+        prior_subject=prior_subject,
+    )
+    if not draft.get("body"):
+        return {
+            "ok": False,
+            "reason": "Follow-up draft generation failed",
+            "worker": WORKER_FOLLOWUP,
+        }
+
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": organization_id,
+        "worker": WORKER_FOLLOWUP,
+        "worker_classification": "SPECIALIZED_AI_WORKER",
+        "channel": "email",
+        "email": contact.email,
+        "name": ctx["name"],
+        "subject": draft["subject"],
+        "body": draft["body"],
+        "rationale": draft.get("rationale", ""),
+        "cadence_step": cadence_step,
+        "source_activity_id": source_activity_id,
+        "recommended_send_after": eligibility.get("recommended_send_after"),
+        "source_refs": ["activity_history", "eligibility_policy"],
+        "evidence": {
+            "eligibility_state": eligibility.get("state"),
+            "follow_ups_sent": eligibility.get("follow_ups_sent"),
+        },
     }

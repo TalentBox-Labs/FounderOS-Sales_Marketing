@@ -66,6 +66,47 @@ def job_score_new_leads() -> dict[str, Any]:
         db.close()
 
 
+def job_scan_follow_up_eligibility() -> dict[str, Any]:
+    """Propose governed follow-ups for eligible contacts (human approval still required)."""
+    from revenue_os.services.follow_up_eligibility import scan_eligible_follow_ups
+    from revenue_os.services.revenue_orchestration_service import run_follow_up_proposal_scheduled
+
+    db = SessionLocal()
+    try:
+        candidates = scan_eligible_follow_ups(db)
+        proposed = 0
+        skipped = 0
+        for item in candidates:
+            result = run_follow_up_proposal_scheduled(
+                db,
+                item["organization_id"],
+                item["contact_id"],
+            )
+            if result.get("ok"):
+                proposed += 1
+                log_agent_action(
+                    actor=ACTOR,
+                    action_type="followup_proposal_scheduled",
+                    target_type="contact",
+                    target_id=item["contact_id"],
+                    organization_id=item["organization_id"],
+                    detail={
+                        "cadence_step": item.get("cadence_step"),
+                        "approval_id": result.get("approval_id"),
+                    },
+                )
+            else:
+                skipped += 1
+        db.commit()
+        return {
+            "candidates": len(candidates),
+            "proposals_filed": proposed,
+            "skipped": skipped,
+        }
+    finally:
+        db.close()
+
+
 def job_check_deals_at_risk() -> dict[str, Any]:
     """Detect at-risk deals and emit events so workflows can react."""
     from revenue_os.automation.events import emit_deal_at_risk
@@ -312,6 +353,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "sync_gmail_inbox", job_sync_gmail_inbox,
         _env_int("HEARTBEAT_GMAIL_SYNC_SEC", 900),
+    )
+    scheduler.register(
+        "scan_follow_up_eligibility", job_scan_follow_up_eligibility,
+        _env_int("HEARTBEAT_FOLLOWUP_SCAN_SEC", 3600),
     )
     if heartbeat_enabled():
         scheduler.start()

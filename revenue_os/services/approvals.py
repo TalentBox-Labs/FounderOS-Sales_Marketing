@@ -39,7 +39,24 @@ def _validate_outbound_payload(db: Session, payload: dict) -> None:
     org_id = payload.get("organization_id")
     if not contact_id or not org_id:
         raise ValueError("Outbound payload missing contact_id or organization_id")
-    get_contact_for_tenant(db, str(org_id), str(contact_id))
+    contact = get_contact_for_tenant(db, str(org_id), str(contact_id))
+    if payload.get("workflow_kind") == "rev_orch_m2_follow_up":
+        _revalidate_follow_up_before_send(db, contact, payload)
+
+
+def _revalidate_follow_up_before_send(db: Session, contact, payload: dict) -> None:
+    """Execution-time stale authority revalidation for delayed follow-up sends."""
+    from revenue_os.services.follow_up_eligibility import (
+        contact_has_stop_tags,
+        has_reply_stop_after_activity,
+    )
+
+    if contact_has_stop_tags(contact):
+        raise ValueError("Contact has do-not-contact / unsubscribe tag — send blocked")
+
+    source_id = str(payload.get("source_activity_id") or "")
+    if source_id and has_reply_stop_after_activity(db, contact.id, source_id):
+        raise ValueError("Reply recorded since follow-up was proposed — send blocked")
 
 
 def _execute_send_outreach_email(db: Session, payload: dict) -> dict[str, Any]:
@@ -67,11 +84,15 @@ def _execute_send_outreach_email(db: Session, payload: dict) -> dict[str, Any]:
     if delivered:
         try:
             cid = uuid_lib.UUID(str(payload.get("contact_id")))
+            subject = f"Outbound: {payload.get('template', 'email')}"
+            if payload.get("workflow_kind") == "rev_orch_m2_follow_up":
+                step = payload.get("follow_up_step")
+                subject = f"Follow-up #{step}: {payload.get('template', 'email')}"
             db.add(
                 Activity(
                     contact_id=cid,
                     activity_type=ActivityType.EMAIL,
-                    subject=f"Outbound: {payload.get('template', 'email')}",
+                    subject=subject,
                     body=(payload.get("context") or {}).get("body", "")[:2000],
                     direction="outbound",
                     status="completed",
