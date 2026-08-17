@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 REV_ORCH_M1_WORKFLOW_KEY = "rev_orch_research_to_outreach"
 REV_ORCH_M1_AGENT_STEP = "rev_orch_m1_pipeline"
 
+# REV-ORCH M2 — governed follow-up lifecycle
+REV_ORCH_M2_WORKFLOW_KEY = "rev_orch_follow_up_to_outreach"
+REV_ORCH_M2_AGENT_STEP = "rev_orch_m2_pipeline"
+
 
 class OrchestrationStrategy(Enum):
     """Agent orchestration strategies."""
@@ -348,6 +352,22 @@ class WorkflowOrchestrator:
                 trigger_condition="api:research-to-outreach",
             )
 
+        if REV_ORCH_M2_AGENT_STEP not in cls._revenue_step_handlers:
+            cls.register_revenue_step_handler(
+                REV_ORCH_M2_AGENT_STEP, cls._handle_m2_follow_up_to_outreach
+            )
+
+        if not any(w.name == REV_ORCH_M2_WORKFLOW_KEY for w in cls._workflows.values()):
+            cls.create_workflow(
+                name=REV_ORCH_M2_WORKFLOW_KEY,
+                description=(
+                    "M2: eligibility → FollowUpWorker → ApprovalRequest (human-gated send)"
+                ),
+                strategy=OrchestrationStrategy.SEQUENTIAL,
+                agents=[REV_ORCH_M2_AGENT_STEP],
+                trigger_condition="api:follow-up-propose",
+            )
+
     @classmethod
     def _handle_m1_research_to_outreach(cls, context: dict[str, Any]) -> dict[str, Any]:
         """Dispatch M1 pipeline to RevenueOrchestrationService (subordinate implementation)."""
@@ -362,6 +382,39 @@ class WorkflowOrchestrator:
         execution_id = context.get("execution_id")
         try:
             result = run_research_to_outreach(
+                db,
+                tenant,
+                contact_id,
+                workflow_run_id=str(execution_id) if execution_id else None,
+            )
+            return {
+                "ok": True,
+                "result": result,
+                "decision": "approval_pending",
+                "confidence": 1.0,
+            }
+        except RevenueOrchestrationError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "decision": "failed",
+                "confidence": 0.0,
+            }
+
+    @classmethod
+    def _handle_m2_follow_up_to_outreach(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch M2 follow-up pipeline to RevenueOrchestrationService."""
+        from revenue_os.services.revenue_orchestration_service import (
+            RevenueOrchestrationError,
+            run_follow_up_to_outreach,
+        )
+
+        db = context["db"]
+        tenant = context["tenant"]
+        contact_id = context["contact_id"]
+        execution_id = context.get("execution_id")
+        try:
+            result = run_follow_up_to_outreach(
                 db,
                 tenant,
                 contact_id,
@@ -408,7 +461,8 @@ class WorkflowOrchestrator:
         if execution is None:
             raise RuntimeError("Workflow execution failed to start")
 
-        step_result = execution.agent_results.get(REV_ORCH_M1_AGENT_STEP, {})
+        step_name = workflow.agents[0] if workflow.agents else REV_ORCH_M1_AGENT_STEP
+        step_result = execution.agent_results.get(step_name, {})
         if execution.status == "failed" or not step_result.get("ok"):
             raise RevenueOrchestrationError(
                 step_result.get("error", "Workflow execution failed")

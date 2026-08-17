@@ -11,9 +11,13 @@ from pydantic import BaseModel, Field
 from revenue_os.database import SessionLocal
 from revenue_os.agents.orchestration import (
     REV_ORCH_M1_WORKFLOW_KEY,
+    REV_ORCH_M2_WORKFLOW_KEY,
     WorkflowOrchestrator,
 )
-from revenue_os.services.revenue_orchestration_service import RevenueOrchestrationError
+from revenue_os.services.revenue_orchestration_service import (
+    RevenueOrchestrationError,
+    inspect_follow_up_eligibility,
+)
 from revenue_os.services.tenant_resolution import require_tenant_context
 from runner_api_routers.utils import _verify_api_key
 
@@ -53,6 +57,50 @@ def research_to_outreach(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("M1 orchestration failed for contact %s", contact_id)
+        raise HTTPException(status_code=500, detail="Orchestration failed") from exc
+    finally:
+        db.close()
+
+
+@router.get("/contacts/{contact_id}/follow-up/eligibility")
+def follow_up_eligibility(
+    contact_id: str,
+    http_request: Request,
+    __: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """M2: deterministic follow-up eligibility inspection (no AI, no send)."""
+    tenant = require_tenant_context(http_request)
+    db = SessionLocal()
+    try:
+        return inspect_follow_up_eligibility(db, tenant, contact_id)
+    except RevenueOrchestrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
+@router.post("/contacts/{contact_id}/follow-up/propose")
+def follow_up_propose(
+    contact_id: str,
+    http_request: Request,
+    _: ResearchToOutreachRequest = ResearchToOutreachRequest(),
+    __: str | None = Depends(_verify_api_key),
+) -> dict[str, Any]:
+    """M2: eligibility → FollowUpWorker → ApprovalRequest (pending)."""
+    tenant = require_tenant_context(http_request)
+    db = SessionLocal()
+    try:
+        result = WorkflowOrchestrator.execute_revenue_workflow(
+            REV_ORCH_M2_WORKFLOW_KEY,
+            db=db,
+            tenant=tenant,
+            contact_id=contact_id,
+        )
+        return {"ok": True, **result}
+    except RevenueOrchestrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("M2 follow-up orchestration failed for contact %s", contact_id)
         raise HTTPException(status_code=500, detail="Orchestration failed") from exc
     finally:
         db.close()
