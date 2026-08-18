@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Activity — Founder OS{% endblock %}
+{% block topbar_title %}Activity &amp; Provenance{% endblock %}
+{% block topbar_meta %}Understandable history of revenue actions{% endblock %}
+
+{% block content %}
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="activity-unavailable">{{ snapshot.message }}</p>
+{% elif snapshot.state == 'empty' %}
+<p class="founder-empty" data-testid="activity-empty">{{ snapshot.message }}</p>
+{% else %}
+
+<div class="founder-card" data-testid="activity-timeline">
+  <div class="founder-card-title">Recent events</div>
+  {% for e in snapshot.events %}
+  <div class="founder-list-item" data-testid="activity-event">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <strong>{{ e.label }}</strong>
+      {% if e.status %}<span class="pill gray">{{ e.status }}</span>{% endif %}
+    </div>
+    <div class="founder-meta">
+      {{ e.created_at or '—' }}
+      {% if e.actor %} · {{ e.actor }}{% endif %}
+      {% if e.target_type and e.target_id %}
+      · {{ e.target_type }}
+      {% if e.target_type == 'contact' %}
+      <a href="/contacts/{{ e.target_id }}">{{ e.target_id[:8] }}…</a>
+      {% else %}
+      {{ e.target_id[:12] }}…
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

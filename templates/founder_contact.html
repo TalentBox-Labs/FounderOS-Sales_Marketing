@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}{{ workspace.contact.name if workspace.contact else 'Contact' }} — Founder OS{% endblock %}
+{% block topbar_title %}Contact Revenue Workspace{% endblock %}
+{% block topbar_meta %}{% if workspace.contact %}{{ workspace.contact.email }}{% endif %}{% endblock %}
+
+{% block topbar_right %}
+  <a href="/demand" class="btn btn-ghost btn-sm">← Contacts</a>
+{% endblock %}
+
+{% block content %}
+{% if workspace.state == 'not_found' %}
+<p class="founder-empty" data-testid="contact-not-found">{{ workspace.message }}</p>
+{% elif workspace.state != 'ok' or not workspace.contact %}
+<p class="founder-empty" data-testid="contact-unavailable">{{ workspace.message or 'Contact unavailable' }}</p>
+{% else %}
+{% set c = workspace.contact %}
+
+<div class="founder-stat-row">
+  <div class="founder-stat">
+    <div class="founder-stat-label">Status</div>
+    <div class="founder-stat-val" style="font-size:16px">{{ c.status }}</div>
+  </div>
+  <div class="founder-stat">
+    <div class="founder-stat-label">Lead score</div>
+    <div class="founder-stat-val">{{ c.lead_score }}</div>
+  </div>
+  <div class="founder-stat">
+    <div class="founder-stat-label">Deals</div>
+    <div class="founder-stat-val">{{ workspace.deals | length }}</div>
+  </div>
+</div>
+
+<div class="founder-card" style="margin-bottom:18px" data-testid="contact-workflow">
+  <div class="founder-card-title">Revenue workflow</div>
+  <div class="workflow-steps">
+    {% for key, label in [('research','Research'),('draft','Draft'),('approval','Approval'),('send','Send'),('follow_up','Follow-up'),('reply','Reply')] %}
+    {% set st = workspace.workflow[key] %}
+    <span class="workflow-step {{ st }}">{{ label }} · {{ st }}</span>
+    {% endfor %}
+  </div>
+  <p class="founder-meta">Governed path: research → draft → human approval → send → follow-up → reply</p>
+</div>
+
+<div class="founder-grid">
+  <div class="founder-card" data-testid="contact-details">
+    <div class="founder-card-title">{{ c.name }}</div>
+    <div class="founder-meta">Email: {{ c.email }}</div>
+    {% if c.company %}<div class="founder-meta">Company: {{ c.company }}</div>{% endif %}
+    {% if c.phone %}<div class="founder-meta">Phone: {{ c.phone }}</div>{% endif %}
+    {% if operator.configured %}
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-primary btn-sm" data-testid="research-outreach-btn"
+        onclick="contactAction('research')">Start research &amp; draft</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-testid="followup-propose-btn"
+        onclick="contactAction('followup')">Propose follow-up</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="contact-reply">
+    <div class="founder-card-title">Latest reply &amp; next action</div>
+    {% if workspace.reply.state == 'empty' %}
+      <p class="founder-empty">No inbound reply assessed yet</p>
+    {% elif workspace.reply.state == 'unavailable' %}
+      <p class="founder-empty">{{ workspace.reply.message }}</p>
+    {% else %}
+      <div class="founder-list-item">
+        <span class="pill blue">{{ workspace.reply.reply_type or 'Unknown' }}</span>
+        {% if workspace.reply.meeting_interest %}
+        <span class="pill amber">Meeting interest</span>
+        {% endif %}
+        {% if workspace.reply.booking_eligible %}
+        <span class="pill green">Booking eligible</span>
+        <div class="founder-meta">Scheduling is not available yet — booking workflow pending</div>
+        {% elif workspace.reply.booking_status == 'interest_detected' %}
+        <div class="founder-meta">Meeting interest detected — booking workflow pending</div>
+        {% endif %}
+        {% if workspace.reply.summary %}
+        <div class="founder-meta" style="margin-top:6px">{{ workspace.reply.summary }}</div>
+        {% endif %}
+        {% if workspace.reply.recommended_next_action %}
+        <div class="founder-meta"><strong>Recommended:</strong> {{ workspace.reply.recommended_next_action }} (advisory only)</div>
+        {% endif %}
+        {% if workspace.reply.requires_human_review %}
+        <div class="founder-meta"><span class="pill amber">Needs human review</span></div>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="contact-followup">
+    <div class="founder-card-title">Follow-up state</div>
+    {% if workspace.follow_up.state == 'empty' %}
+      <p class="founder-empty">{{ workspace.follow_up.message }}</p>
+    {% elif workspace.follow_up.state == 'unavailable' %}
+      <p class="founder-empty">{{ workspace.follow_up.message }}</p>
+    {% else %}
+      <div class="founder-meta">State: {{ workspace.follow_up.state or '—' }}</div>
+      <div class="founder-meta">Eligible: {{ 'Yes' if workspace.follow_up.eligible else 'No' }}</div>
+      {% if workspace.follow_up.reason %}<div class="founder-meta">{{ workspace.follow_up.reason }}</div>{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="contact-deals">
+    <div class="founder-card-title">Deals</div>
+    {% if not workspace.deals %}
+      <p class="founder-empty">No deals linked</p>
+    {% else %}
+      {% for d in workspace.deals %}
+      <div class="founder-list-item">
+        <strong>{{ d.name }}</strong>
+        <div class="founder-meta">{{ d.stage }} · {{ d.value }} {{ d.currency }}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+    <a href="/operator#stage-deals" class="btn btn-ghost btn-sm" style="margin-top:8px">Manage in workflow →</a>
+  </div>
+
+  <div class="founder-card" data-testid="contact-timeline">
+    <div class="founder-card-title">Activity timeline</div>
+    {% if not workspace.timeline %}
+      <p class="founder-empty">No activity for this contact</p>
+    {% else %}
+      {% for t in workspace.timeline %}
+      <div class="founder-list-item">
+        <strong>{{ t.label }}</strong>
+        <div class="founder-meta">{{ t.created_at or '—' }} · {{ t.actor or 'system' }}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</div>
+
+<pre id="contact-action-result" data-testid="contact-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CONTACT_ID = {{ (workspace.contact.id | tojson) if workspace.contact else 'null' }};
+
+async function contactPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+
+function showContactResult(msg, ok) {
+  const el = document.getElementById('contact-action-result');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+  if (typeof showToast === 'function') showToast(msg, ok);
+}
+
+async function contactAction(kind) {
+  if (!CONTACT_ID) return;
+  let res;
+  if (kind === 'research') {
+    if (!confirm('Start governed research → draft → approval?')) return;
+    res = await contactPost(`/api/v1/revenue/contacts/${CONTACT_ID}/research-to-outreach`, {});
+    showContactResult(res.ok ? ('Draft queued for approval: ' + JSON.stringify(res.data)) : ('Failed: ' + (res.data.detail || res.status)), res.ok);
+  } else if (kind === 'followup') {
+    if (!confirm('Propose governed follow-up (requires approval)?')) return;
+    res = await contactPost(`/api/v1/revenue/contacts/${CONTACT_ID}/follow-up/propose`, {});
+    showContactResult(res.ok ? ('Follow-up proposed: ' + JSON.stringify(res.data)) : ('Failed: ' + (res.data.detail || res.status)), res.ok);
+  }
+  if (res && res.ok) setTimeout(() => location.reload(), 900);
+}
+</script>
+{% endblock %}
