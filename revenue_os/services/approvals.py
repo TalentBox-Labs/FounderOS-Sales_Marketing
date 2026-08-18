@@ -136,11 +136,130 @@ def _execute_send_linkedin_message(db: Session, payload: dict) -> dict[str, Any]
     }
 
 
+def _execute_book_meeting(db: Session, payload: dict) -> dict[str, Any]:
+    """Create calendar event after human approval. Revalidates tenant and slot at execution time."""
+    import json
+    import uuid as uuid_lib
+    from datetime import datetime, timezone
+
+    from revenue_os.models.activity import Activity, ActivityType, MeetingActivity
+    from revenue_os.models.contact import Contact
+    from revenue_os.services.booking_eligibility import revalidate_booking_execution
+    from revenue_os.services.calendar_executor import create_tenant_calendar_event
+
+    org_id = str(payload.get("organization_id") or "")
+    contact_id = str(payload.get("contact_id") or "")
+    if not org_id or not contact_id:
+        raise ValueError("Booking payload missing organization_id or contact_id")
+
+    contact = get_contact_for_tenant(db, org_id, contact_id)
+    revalidate_booking_execution(db, contact, org_id, payload)
+
+    idempotency_key = payload.get("idempotency_key")
+    if idempotency_key:
+        existing = (
+            db.query(Activity)
+            .filter(
+                Activity.contact_id == contact.id,
+                Activity.activity_type == ActivityType.MEETING,
+                Activity.status == "completed",
+                Activity.body.contains(idempotency_key),
+            )
+            .first()
+        )
+        if existing is not None:
+            return {
+                "executed": True,
+                "deduplicated": True,
+                "activity_id": str(existing.id),
+                "idempotency_key": idempotency_key,
+                "note": "Meeting already booked for this idempotency key",
+            }
+
+    start_raw = payload.get("selected_slot_start")
+    end_raw = payload.get("selected_slot_end")
+    if not start_raw or not end_raw:
+        raise ValueError("Booking payload missing selected slot")
+
+    start_time = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+    end_time = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+
+    if start_time <= datetime.now(timezone.utc):
+        raise ValueError("Selected slot is stale or in the past — booking blocked")
+
+    attendees = [a for a in (payload.get("attendees") or []) if a]
+    if contact.email and contact.email not in attendees:
+        attendees.append(contact.email)
+
+    calendar_result = create_tenant_calendar_event(
+        org_id,
+        title=str(payload.get("meeting_title") or "Meeting"),
+        description=str(payload.get("meeting_notes") or ""),
+        start_time=start_time,
+        end_time=end_time,
+        attendees=attendees,
+        idempotency_key=idempotency_key,
+    )
+
+    if not calendar_result.get("ok"):
+        return {
+            "executed": False,
+            "note": calendar_result.get("reason", "Calendar execution failed"),
+            "idempotency_key": idempotency_key,
+        }
+
+    activity = Activity(
+        contact_id=contact.id,
+        activity_type=ActivityType.MEETING,
+        subject=str(payload.get("meeting_title") or "Booked meeting"),
+        body=json.dumps(
+            {
+                "idempotency_key": idempotency_key,
+                "provider_event_id": calendar_result.get("provider_event_id"),
+                "connector": calendar_result.get("connector"),
+                "selected_slot_start": start_raw,
+                "selected_slot_end": end_raw,
+                "workflow_kind": payload.get("workflow_kind"),
+            }
+        ),
+        direction="outbound",
+        status="completed",
+        performed_at=datetime.now(timezone.utc),
+    )
+    db.add(activity)
+    db.flush()
+    db.add(
+        MeetingActivity(
+            activity_id=activity.id,
+            meeting_url=calendar_result.get("meeting_url"),
+            duration_minutes=int(payload.get("duration_minutes") or 30),
+            notes=str(payload.get("meeting_notes") or "")[:2000],
+        )
+    )
+    db.flush()
+
+    status_before = contact.status.value if contact.status else None
+    return {
+        "executed": True,
+        "provider_event_id": calendar_result.get("provider_event_id"),
+        "connector": calendar_result.get("connector"),
+        "activity_id": str(activity.id),
+        "idempotency_key": idempotency_key,
+        "contact_status_unchanged": True,
+        "status_before": status_before,
+    }
+
+
 EXECUTORS: dict[str, Callable[[Session, dict], dict[str, Any]]] = {
     "send_outreach_email": _execute_send_outreach_email,
     "create_deal": _execute_create_deal,
     "send_linkedin_message": _execute_send_linkedin_message,
     "send_reply_email": _execute_send_outreach_email,
+    "book_meeting": _execute_book_meeting,
 }
 
 

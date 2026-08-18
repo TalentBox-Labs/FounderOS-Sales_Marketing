@@ -232,6 +232,52 @@ class GoogleCalendarClient:
             logger.error(f"Failed to get free slots: {str(e)}")
             return []
 
+    @classmethod
+    def has_busy_overlap(
+        cls,
+        calendar_id: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> bool:
+        """Return True if any event overlaps [start_time, end_time). Fail closed on error."""
+        if not cls._credentials:
+            raise RuntimeError("Google Calendar not configured — cannot revalidate slot")
+        if start_time.tzinfo is None or end_time.tzinfo is None:
+            raise ValueError("Slot revalidation requires timezone-aware timestamps")
+        if end_time <= start_time:
+            raise ValueError("Invalid slot interval for revalidation")
+
+        try:
+            from google.oauth2.service_account import Credentials
+            from googleapiclient.discovery import build
+
+            credentials = Credentials.from_service_account_info(cls._credentials)
+            service = build("calendar", "v3", credentials=credentials)
+            events_result = (
+                service.events()
+                .list(
+                    calendarId=calendar_id or "primary",
+                    timeMin=start_time.isoformat(),
+                    timeMax=end_time.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+            for event in events_result.get("items", []):
+                raw_start = (event.get("start") or {}).get("dateTime")
+                raw_end = (event.get("end") or {}).get("dateTime")
+                if not raw_start or not raw_end:
+                    return True
+                busy_start = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+                busy_end = datetime.fromisoformat(raw_end.replace("Z", "+00:00"))
+                if start_time < busy_end and end_time > busy_start:
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to revalidate Google Calendar slot: {str(e)}")
+            raise RuntimeError("Google Calendar slot revalidation failed closed") from e
+
 
 class OutlookCalendarClient:
     """Outlook/Office 365 Calendar integration."""

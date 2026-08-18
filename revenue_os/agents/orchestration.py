@@ -23,6 +23,10 @@ REV_ORCH_M2_AGENT_STEP = "rev_orch_m2_pipeline"
 REV_ORCH_M3_WORKFLOW_KEY = "rev_orch_inbound_reply_handling"
 REV_ORCH_M3_AGENT_STEP = "rev_orch_m3_pipeline"
 
+# REV-ORCH M4 — governed meeting booking
+REV_ORCH_M4_WORKFLOW_KEY = "rev_orch_booking_to_meeting"
+REV_ORCH_M4_AGENT_STEP = "rev_orch_m4_pipeline"
+
 
 class OrchestrationStrategy(Enum):
     """Agent orchestration strategies."""
@@ -389,6 +393,23 @@ class WorkflowOrchestrator:
                 trigger_condition="webhook:email.replied",
             )
 
+        if REV_ORCH_M4_AGENT_STEP not in cls._revenue_step_handlers:
+            cls.register_revenue_step_handler(
+                REV_ORCH_M4_AGENT_STEP, cls._handle_m4_booking_to_meeting
+            )
+
+        if not any(w.name == REV_ORCH_M4_WORKFLOW_KEY for w in cls._workflows.values()):
+            cls.create_workflow(
+                name=REV_ORCH_M4_WORKFLOW_KEY,
+                description=(
+                    "M4: booking eligibility → availability → BookingWorker → "
+                    "ApprovalRequest → calendar executor"
+                ),
+                strategy=OrchestrationStrategy.SEQUENTIAL,
+                agents=[REV_ORCH_M4_AGENT_STEP],
+                trigger_condition="api:booking-propose",
+            )
+
     @classmethod
     def _handle_m1_research_to_outreach(cls, context: dict[str, Any]) -> dict[str, Any]:
         """Dispatch M1 pipeline to RevenueOrchestrationService (subordinate implementation)."""
@@ -480,6 +501,40 @@ class WorkflowOrchestrator:
                 "ok": True,
                 "result": result,
                 "decision": result.get("routing", {}).get("recommended_next_action", "assessed"),
+                "confidence": 1.0,
+            }
+        except RevenueOrchestrationError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "decision": "failed",
+                "confidence": 0.0,
+            }
+
+    @classmethod
+    def _handle_m4_booking_to_meeting(cls, context: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch M4 booking pipeline to RevenueOrchestrationService."""
+        from revenue_os.services.revenue_orchestration_service import (
+            RevenueOrchestrationError,
+            run_booking_to_meeting,
+        )
+
+        db = context["db"]
+        tenant = context["tenant"]
+        contact_id = context["contact_id"]
+        execution_id = context.get("execution_id")
+        try:
+            result = run_booking_to_meeting(
+                db,
+                tenant,
+                contact_id,
+                workflow_run_id=str(execution_id) if execution_id else None,
+                selected_slot=context.get("selected_slot"),
+            )
+            return {
+                "ok": True,
+                "result": result,
+                "decision": "approval_pending",
                 "confidence": 1.0,
             }
         except RevenueOrchestrationError as exc:

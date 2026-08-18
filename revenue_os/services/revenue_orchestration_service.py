@@ -15,11 +15,15 @@ from revenue_os.services.activity_log import log_agent_action
 from revenue_os.services.approvals import request_approval
 from revenue_os.services.lead_scoring_service import score_contact
 from revenue_os.services.follow_up_eligibility import evaluate_follow_up_eligibility
+from revenue_os.services.booking_eligibility import evaluate_booking_eligibility
+from revenue_os.services.calendar_executor import get_tenant_availability
 from revenue_os.services.revenue_workers import (
+    WORKER_BOOKING,
     WORKER_FOLLOWUP,
     WORKER_PERSONALIZATION,
     WORKER_REPLY_ANALYSIS,
     WORKER_RESEARCH,
+    run_booking_worker,
     run_followup_worker,
     run_personalization_worker,
     run_reply_analysis_worker,
@@ -42,6 +46,7 @@ STATE_DRAFT_CREATED = "DRAFT_CREATED"
 STATE_APPROVAL_PENDING = "APPROVAL_PENDING"
 STATE_FOLLOWUP_ELIGIBLE = "FOLLOWUP_ELIGIBLE"
 STATE_FOLLOWUP_PROPOSED = "FOLLOWUP_PROPOSED"
+STATE_BOOKING_PROPOSED = "BOOKING_PROPOSED"
 
 
 class RevenueOrchestrationError(ValueError):
@@ -524,6 +529,193 @@ def wake_inbound_reply_handling(
         )
     except RevenueOrchestrationError as exc:
         return {"ok": False, "reason": str(exc)}
+
+
+def inspect_booking_eligibility(
+    db: Session,
+    tenant: TenantContext,
+    contact_id: str,
+) -> dict[str, Any]:
+    """M4: deterministic booking eligibility inspection (no AI, no calendar)."""
+    org_id = tenant.organization_id
+    try:
+        contact = get_contact_for_tenant(db, org_id, contact_id)
+    except TenantAccessError as exc:
+        raise RevenueOrchestrationError("Contact not in tenant scope") from exc
+
+    eligibility = evaluate_booking_eligibility(db, contact, org_id)
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": org_id,
+        **eligibility,
+    }
+
+
+def inspect_booking_availability(
+    db: Session,
+    tenant: TenantContext,
+    contact_id: str,
+    *,
+    duration_minutes: int = 30,
+) -> dict[str, Any]:
+    """M4: tenant-scoped availability read (requires booking eligibility)."""
+    org_id = tenant.organization_id
+    try:
+        contact = get_contact_for_tenant(db, org_id, contact_id)
+    except TenantAccessError as exc:
+        raise RevenueOrchestrationError("Contact not in tenant scope") from exc
+
+    eligibility = evaluate_booking_eligibility(db, contact, org_id)
+    if not eligibility.get("eligible"):
+        raise RevenueOrchestrationError(eligibility.get("reason", "Not eligible for booking"))
+
+    availability = get_tenant_availability(
+        org_id,
+        duration_minutes=duration_minutes or eligibility.get("duration_minutes", 30),
+    )
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": org_id,
+        "eligibility": eligibility,
+        "availability": availability,
+    }
+
+
+def run_booking_to_meeting(
+    db: Session,
+    tenant: TenantContext,
+    contact_id: str,
+    *,
+    workflow_run_id: str | None = None,
+    selected_slot: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """M4: eligibility → availability → BookingWorker → ApprovalRequest."""
+    return _run_booking_proposal(
+        db,
+        tenant.organization_id,
+        contact_id,
+        workflow_run_id=workflow_run_id,
+        selected_slot=selected_slot,
+    )
+
+
+def _run_booking_proposal(
+    db: Session,
+    org_id: str,
+    contact_id: str,
+    *,
+    workflow_run_id: str | None = None,
+    selected_slot: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    run_id = workflow_run_id or str(uuid.uuid4())
+
+    try:
+        contact = get_contact_for_tenant(db, org_id, contact_id)
+    except TenantAccessError as exc:
+        raise RevenueOrchestrationError("Contact not in tenant scope") from exc
+
+    eligibility = evaluate_booking_eligibility(db, contact, org_id)
+    log_agent_action(
+        actor=ORCHESTRATOR_ACTOR,
+        action_type="rev_orch_booking_eligibility",
+        target_type="contact",
+        target_id=str(contact.id),
+        organization_id=org_id,
+        detail={
+            "workflow_run_id": run_id,
+            "eligible": eligibility.get("eligible"),
+            "state": eligibility.get("state"),
+        },
+    )
+
+    if not eligibility.get("eligible"):
+        raise RevenueOrchestrationError(eligibility.get("reason", "Not eligible for booking"))
+
+    availability = get_tenant_availability(
+        org_id,
+        duration_minutes=int(eligibility.get("duration_minutes") or 30),
+    )
+    if not availability.get("ok"):
+        raise RevenueOrchestrationError(
+            availability.get("reason", "Calendar availability unavailable")
+        )
+
+    proposal = run_booking_worker(
+        db,
+        contact,
+        org_id,
+        availability=availability,
+        eligibility=eligibility,
+        duration_minutes=int(eligibility.get("duration_minutes") or 30),
+    )
+    if not proposal.get("ok"):
+        raise RevenueOrchestrationError(proposal.get("reason", "Booking proposal failed"))
+
+    slot = selected_slot or proposal.get("recommended_slot") or {}
+    if not slot.get("start") or not slot.get("end"):
+        raise RevenueOrchestrationError("No valid slot selected for booking proposal")
+
+    idempotency_key = eligibility["idempotency_key"]
+    approval = request_approval(
+        requested_by=WORKER_BOOKING,
+        action_type="book_meeting",
+        title=f"Book meeting with {proposal.get('meeting_title', contact.email or 'contact')}",
+        description=proposal.get("rationale", "")[:500],
+        target_type="contact",
+        target_id=str(contact.id),
+        payload={
+            "contact_id": str(contact.id),
+            "organization_id": org_id,
+            "selected_slot_start": slot["start"],
+            "selected_slot_end": slot["end"],
+            "meeting_title": proposal["meeting_title"],
+            "meeting_notes": proposal.get("meeting_notes", ""),
+            "attendees": proposal.get("attendees") or ([contact.email] if contact.email else []),
+            "timezone": proposal.get("timezone", "UTC"),
+            "duration_minutes": proposal.get("duration_minutes", 30),
+            "workflow_run_id": run_id,
+            "workflow_kind": "rev_orch_m4_booking",
+            "source_activity_id": proposal.get("source_activity_id"),
+            "idempotency_key": idempotency_key,
+            "candidate_slots": proposal.get("candidate_slots"),
+        },
+        organization_id=org_id,
+    )
+
+    log_agent_action(
+        actor=WORKER_BOOKING,
+        action_type="worker_booking_proposal",
+        target_type="contact",
+        target_id=str(contact.id),
+        organization_id=org_id,
+        detail={
+            "workflow_run_id": run_id,
+            "approval_id": approval["id"],
+            "selected_slot": slot,
+            "candidate_slots": proposal.get("candidate_slots"),
+        },
+    )
+
+    return {
+        "ok": True,
+        "state": STATE_BOOKING_PROPOSED,
+        "workflow_run_id": run_id,
+        "contact_id": str(contact.id),
+        "organization_id": org_id,
+        "eligibility": eligibility,
+        "proposal": {
+            "meeting_title": proposal["meeting_title"],
+            "candidate_slots": proposal.get("candidate_slots"),
+            "recommended_slot": proposal.get("recommended_slot"),
+            "selected_slot": slot,
+            "duration_minutes": proposal.get("duration_minutes"),
+            "timezone": proposal.get("timezone"),
+        },
+        "approval_id": approval["id"],
+        "approval_status": approval.get("status", "pending"),
+    }
 
 
 def _log_note(db: Session, contact_id: uuid.UUID, subject: str, body: str) -> None:

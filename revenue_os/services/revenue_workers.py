@@ -19,6 +19,7 @@ WORKER_RESEARCH = "research_worker"
 WORKER_PERSONALIZATION = "personalization_worker"
 WORKER_FOLLOWUP = "followup_worker"
 WORKER_REPLY_ANALYSIS = "reply_analysis_worker"
+WORKER_BOOKING = "booking_worker"
 
 
 def _build_contact_context(db: Session, contact: Contact) -> dict[str, Any]:
@@ -364,4 +365,49 @@ def run_reply_analysis_worker(
         "recommended_next_action": analysis.get("recommended_next_action"),
         "qualification_recommendation": analysis.get("qualification_recommendation"),
         "source_refs": ["inbound_activity", "crm_context"],
+    }
+
+
+def run_booking_worker(
+    db: Session,
+    contact: Contact,
+    organization_id: str,
+    *,
+    availability: dict[str, Any],
+    eligibility: dict[str, Any],
+    duration_minutes: int = 30,
+) -> dict[str, Any]:
+    """BookingWorker — propose candidate slots and meeting plan only. No calendar create."""
+    slots = availability.get("slots") or []
+    if not slots:
+        return {
+            "ok": False,
+            "reason": "No availability slots to propose",
+            "worker": WORKER_BOOKING,
+        }
+
+    ctx = _build_contact_context(db, contact)
+    candidate_slots = slots[:3]
+    recommended = candidate_slots[0]
+    title = f"Meeting with {ctx['name']}"
+    if ctx.get("company_name"):
+        title = f"Discovery call — {ctx['name']} ({ctx['company_name']})"
+
+    return {
+        "ok": True,
+        "contact_id": str(contact.id),
+        "organization_id": organization_id,
+        "worker": WORKER_BOOKING,
+        "worker_classification": "SPECIALIZED_AI_WORKER",
+        "timezone": eligibility.get("timezone", "UTC"),
+        "duration_minutes": duration_minutes,
+        "candidate_slots": candidate_slots,
+        "recommended_slot": recommended,
+        "meeting_title": title,
+        "meeting_purpose": "Discovery meeting following inbound meeting interest",
+        "meeting_notes": f"Proposed from M3 meeting-interest reply for {ctx['name']}",
+        "rationale": "Selected earliest available slot from tenant calendar availability",
+        "source_activity_id": eligibility.get("source_activity_id"),
+        "attendees": [contact.email] if contact.email else [],
+        "source_refs": ["availability_policy", "booking_eligibility"],
     }
