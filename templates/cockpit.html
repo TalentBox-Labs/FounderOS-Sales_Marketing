@@ -50,7 +50,7 @@
     {% elif snapshot.panels.attention.state == 'empty' %}
       <p class="state-empty" data-testid="attention-empty">{{ snapshot.panels.attention.message }}</p>
     {% else %}
-      {% for item in snapshot.panels.attention.data.items %}
+      {% for item in snapshot.panels.attention.data['items'] %}
       <div class="attention-item" data-testid="attention-item" data-kind="{{ item.kind }}">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="pill {% if item.priority == 'high' %}amber{% else %}blue{% endif %}">{{ item.priority }}</span>
