@@ -40,6 +40,13 @@ from runner_api_routers.utils import (
     PROJECT_ROOT,
 )
 from revenue_os.services.cockpit_read_model import build_cockpit_snapshot
+from revenue_os.services.founder_ui_read_model import (
+    build_activity_snapshot,
+    build_approvals_snapshot,
+    build_command_center_snapshot,
+    build_contact_workspace_snapshot,
+    build_demand_contacts_snapshot,
+)
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.tenant_resolution import resolve_tenant_context
 from revenue_os.services.qualified_demand_service import SOURCE_TO_CONTACT
@@ -53,6 +60,44 @@ router = APIRouter(tags=["ui"])
 def _identity_template_dict(request: Request) -> dict[str, Any] | None:
     ctx = identity_from_request(request)
     return ctx.as_public_dict() if ctx is not None else None
+
+
+def _tenant_template_dict(request: Request) -> dict[str, Any] | None:
+    try:
+        tenant = resolve_tenant_context(request)
+    except HTTPException:
+        return None
+    if tenant is None:
+        return None
+    return {
+        "organization_id": tenant.organization_id,
+        "organization_name": tenant.organization_name,
+        "organization_slug": tenant.organization_slug,
+        "membership_role": tenant.membership_role,
+    }
+
+
+def _founder_page_context(request: Request, *, active_page: str) -> dict[str, Any]:
+    runtime = _load_runtime()
+    tenant_ctx = None
+    org_id = None
+    try:
+        tenant = resolve_tenant_context(request)
+        if tenant is not None:
+            tenant_ctx = _tenant_template_dict(request)
+            org_id = tenant.organization_id
+    except HTTPException:
+        tenant_ctx = None
+        org_id = None
+    return {
+        "request": request,
+        "active_page": active_page,
+        "active_week": runtime.get("active_week", "—"),
+        "operator": cockpit_operator_status(),
+        "identity": _identity_template_dict(request),
+        "tenant": tenant_ctx,
+        "org_id": org_id,
+    }
 
 # Setup templates
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -740,8 +785,69 @@ def page_cockpit(request: Request) -> HTMLResponse | RedirectResponse:
             "snapshot": snapshot,
             "operator": operator,
             "identity": _identity_template_dict(request),
+            "tenant": _tenant_template_dict(request),
         },
     )
+
+
+@router.get("/command", response_class=HTMLResponse, response_model=None)
+def page_founder_command(request: Request) -> HTMLResponse | RedirectResponse:
+    """UI-D1 — Founder Command Center."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="command")
+    ctx["snapshot"] = build_command_center_snapshot(organization_id=ctx.get("org_id"))
+    return templates.TemplateResponse(request=request, name="founder_command.html", context=ctx)
+
+
+@router.get("/demand", response_class=HTMLResponse, response_model=None)
+def page_founder_demand(request: Request) -> HTMLResponse | RedirectResponse:
+    """UI-D1 — Demand and contacts."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="demand")
+    ctx["snapshot"] = build_demand_contacts_snapshot(organization_id=ctx.get("org_id"))
+    return templates.TemplateResponse(request=request, name="founder_demand.html", context=ctx)
+
+
+@router.get("/contacts/{contact_id}", response_class=HTMLResponse, response_model=None)
+def page_founder_contact(
+    request: Request, contact_id: str
+) -> HTMLResponse | RedirectResponse:
+    """UI-D1 — Contact revenue workspace (includes reply / next action)."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="demand")
+    ctx["workspace"] = build_contact_workspace_snapshot(
+        organization_id=ctx.get("org_id"),
+        contact_id=contact_id,
+    )
+    return templates.TemplateResponse(request=request, name="founder_contact.html", context=ctx)
+
+
+@router.get("/pending-approvals", response_class=HTMLResponse, response_model=None)
+def page_founder_approvals(request: Request) -> HTMLResponse | RedirectResponse:
+    """UI-D1 — Governed approval inbox."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="approvals")
+    ctx["snapshot"] = build_approvals_snapshot(organization_id=ctx.get("org_id"))
+    return templates.TemplateResponse(request=request, name="founder_approvals.html", context=ctx)
+
+
+@router.get("/activity", response_class=HTMLResponse, response_model=None)
+def page_founder_activity(request: Request) -> HTMLResponse | RedirectResponse:
+    """UI-D1 — Activity and provenance."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="activity")
+    ctx["snapshot"] = build_activity_snapshot(organization_id=ctx.get("org_id"))
+    return templates.TemplateResponse(request=request, name="founder_activity.html", context=ctx)
 
 
 @router.get("/analytics", response_class=HTMLResponse)
