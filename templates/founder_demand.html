@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Demand &amp; Contacts — Founder OS{% endblock %}
+{% block topbar_title %}Demand &amp; Contacts{% endblock %}
+{% block topbar_meta %}Registered demand and your contact pipeline{% endblock %}
+
+{% block topbar_right %}
+  <a href="/operator/demand/register" class="btn btn-primary btn-sm" data-testid="register-demand-link">Register demand</a>
+{% endblock %}
+
+{% block content %}
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="demand-unavailable">{{ snapshot.message }}</p>
+{% else %}
+
+<div class="founder-card" style="margin-bottom:18px" data-testid="demand-pending">
+  <div class="founder-card-title">Pending demand</div>
+  {% if not snapshot.pending_demands %}
+    <p class="founder-empty">No demand awaiting intake decision</p>
+  {% else %}
+    {% for d in snapshot.pending_demands %}
+    <div class="founder-list-item" data-demand-id="{{ d.demand_id }}">
+      <strong>{{ d.name or d.email or d.demand_id }}</strong>
+      <div class="founder-meta">{{ d.email }} · {{ d.source }} · {{ d.registered_at or '—' }}</div>
+      <div style="margin-top:8px">
+        <a href="/operator#stage-demand" class="btn btn-primary btn-sm">Review in workflow →</a>
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="founder-card" data-testid="contacts-list">
+  <div class="founder-card-title">Contacts</div>
+  {% if not snapshot.contacts %}
+    <p class="founder-empty">No contacts yet — accept demand or register new demand</p>
+  {% else %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Email</th><th>Status</th><th>Score</th><th>Recommendation</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for c in snapshot.contacts %}
+          <tr data-testid="contact-row" data-contact-id="{{ c.id }}">
+            <td>{{ c.name or '—' }}</td>
+            <td>{{ c.email or '—' }}</td>
+            <td><span class="pill gray">{{ c.status }}</span></td>
+            <td>{{ c.lead_score }}</td>
+            <td>{{ c.recommendation or '—' }}</td>
+            <td><a href="/contacts/{{ c.id }}" class="btn btn-ghost btn-sm">Open workspace →</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
