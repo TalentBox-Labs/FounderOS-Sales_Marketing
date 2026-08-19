@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
 {% block title %}Activity — Founder OS{% endblock %}
-{% block topbar_title %}Activity &amp; Provenance{% endblock %}
-{% block topbar_meta %}Understandable history of revenue actions{% endblock %}
+{% block topbar_title %}Activity{% endblock %}
+{% block topbar_meta %}What happened — commercial history for this workspace{% endblock %}
 
 {% block content %}
 {% if snapshot.state == 'unavailable' %}
@@ -21,7 +21,8 @@
     </div>
     <div class="founder-meta">
       {{ e.created_at or '—' }}
-      {% if e.action_type %} · {{ e.action_type }}{% endif %}
+      {% if e.action_type %} · <span data-testid="activity-event-type">{{ e.action_type }}</span>{% endif %}
+      {% if e.source %} · {{ e.source }}{% endif %}
       {% if e.actor %} · {{ e.actor }}{% endif %}
       {% if e.target_type and e.target_id %}
       · {{ e.target_type }}

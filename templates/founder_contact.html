@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %}{{ workspace.contact.name if workspace.contact else 'Contact' }} — Founder OS{% endblock %}
-{% block topbar_title %}Contact Revenue Workspace{% endblock %}
+{% block title %}{{ workspace.contact.name if workspace.contact else 'Person' }} — Founder OS{% endblock %}
+{% block topbar_title %}Person workspace{% endblock %}
 {% block topbar_meta %}{% if workspace.contact %}{{ workspace.contact.email }}{% endif %}{% endblock %}
 
 {% block topbar_right %}
-  <a href="/demand" class="btn btn-ghost btn-sm">← Contacts</a>
+  <a href="/demand" class="btn btn-ghost btn-sm">← People</a>
 {% endblock %}
 
 {% block content %}
@@ -15,14 +15,18 @@
 <p class="founder-empty" data-testid="contact-unavailable">{{ workspace.message or 'Contact unavailable' }}</p>
 {% else %}
 {% set c = workspace.contact %}
+{% set p = (workspace.presentation | default({})) %}
+{% set attention = p.attention if p.attention is defined else {} %}
+{% set journey = p.journey if p.journey is defined else [] %}
+{% set ai_work = p.ai_work if p.ai_work is defined else {} %}
 
 <div class="founder-stat-row">
   <div class="founder-stat">
-    <div class="founder-stat-label">Status</div>
+    <div class="founder-stat-label">Commercial state</div>
     <div class="founder-stat-val" style="font-size:16px">{{ c.status }}</div>
   </div>
   <div class="founder-stat">
-    <div class="founder-stat-label">Lead score</div>
+    <div class="founder-stat-label">Score</div>
     <div class="founder-stat-val">{{ c.lead_score }}</div>
   </div>
   <div class="founder-stat">
@@ -31,15 +35,31 @@
   </div>
 </div>
 
+<div class="founder-card" style="margin-bottom:18px" data-testid="contact-attention">
+  <div class="founder-card-title">What needs you</div>
+  {% if attention.reason %}
+    <p class="founder-meta">{{ attention.reason }}</p>
+    <p class="founder-meta"><strong>Recommended:</strong> {{ attention.next_action }} {% if attention.requires_human %}(your approval may be required){% else %}(advisory){% endif %}</p>
+  {% else %}
+    <p class="founder-empty">No additional attention summary</p>
+  {% endif %}
+</div>
+
 <div class="founder-card" style="margin-bottom:18px" data-testid="contact-workflow">
-  <div class="founder-card-title">Revenue workflow</div>
+  <div class="founder-card-title">Commercial journey</div>
   <div class="workflow-steps">
-    {% for key, label in [('research','Research'),('draft','Draft'),('approval','Approval'),('send','Send'),('follow_up','Follow-up'),('reply','Reply')] %}
-    {% set st = workspace.workflow[key] %}
-    <span class="workflow-step {{ st }}">{{ label }} · {{ st }}</span>
-    {% endfor %}
+    {% if journey %}
+      {% for step in journey %}
+      <span class="workflow-step {{ step.state }}">{{ step.label }} · {{ step.state }}</span>
+      {% endfor %}
+    {% else %}
+      {% for key, label in [('research','Research'),('draft','Draft'),('approval','Approval'),('send','Send'),('follow_up','Follow-up'),('reply','Reply')] %}
+      {% set st = workspace.workflow[key] %}
+      <span class="workflow-step {{ st }}">{{ label }} · {{ st }}</span>
+      {% endfor %}
+    {% endif %}
   </div>
-  <p class="founder-meta">Governed path: research → draft → human approval → send → follow-up → reply</p>
+  <p class="founder-meta">Research and drafts can be AI-prepared. Outbound send and meeting booking stay human-gated.</p>
 </div>
 
 <div class="founder-grid">
@@ -59,14 +79,14 @@
   </div>
 
   <div class="founder-card" data-testid="contact-reply">
-    <div class="founder-card-title">Latest reply &amp; next action</div>
+    <div class="founder-card-title">Latest reply</div>
     {% if workspace.reply.state == 'empty' %}
       <p class="founder-empty">No inbound reply assessed yet</p>
     {% elif workspace.reply.state == 'unavailable' %}
       <p class="founder-empty">{{ workspace.reply.message }}</p>
     {% else %}
       <div class="founder-list-item">
-        <span class="pill blue">{{ workspace.reply.reply_type or 'Unknown' }}</span>
+        <span class="pill blue">{{ workspace.reply.reply_type_label or workspace.reply.reply_type or 'Unknown' }}</span>
         {% if workspace.reply.meeting_interest %}
         <span class="pill amber">Meeting interest</span>
         {% endif %}
@@ -77,8 +97,8 @@
         {% if workspace.reply.summary %}
         <div class="founder-meta" style="margin-top:6px">{{ workspace.reply.summary }}</div>
         {% endif %}
-        {% if workspace.reply.recommended_next_action %}
-        <div class="founder-meta"><strong>Recommended:</strong> {{ workspace.reply.recommended_next_action }} (advisory only)</div>
+        {% if workspace.reply.recommended_next_action_label or workspace.reply.recommended_next_action %}
+        <div class="founder-meta"><strong>Recommended:</strong> {{ workspace.reply.recommended_next_action_label or workspace.reply.recommended_next_action }} (advisory only)</div>
         {% endif %}
         {% if workspace.reply.requires_human_review %}
         <div class="founder-meta"><span class="pill amber">Needs human review</span></div>
@@ -174,6 +194,23 @@
     <p class="founder-meta" id="booking-status-msg" style="display:none;margin-top:10px" data-testid="booking-status-msg"></p>
   </div>
 
+  <div class="founder-card" data-testid="contact-ai-work">
+    <div class="founder-card-title">AI work</div>
+    {% if ai_work.completed %}
+      <div class="founder-meta"><strong>Completed:</strong> {{ ai_work.completed[:4] | join(', ') }}</div>
+    {% endif %}
+    {% if ai_work.proposed %}
+      <div class="founder-meta"><strong>Proposed:</strong> {{ ai_work.proposed | join(', ') }}</div>
+    {% endif %}
+    {% if ai_work.blocked %}
+      <div class="founder-meta"><span class="pill amber">{{ ai_work.blocked | join(' · ') }}</span></div>
+    {% endif %}
+    {% if not ai_work.completed and not ai_work.proposed and not ai_work.blocked %}
+      <p class="founder-empty">No AI work recorded on this person yet</p>
+    {% endif %}
+    <p class="founder-meta">AI does not send or book on its own.</p>
+  </div>
+
   <div class="founder-card" data-testid="contact-followup">
     <div class="founder-card-title">Follow-up state</div>
     {% if workspace.follow_up.state == 'empty' %}
@@ -199,7 +236,6 @@
       </div>
       {% endfor %}
     {% endif %}
-    <a href="/operator#stage-deals" class="btn btn-ghost btn-sm" style="margin-top:8px">Manage in workflow →</a>
   </div>
 
   <div class="founder-card" data-testid="contact-timeline">
@@ -210,7 +246,7 @@
       {% for t in workspace.timeline %}
       <div class="founder-list-item">
         <strong>{{ t.label }}</strong>
-        <div class="founder-meta">{{ t.created_at or '—' }} · {{ t.actor or 'system' }}</div>
+        <div class="founder-meta">{{ t.created_at or '—' }} · {{ t.actor or 'system' }}{% if t.action_type %} · {{ t.action_type }}{% endif %}{% if t.source %} · {{ t.source }}{% endif %}</div>
       </div>
       {% endfor %}
     {% endif %}

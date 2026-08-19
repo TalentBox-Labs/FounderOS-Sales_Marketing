@@ -43,20 +43,43 @@ ACTION_LABELS: dict[str, str] = {
     "qualified_demand_handoff": "Demand registered",
     "qualified_demand_accepted": "Contact accepted",
     "qualified_demand_rejected": "Demand rejected",
-    "rev_orch_research_to_outreach": "Research completed",
-    "rev_orch_followup_eligibility": "Follow-up eligibility checked",
-    "worker_followup_proposal": "Follow-up draft created",
+    "rev_orch_research_to_outreach": "Researched",
+    "worker_research": "Researched",
+    "worker_personalize": "Outreach prepared",
+    "send_outreach_email": "Outreach prepared",
+    "rev_orch_followup_eligibility": "Follow-up checked",
+    "worker_followup_proposal": "Follow-up prepared",
     "rev_orch_reply_assessment": "Reply assessed",
-    "worker_reply_analysis": "Reply analyzed",
-    "commercial_outcome_handoff": "Outcome handoff registered",
-    "commercial_outcome_accepted": "Outcome accepted",
-    "commercial_outcome_rejected": "Outcome rejected",
+    "worker_reply_analysis": "Reply assessed",
+    "commercial_outcome_handoff": "Revenue signal recorded",
+    "commercial_outcome_accepted": "Revenue signal accepted",
+    "commercial_outcome_rejected": "Revenue signal rejected",
     "contact_status_updated": "Contact status updated",
     "deal_stage_updated": "Deal stage updated",
-    "rev_orch_booking_eligibility": "Booking eligibility checked",
-    "worker_booking_proposal": "Booking proposal created",
+    "rev_orch_booking_eligibility": "Meeting eligibility checked",
+    "worker_booking_proposal": "Meeting proposed",
+    "book_meeting": "Meeting proposed",
+    "approval_requested": "Approval requested",
     "approval_approved": "Approval granted",
     "approval_rejected": "Approval rejected",
+}
+
+_NEXT_ACTION_LABELS: dict[str, str] = {
+    "BOOKING_ELIGIBLE": "Review meeting times and submit for approval",
+    "QUALIFY": "Review qualification (advisory)",
+    "HUMAN_REVIEW": "Needs your review",
+    "HANDLE_OBJECTION": "Review the objection (advisory)",
+    "PAUSE": "Pause outreach (advisory)",
+    "DISQUALIFY": "Review disqualification (advisory)",
+    "FOLLOW_UP": "Consider a follow-up (advisory)",
+}
+
+_REPLY_TYPE_LABELS: dict[str, str] = {
+    "MEETING_INTEREST": "Wants a meeting",
+    "OBJECTION": "Raised an objection",
+    "OUT_OF_OFFICE": "Out of office",
+    "UNSUBSCRIBE": "Asked to stop",
+    "QUALIFIED": "Positive commercial signal",
 }
 
 
@@ -77,8 +100,205 @@ def _human_action(action_type: str) -> str:
     if action_type in ACTION_LABELS:
         return ACTION_LABELS[action_type]
     if action_type == "book_meeting":
-        return "Meeting booking"
+        return "Meeting proposed"
     return action_type.replace("_", " ").title()
+
+
+def _label_next_action(code: str | None) -> str | None:
+    if not code:
+        return None
+    return _NEXT_ACTION_LABELS.get(str(code), str(code).replace("_", " ").capitalize())
+
+
+def _label_reply_type(code: str | None) -> str | None:
+    if not code:
+        return None
+    return _REPLY_TYPE_LABELS.get(str(code), str(code).replace("_", " ").capitalize())
+
+
+def _contact_company_name(contact: Contact) -> str | None:
+    company = getattr(contact, "company", None)
+    if company is None:
+        return None
+    if isinstance(company, str):
+        return company
+    name = getattr(company, "name", None)
+    return str(name) if name else None
+
+
+def _proposal_source_label(requested_by: str | None) -> str:
+    if requested_by == "booking_worker":
+        return "AI proposal"
+    if requested_by:
+        return "Proposal"
+    return "Proposal"
+
+
+def _present_approval(item: dict[str, Any]) -> dict[str, Any]:
+    enriched = _enrich_book_meeting_approval(item)
+    out = dict(enriched)
+    action_type = str(out.get("action_type") or "")
+    out["action_label"] = _human_action(action_type)
+    out["proposal_source_label"] = _proposal_source_label(
+        str(out.get("requested_by") or "") or None
+    )
+    out["requires_human_decision"] = True
+    return out
+
+
+def _attention_for_person(
+    *,
+    reply: dict[str, Any],
+    follow_up: dict[str, Any],
+    booking: dict[str, Any],
+    pending_approvals: list[dict[str, Any]],
+    deals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    booking_state = str(booking.get("ui_state") or "")
+    if any(a.get("action_type") == "book_meeting" for a in pending_approvals) or booking_state == "APPROVAL_PENDING":
+        return {
+            "reason": "A meeting time is waiting for your approval.",
+            "next_action": "Review and approve or reject in Approvals.",
+            "requires_human": True,
+            "kind": "approval",
+        }
+    if booking_state == "BOOKED":
+        return {
+            "reason": "A meeting is booked.",
+            "next_action": "Review the confirmation on this page.",
+            "requires_human": False,
+            "kind": "outcome",
+        }
+    if reply.get("booking_eligible") or booking_state == "BOOKING_ELIGIBLE":
+        return {
+            "reason": "This person is eligible for a governed meeting proposal.",
+            "next_action": "View availability and submit for approval. Nothing is booked until you approve.",
+            "requires_human": True,
+            "kind": "booking",
+        }
+    if reply.get("meeting_interest"):
+        return {
+            "reason": "Meeting interest was detected. Booking is not confirmed.",
+            "next_action": reply.get("recommended_next_action_label")
+            or "Review the reply. Eligibility is advisory until you act.",
+            "requires_human": True,
+            "kind": "reply",
+        }
+    if follow_up.get("eligible"):
+        return {
+            "reason": "Follow-up is eligible.",
+            "next_action": "Propose a follow-up. Sending still requires approval.",
+            "requires_human": True,
+            "kind": "follow_up",
+        }
+    if pending_approvals:
+        return {
+            "reason": "An AI proposal is waiting for your decision.",
+            "next_action": "Open Approvals to approve or reject.",
+            "requires_human": True,
+            "kind": "approval",
+        }
+    if deals:
+        stage = deals[0].get("stage") or "open"
+        return {
+            "reason": f"A deal is on this person (stage: {stage}).",
+            "next_action": "Review deal summary. Stage changes stay on the governed operator path.",
+            "requires_human": True,
+            "kind": "deal",
+        }
+    return {
+        "reason": "No urgent commercial signal on this person.",
+        "next_action": "Start research and a draft if you want AI to prepare outreach.",
+        "requires_human": False,
+        "kind": "idle",
+    }
+
+
+def _journey_steps(
+    workflow: dict[str, str],
+    reply: dict[str, Any],
+    booking: dict[str, Any],
+) -> list[dict[str, str]]:
+    booking_state = str(booking.get("ui_state") or "")
+    meeting_state = "pending"
+    if booking_state == "BOOKED":
+        meeting_state = "done"
+    elif booking_state in ("APPROVAL_PENDING", "BOOKING_ELIGIBLE"):
+        meeting_state = "active"
+    elif reply.get("meeting_interest"):
+        meeting_state = "active"
+    return [
+        {"key": "research", "label": "Research", "state": workflow.get("research") or "pending"},
+        {"key": "outreach", "label": "Outreach", "state": workflow.get("draft") or "pending"},
+        {"key": "follow_up", "label": "Follow-up", "state": workflow.get("follow_up") or "pending"},
+        {"key": "reply", "label": "Reply", "state": workflow.get("reply") or "pending"},
+        {"key": "meeting", "label": "Meeting", "state": meeting_state},
+    ]
+
+
+_AI_WORK_ACTORS = frozenset(
+    {
+        "research_worker",
+        "personalization_worker",
+        "followup_worker",
+        "reply_analysis_worker",
+        "booking_worker",
+    }
+)
+
+
+def _is_classified_ai_work(item: dict[str, Any]) -> bool:
+    """True only when actor/action_type is a known worker or rev_orch_* event.
+
+    Human decisions and generic system logs stay on the timeline, not AI work.
+    """
+    action = str(item.get("action_type") or "")
+    actor = str(item.get("actor") or "")
+    if action.startswith("rev_orch_") or action.startswith("worker_"):
+        return True
+    if actor in _AI_WORK_ACTORS or actor.endswith("_worker"):
+        return True
+    return False
+
+
+def _ai_work_summary(
+    timeline: list[dict[str, Any]],
+    pending_approvals: list[dict[str, Any]],
+    booking: dict[str, Any],
+) -> dict[str, Any]:
+    completed = [
+        t.get("label")
+        for t in timeline
+        if t.get("label") and _is_classified_ai_work(t)
+    ][:8]
+    proposed = [_human_action(str(a.get("action_type") or "")) for a in pending_approvals]
+    blocked: list[str] = []
+    if pending_approvals or str(booking.get("ui_state") or "") == "APPROVAL_PENDING":
+        blocked.append("Waiting for your approval")
+    if str(booking.get("ui_state") or "") == "NO_CONNECTOR":
+        blocked.append("Calendar is not connected")
+    if str(booking.get("ui_state") or "") == "CONNECTOR_UNAVAILABLE":
+        blocked.append("This calendar connection cannot show availability")
+    return {
+        "completed": completed,
+        "proposed": proposed,
+        "blocked": blocked,
+    }
+
+
+def _present_people_row(row: dict[str, Any], *, company_name: str | None) -> dict[str, Any]:
+    out = dict(row)
+    out["company_name"] = company_name
+    rec = out.get("recommendation")
+    out["recommendation_label"] = _label_next_action(str(rec) if rec else None) or rec
+    if out.get("demand_link") == "linked":
+        out["attention_reason"] = "Accepted from demand intake"
+    elif out.get("deal_link") == "linked":
+        out["attention_reason"] = "Has a linked deal"
+    else:
+        out["attention_reason"] = "In your people list"
+    out["next_action_label"] = "Open person workspace"
+    return out
 
 
 def _format_slot_display(iso: str | None, *, tz_label: str = "UTC") -> str:
@@ -310,6 +530,7 @@ def _org_scoped_actions(
                 "status": row.status,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "detail": row.detail or {},
+                "source": "agent_log",
             }
         )
     return events
@@ -321,8 +542,10 @@ def _reply_summary_from_assessment(assessment_payload: dict[str, Any] | None) ->
             "state": "empty",
             "message": "No reply assessment yet",
             "reply_type": None,
+            "reply_type_label": None,
             "summary": None,
             "recommended_next_action": None,
+            "recommended_next_action_label": None,
             "meeting_interest": False,
             "booking_eligible": False,
             "booking_status": "none",
@@ -344,6 +567,8 @@ def _reply_summary_from_assessment(assessment_payload: dict[str, Any] | None) ->
         "summary": inner.get("summary"),
         "confidence": inner.get("confidence") or routing.get("confidence"),
         "recommended_next_action": recommended,
+        "recommended_next_action_label": _label_next_action(recommended),
+        "reply_type_label": _label_reply_type(reply_type),
         "meeting_interest": meeting_interest,
         "booking_eligible": booking_eligible,
         "booking_status": booking_status,
@@ -389,13 +614,14 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         snapshot["state"] = "partial"
 
     try:
-        pending = list_requests(status="pending", limit=20, organization_id=organization_id)
+        pending = [
+            _present_approval(a)
+            for a in list_requests(status="pending", limit=20, organization_id=organization_id)
+        ]
         snapshot["pending_approvals"] = pending
         snapshot["pending_approval_count"] = pending_count(organization_id=organization_id)
         snapshot["meeting_booking_pending"] = [
-            _enrich_book_meeting_approval(a)
-            for a in pending
-            if a.get("action_type") == "book_meeting"
+            a for a in pending if a.get("action_type") == "book_meeting"
         ]
     except Exception as exc:  # noqa: BLE001
         logger.warning("Command center approvals unavailable: %s", exc)
@@ -459,18 +685,70 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
     finally:
         db.close()
 
+    snapshot["ai_completed_count"] = len(snapshot.get("recent_activity") or [])
     return snapshot
+
+
+def _scoped_company_names_for_people(
+    *,
+    org_uuid: uuid_lib.UUID,
+    raw_contacts: list[dict[str, Any]],
+) -> dict[str, str | None]:
+    """Company names for People rows already in the org-scoped operator snapshot.
+
+    Never enumerates Contact without organization_id. Only loads IDs present
+    in the scoped snapshot, then requires Contact.organization_id == org_uuid.
+    """
+    contact_ids: list[uuid_lib.UUID] = []
+    for row in raw_contacts:
+        try:
+            contact_ids.append(uuid_lib.UUID(str(row.get("id"))))
+        except (TypeError, ValueError):
+            continue
+    if not contact_ids:
+        return {}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Contact)
+            .filter(Contact.organization_id == org_uuid)
+            .filter(Contact.id.in_(contact_ids))
+            .all()
+        )
+        return {str(contact.id): _contact_company_name(contact) for contact in rows}
+    finally:
+        db.close()
 
 
 def build_demand_contacts_snapshot(*, organization_id: str | None = None) -> dict[str, Any]:
     """Demand + contacts list for founder demo."""
+    org_uuid = _org_uuid(organization_id)
+    if org_uuid is None:
+        return {
+            "generated_at": _utc_now(),
+            "state": "unavailable",
+            "pending_demands": [],
+            "contacts": [],
+            "message": "Organization context required",
+        }
     try:
-        flow = build_operator_flow_snapshot(organization_id=organization_id)
+        flow = build_operator_flow_snapshot(organization_id=str(org_uuid))
+        raw_contacts = flow.get("contacts") or []
+        company_by_id = _scoped_company_names_for_people(
+            org_uuid=org_uuid,
+            raw_contacts=raw_contacts,
+        )
+        people = [
+            _present_people_row(
+                c, company_name=company_by_id.get(str(c.get("id")))
+            )
+            for c in raw_contacts
+        ]
         return {
             "generated_at": _utc_now(),
             "state": "ok",
             "pending_demands": flow.get("pending_demands") or [],
-            "contacts": flow.get("contacts") or [],
+            "contacts": people,
             "message": "",
         }
     except Exception as exc:  # noqa: BLE001
@@ -568,16 +846,30 @@ def build_contact_workspace_snapshot(
                 "action_type": row.action_type,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "actor": row.actor,
+                "source": "agent_log",
             }
             for row in timeline_q.order_by(AgentActionLog.created_at.desc()).limit(30).all()
         ]
 
         pending = list_requests(status="pending", limit=50, organization_id=organization_id)
-        contact_approvals = [a for a in pending if a.get("target_id") == str(contact.id)]
+        contact_approvals = [_present_approval(a) for a in pending if a.get("target_id") == str(contact.id)]
 
         booking = _build_booking_panel(db, tenant, contact, organization_id, contact_approvals)
 
         workflow = _workflow_stages(timeline, contact_approvals, reply, follow_up)
+        presentation = {
+            "attention": _attention_for_person(
+                reply=reply,
+                follow_up=follow_up,
+                booking=ensure_booking_presentation(booking),
+                pending_approvals=contact_approvals,
+                deals=deals,
+            ),
+            "journey": _journey_steps(workflow, reply, ensure_booking_presentation(booking)),
+            "ai_work": _ai_work_summary(
+                timeline, contact_approvals, ensure_booking_presentation(booking)
+            ),
+        }
 
         return attach_safe_booking({
             "generated_at": _utc_now(),
@@ -590,7 +882,7 @@ def build_contact_workspace_snapshot(
                 "email": contact.email,
                 "status": contact.status.value if contact.status else None,
                 "lead_score": contact.lead_score or 0,
-                "company": contact.company,
+                "company": _contact_company_name(contact),
                 "phone": contact.phone,
             },
             "deals": deals,
@@ -598,8 +890,9 @@ def build_contact_workspace_snapshot(
             "reply": reply,
             "booking": booking,
             "timeline": timeline,
-            "pending_approvals": [_enrich_book_meeting_approval(a) for a in contact_approvals],
+            "pending_approvals": contact_approvals,
             "workflow": workflow,
+            "presentation": presentation,
         })
     finally:
         db.close()
@@ -642,8 +935,8 @@ def build_approvals_snapshot(*, organization_id: str | None = None) -> dict[str,
     try:
         pending = list_requests(status="pending", limit=100, organization_id=organization_id)
         recent = list_requests(status=None, limit=30, organization_id=organization_id)
-        pending = [_enrich_book_meeting_approval(a) for a in pending]
-        recent = [_enrich_book_meeting_approval(a) for a in recent]
+        pending = [_present_approval(a) for a in pending]
+        recent = [_present_approval(a) for a in recent]
         meeting_pending = [a for a in pending if a.get("action_type") == "book_meeting"]
         return {
             "generated_at": _utc_now(),
