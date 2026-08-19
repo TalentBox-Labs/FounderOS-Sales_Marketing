@@ -2,7 +2,7 @@
 
 {% block title %}Command Center — Founder OS{% endblock %}
 {% block topbar_title %}Command Center{% endblock %}
-{% block topbar_meta %}What needs your attention right now{% endblock %}
+{% block topbar_meta %}What needs your attention — people, approvals, and commercial work{% endblock %}
 
 {% block topbar_right %}
   {% if operator.configured %}
@@ -14,21 +14,26 @@
 {% endblock %}
 
 {% block content %}
+<p class="founder-meta" data-testid="command-spine-intro" style="margin-bottom:16px">
+  People needing attention, decisions only you can make, and what the system already learned.
+  AI can research, draft, and propose. Sending and booking still require your approval.
+</p>
+
 <div class="founder-stat-row">
-  <div class="founder-stat">
-    <div class="founder-stat-label">Pending approvals</div>
+  <div class="founder-stat" data-testid="command-stat-approvals">
+    <div class="founder-stat-label">Needs your decision</div>
     <div class="founder-stat-val">{{ snapshot.pending_approval_count }}</div>
   </div>
-  <div class="founder-stat">
-    <div class="founder-stat-label">Demand intake</div>
+  <div class="founder-stat" data-testid="command-stat-demand">
+    <div class="founder-stat-label">Demand awaiting intake</div>
     <div class="founder-stat-val">{{ snapshot.pending_demand_count }}</div>
   </div>
-  <div class="founder-stat">
-    <div class="founder-stat-label">Contacts</div>
+  <div class="founder-stat" data-testid="command-stat-people">
+    <div class="founder-stat-label">People</div>
     <div class="founder-stat-val">{{ snapshot.pipeline.contacts }}</div>
   </div>
-  <div class="founder-stat">
-    <div class="founder-stat-label">Deals</div>
+  <div class="founder-stat" data-testid="command-stat-deals">
+    <div class="founder-stat-label">Deals on people</div>
     <div class="founder-stat-val">{{ snapshot.pipeline.deals }}</div>
   </div>
 </div>
@@ -42,36 +47,36 @@
       {% for item in snapshot.pending_approvals[:5] %}
       <div class="founder-list-item">
         <strong>{{ item.title or 'Approval request' }}</strong>
-        <div class="founder-meta">{{ item.action_type }} · contact {{ item.target_id or '—' }}</div>
+        <div class="founder-meta">{{ item.action_label or item.action_type }} · {% if item.target_id %}<a href="/contacts/{{ item.target_id }}">Open person</a>{% else %}no person linked{% endif %}</div>
       </div>
       {% endfor %}
     {% endif %}
   </div>
 
   <div class="founder-card" data-testid="command-demand">
-    <div class="founder-card-title">Demand needing action <a href="/demand" class="btn btn-ghost btn-sm">Manage →</a></div>
+    <div class="founder-card-title">Demand needing action <a href="/demand" class="btn btn-ghost btn-sm">People →</a></div>
     {% if not snapshot.pending_demands %}
       <p class="founder-empty">No pending demand</p>
     {% else %}
       {% for d in snapshot.pending_demands[:5] %}
       <div class="founder-list-item">
         <strong>{{ d.name or d.email or d.demand_id }}</strong>
-        <div class="founder-meta">{{ d.source }} · {{ d.registered_at or '—' }}</div>
+        <div class="founder-meta">{{ d.source }} · {{ d.registered_at or '—' }} · Review intake on People</div>
       </div>
       {% endfor %}
     {% endif %}
   </div>
 
   <div class="founder-card" data-testid="command-replies">
-    <div class="founder-card-title">Recent replies</div>
+    <div class="founder-card-title">What the system learned</div>
     {% if not snapshot.recent_replies %}
       <p class="founder-empty">No replies assessed yet</p>
     {% else %}
       {% for r in snapshot.recent_replies %}
       <div class="founder-list-item">
-        <strong>{{ r.reply_type or 'Reply' }}</strong>
+        <strong>{{ r.reply_type_label or r.reply_type or 'Reply' }}</strong>
         <div class="founder-meta">
-          <a href="/contacts/{{ r.contact_id }}">Open contact →</a>
+          <a href="/contacts/{{ r.contact_id }}">Open person →</a>
           {% if r.summary %} · {{ r.summary[:80] }}{% endif %}
         </div>
       </div>
@@ -88,12 +93,12 @@
       <div class="founder-list-item">
         <span class="pill amber">Meeting interest</span>
         {% if m.booking_status == 'eligible' %}
-        <span class="pill green">Booking eligible</span>
+        <span class="pill green">Ready to propose a meeting</span>
         {% endif %}
         <div class="founder-meta">
-          <a href="/contacts/{{ m.contact_id }}">Contact {{ m.contact_id[:8] }}…</a>
+          <a href="/contacts/{{ m.contact_id }}">Open person workspace →</a>
           {% if m.booking_status == 'eligible' %}
-          · <a href="/contacts/{{ m.contact_id }}#contact-booking-panel">Schedule meeting →</a>
+          · <a href="/contacts/{{ m.contact_id }}#contact-booking-panel">Review times →</a>
           {% endif %}
         </div>
       </div>
@@ -126,14 +131,14 @@
       {% for f in snapshot.follow_up_signals %}
       <div class="founder-list-item">
         <strong>{{ f.name or f.contact_id }}</strong>
-        <div class="founder-meta">{{ f.state }} {% if f.eligible %}· eligible{% endif %}</div>
+        <div class="founder-meta">{% if f.eligible %}Eligible for a proposed follow-up{% else %}{{ f.state }}{% endif %}</div>
       </div>
       {% endfor %}
     {% endif %}
   </div>
 
   <div class="founder-card" data-testid="command-activity">
-    <div class="founder-card-title">Recent activity <a href="/activity" class="btn btn-ghost btn-sm">Full log →</a></div>
+    <div class="founder-card-title">Recent activity <a href="/activity" class="btn btn-ghost btn-sm">Full history →</a></div>
     {% if not snapshot.recent_activity %}
       <p class="founder-empty">No recent activity</p>
     {% else %}
