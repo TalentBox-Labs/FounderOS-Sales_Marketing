@@ -72,9 +72,7 @@
         {% endif %}
         {% if workspace.reply.booking_eligible %}
         <span class="pill green">Booking eligible</span>
-        <div class="founder-meta">Scheduling is not available yet — booking workflow pending</div>
         {% elif workspace.reply.booking_status == 'interest_detected' %}
-        <div class="founder-meta">Meeting interest detected — booking workflow pending</div>
         {% endif %}
         {% if workspace.reply.summary %}
         <div class="founder-meta" style="margin-top:6px">{{ workspace.reply.summary }}</div>
@@ -87,6 +85,93 @@
         {% endif %}
       </div>
     {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="contact-booking-panel">
+    <div class="founder-card-title">Governed meeting booking</div>
+    {% set b = workspace.get('booking') if workspace is mapping and workspace.get('booking') is mapping else {} %}
+    {% if b.ui_state == 'BOOKED' and b.booked_meeting %}
+      <div data-testid="booking-confirmation">
+        <span class="pill green">Booked</span>
+        <div class="founder-meta" style="margin-top:8px"><strong>{{ b.booked_meeting.title }}</strong></div>
+        <div class="founder-meta">{{ b.booked_meeting.slot_start_display }} – {{ b.booked_meeting.slot_end_display }}</div>
+        {% if b.booked_meeting.provider_event_id %}
+        <div class="founder-meta">Reference: {{ b.booked_meeting.provider_event_id[:16] }}…</div>
+        {% endif %}
+        {% if b.booked_meeting.meeting_url %}
+        <div class="founder-meta"><a href="{{ b.booked_meeting.meeting_url }}" target="_blank" rel="noopener">Join meeting →</a></div>
+        {% endif %}
+      </div>
+    {% elif b.ui_state == 'APPROVAL_PENDING' %}
+      <div data-testid="booking-approval-pending">
+        <span class="pill amber">Approval required</span>
+        <p class="founder-meta" style="margin-top:8px">{{ b.message }}</p>
+        {% if b.pending_approval and b.pending_approval.booking_display %}
+        {% set bd = b.pending_approval.booking_display %}
+        <div class="founder-list-item">
+          <div class="founder-meta"><strong>{{ bd.meeting_title }}</strong></div>
+          <div class="founder-meta">Suggested time: {{ bd.slot_start_display }} ({{ bd.timezone }})</div>
+          <div class="founder-meta">Duration: {{ bd.duration_minutes or b.duration_minutes }} min</div>
+        </div>
+        {% endif %}
+        <a href="/pending-approvals" class="btn btn-primary btn-sm" style="margin-top:8px" data-testid="booking-goto-approvals">Review in Approval Inbox →</a>
+      </div>
+    {% elif b.ui_state == 'BOOKING_ELIGIBLE' %}
+      <div data-testid="booking-eligible-panel">
+        <span class="pill green">Booking eligible</span>
+        <p class="founder-meta" style="margin-top:8px">{{ b.message }}</p>
+        <p class="founder-meta">AI proposes slots · <strong>you approve</strong> before any meeting is booked.</p>
+        {% if operator.configured %}
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary btn-sm" data-testid="booking-load-availability"
+            onclick="loadBookingAvailability()">View availability</button>
+        </div>
+        <div id="booking-availability-area" style="display:none;margin-top:12px" data-testid="booking-availability-area">
+          <div class="founder-card-title" style="font-size:13px">Available times ({{ b.timezone }})</div>
+          <div id="booking-slots-list"></div>
+          <p class="founder-meta" id="booking-no-slots" style="display:none">No free slots found. Try again later.</p>
+        </div>
+        <div id="booking-review-area" style="display:none;margin-top:12px" data-testid="booking-review-area">
+          <div class="founder-card-title" style="font-size:13px">Review booking proposal</div>
+          <div class="founder-list-item">
+            <div class="founder-meta">Contact: {{ c.name }}</div>
+            <div class="founder-meta" id="booking-review-title">—</div>
+            <div class="founder-meta" id="booking-review-slot">—</div>
+            <div class="founder-meta">Duration: {{ b.duration_minutes }} min · Timezone: {{ b.timezone }}</div>
+            <div class="founder-meta"><span class="pill gray">AI recommendation</span> · Approval required</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" data-testid="booking-submit-proposal"
+            onclick="submitBookingProposal()">Submit for approval</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="clearBookingSelection()">Choose another slot</button>
+        </div>
+        {% else %}
+        <p class="founder-meta">Sign in as a human operator to schedule meetings</p>
+        {% endif %}
+      </div>
+    {% elif b.ui_state == 'CONNECTOR_UNAVAILABLE' %}
+      <div data-testid="booking-outlook-unavailable">
+        <span class="pill amber">Calendar unavailable</span>
+        <p class="founder-meta" style="margin-top:8px">{{ b.message }}</p>
+      </div>
+    {% elif b.ui_state == 'NO_CONNECTOR' %}
+      <div data-testid="booking-no-connector">
+        <span class="pill gray">No calendar connected</span>
+        <p class="founder-meta" style="margin-top:8px">{{ b.message }}</p>
+      </div>
+    {% elif b.ui_state == 'ERROR' %}
+      <div data-testid="booking-error">
+        <span class="pill red">Booking unavailable</span>
+        <p class="founder-meta">{{ b.message }}</p>
+      </div>
+    {% else %}
+      <div data-testid="booking-not-eligible">
+        {% if workspace.reply.meeting_interest %}
+        <span class="pill amber">Meeting interest</span>
+        {% endif %}
+        <p class="founder-meta" style="margin-top:8px">{{ b.message or 'Not eligible for booking yet' }}</p>
+      </div>
+    {% endif %}
+    <p class="founder-meta" id="booking-status-msg" style="display:none;margin-top:10px" data-testid="booking-status-msg"></p>
   </div>
 
   <div class="founder-card" data-testid="contact-followup">
@@ -139,6 +224,127 @@
 {% block extra_js %}
 <script>
 const CONTACT_ID = {{ (workspace.contact.id | tojson) if workspace.contact else 'null' }};
+const BOOKING_TZ = {{ ((workspace.get('booking') or {}).get('timezone') or 'UTC') | tojson }};
+let selectedBookingSlot = null;
+let bookingSlotsCache = [];
+
+function formatSlotLabel(slot) {
+  if (!slot || !slot.start) return '—';
+  try {
+    const d = new Date(slot.start);
+    return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC';
+  } catch (_) {
+    return slot.start.slice(0, 16);
+  }
+}
+
+function showBookingStatus(msg, ok) {
+  const el = document.getElementById('booking-status-msg');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+  if (typeof showToast === 'function') showToast(msg, ok);
+}
+
+async function bookingGet(path) {
+  const r = await fetch(path, { credentials: 'same-origin' });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+
+async function loadBookingAvailability() {
+  if (!CONTACT_ID) return;
+  showBookingStatus('Loading availability…', true);
+  const res = await bookingGet(`/api/v1/revenue/contacts/${CONTACT_ID}/booking/availability`);
+  const area = document.getElementById('booking-availability-area');
+  const list = document.getElementById('booking-slots-list');
+  const noSlots = document.getElementById('booking-no-slots');
+  if (!area || !list) return;
+  area.style.display = 'block';
+  list.innerHTML = '';
+  document.getElementById('booking-review-area').style.display = 'none';
+  selectedBookingSlot = null;
+
+  if (!res.ok) {
+    const detail = res.data.detail || res.data.reason || res.status;
+    const stale = String(detail).toLowerCase().includes('no longer available') || String(detail).toLowerCase().includes('stale');
+    showBookingStatus(stale ? 'That time is no longer available. Please choose another slot.' : ('Availability unavailable: ' + detail), false);
+    return;
+  }
+
+  const avail = res.data.availability || {};
+  if (avail.connector === 'outlook_calendar' && !(avail.slots || []).length) {
+    showBookingStatus('Availability is not available for this calendar connection yet.', false);
+    return;
+  }
+  if (!avail.ok) {
+    showBookingStatus(avail.reason || 'Calendar availability unavailable', false);
+    return;
+  }
+
+  bookingSlotsCache = avail.slots || [];
+  if (!bookingSlotsCache.length) {
+    noSlots.style.display = 'block';
+    showBookingStatus('No free slots found.', false);
+    return;
+  }
+  noSlots.style.display = 'none';
+  bookingSlotsCache.forEach((slot, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost btn-sm';
+    btn.style.display = 'block';
+    btn.style.marginBottom = '6px';
+    btn.dataset.testid = 'booking-slot-option';
+    btn.textContent = formatSlotLabel(slot);
+    btn.onclick = () => selectBookingSlot(slot, idx);
+    list.appendChild(btn);
+  });
+  showBookingStatus('Select a suggested time below', true);
+}
+
+function selectBookingSlot(slot, idx) {
+  selectedBookingSlot = slot;
+  const review = document.getElementById('booking-review-area');
+  if (!review) return;
+  review.style.display = 'block';
+  document.getElementById('booking-review-slot').textContent = 'Suggested time: ' + formatSlotLabel(slot);
+  document.getElementById('booking-review-title').textContent = 'Meeting with contact';
+  showBookingStatus('Review and submit for human approval', true);
+}
+
+function clearBookingSelection() {
+  selectedBookingSlot = null;
+  const review = document.getElementById('booking-review-area');
+  if (review) review.style.display = 'none';
+  showBookingStatus('', true);
+  document.getElementById('booking-status-msg').style.display = 'none';
+}
+
+async function submitBookingProposal() {
+  if (!CONTACT_ID || !selectedBookingSlot) {
+    showBookingStatus('Select a time slot first', false);
+    return;
+  }
+  if (!confirm('Submit this meeting time for approval? Nothing is booked until you approve.')) return;
+  const res = await contactPost(`/api/v1/revenue/contacts/${CONTACT_ID}/booking/propose`, {
+    selected_slot: selectedBookingSlot,
+  });
+  if (res.ok) {
+    showBookingStatus('Booking submitted for approval. Check Approval Inbox.', true);
+    setTimeout(() => location.reload(), 900);
+  } else {
+    const detail = res.data.detail || res.status;
+    const stale = String(detail).toLowerCase().includes('no longer available') || String(detail).toLowerCase().includes('not available');
+    if (stale) {
+      showBookingStatus('That time is no longer available. Please choose another slot.', false);
+      loadBookingAvailability();
+    } else {
+      showBookingStatus('Proposal failed: ' + detail, false);
+    }
+  }
+}
 
 async function contactPost(path, body) {
   const r = await fetch(path, {

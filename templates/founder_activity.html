@@ -21,6 +21,7 @@
     </div>
     <div class="founder-meta">
       {{ e.created_at or '—' }}
+      {% if e.action_type %} · {{ e.action_type }}{% endif %}
       {% if e.actor %} · {{ e.actor }}{% endif %}
       {% if e.target_type and e.target_id %}
       · {{ e.target_type }}

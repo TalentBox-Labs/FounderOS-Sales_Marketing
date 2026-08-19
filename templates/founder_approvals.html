@@ -16,17 +16,28 @@
   {% else %}
     {% for item in snapshot.pending %}
     <div class="founder-list-item" data-approval-id="{{ item.id }}" data-testid="approval-item">
+      {% if item.action_type == 'book_meeting' %}
+      <span class="pill blue">Meeting booking</span>
+      {% endif %}
       <strong>{{ item.title or 'Approval request' }}</strong>
-      <div class="founder-meta">{{ item.action_type }} · {{ item.description[:120] if item.description else '—' }}</div>
+      <div class="founder-meta">{{ item.action_type or 'unknown' }}{% if item.description %} · {{ item.description[:120] }}{% endif %}</div>
+      {% if item.action_type == 'book_meeting' and item.booking_display %}
+      {% set bd = item.booking_display %}
+      <div class="founder-meta" data-testid="approval-booking-slot">
+        Suggested: {{ bd.slot_start_display }} · {{ bd.duration_minutes or 30 }} min · {{ bd.timezone }}
+      </div>
+      {% if bd.purpose %}<div class="founder-meta">{{ bd.purpose[:160] }}</div>{% endif %}
+      <div class="founder-meta"><span class="pill gray">{{ bd.proposal_source or bd.requested_by_label or 'Proposal' }}</span> · Approval required</div>
+      {% endif %}
       {% if item.target_id %}
       <div class="founder-meta"><a href="/contacts/{{ item.target_id }}">Contact workspace →</a></div>
       {% endif %}
       {% if operator.configured %}
       <div style="margin-top:8px;display:flex;gap:8px">
         <button type="button" class="btn btn-primary btn-sm" data-testid="approve-btn"
-          onclick="decideApproval('{{ item.id }}', true)">Approve</button>
+          onclick="decideApproval('{{ item.id }}', true)">{% if item.action_type == 'book_meeting' %}Approve booking{% else %}Approve{% endif %}</button>
         <button type="button" class="btn btn-ghost btn-sm" data-testid="reject-btn"
-          onclick="decideApproval('{{ item.id }}', false)">Reject</button>
+          onclick="decideApproval('{{ item.id }}', false)">{% if item.action_type == 'book_meeting' %}Reject booking{% else %}Reject{% endif %}</button>
       </div>
       {% else %}
       <p class="founder-meta">Sign in as a human operator to approve or reject</p>
@@ -55,7 +66,7 @@
 
 <div class="founder-card" style="margin-top:18px;border-left:3px solid var(--accent)">
   <div class="founder-card-title">Workflow</div>
-  <p class="founder-meta">Research → AI draft → <strong>Your approval</strong> → Send → Follow-up → Reply. No message sends without approval.</p>
+  <p class="founder-meta">Research → AI draft → <strong>Your approval</strong> → Send → Follow-up → Reply → Booking. No outbound action without approval.</p>
 </div>
 
 <pre id="approval-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>

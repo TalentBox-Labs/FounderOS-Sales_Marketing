@@ -41,6 +41,7 @@ from runner_api_routers.utils import (
 )
 from revenue_os.services.cockpit_read_model import build_cockpit_snapshot
 from revenue_os.services.founder_ui_read_model import (
+    attach_safe_booking,
     build_activity_snapshot,
     build_approvals_snapshot,
     build_command_center_snapshot,
@@ -821,9 +822,11 @@ def page_founder_contact(
     if redirected is not None:
         return redirected
     ctx = _founder_page_context(request, active_page="demand")
-    ctx["workspace"] = build_contact_workspace_snapshot(
-        organization_id=ctx.get("org_id"),
-        contact_id=contact_id,
+    ctx["workspace"] = attach_safe_booking(
+        build_contact_workspace_snapshot(
+            organization_id=ctx.get("org_id"),
+            contact_id=contact_id,
+        )
     )
     return templates.TemplateResponse(request=request, name="founder_contact.html", context=ctx)
 

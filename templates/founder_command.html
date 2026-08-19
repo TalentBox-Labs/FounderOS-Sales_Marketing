@@ -92,8 +92,27 @@
         {% endif %}
         <div class="founder-meta">
           <a href="/contacts/{{ m.contact_id }}">Contact {{ m.contact_id[:8] }}…</a>
-          · Booking workflow pending (scheduling not available yet)
+          {% if m.booking_status == 'eligible' %}
+          · <a href="/contacts/{{ m.contact_id }}#contact-booking-panel">Schedule meeting →</a>
+          {% endif %}
         </div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-meeting-bookings">
+    <div class="founder-card-title">Meeting approvals <a href="/pending-approvals" class="btn btn-ghost btn-sm">Inbox →</a></div>
+    {% if not snapshot.get('meeting_booking_pending') %}
+      <p class="founder-empty">No meeting bookings awaiting approval</p>
+    {% else %}
+      {% for item in snapshot.meeting_booking_pending[:5] %}
+      <div class="founder-list-item">
+        <span class="pill blue">Approval required</span>
+        <strong>{{ item.title or 'Meeting booking' }}</strong>
+        {% if item.booking_display %}
+        <div class="founder-meta">{{ item.booking_display.slot_start_display }}</div>
+        {% endif %}
       </div>
       {% endfor %}
     {% endif %}
