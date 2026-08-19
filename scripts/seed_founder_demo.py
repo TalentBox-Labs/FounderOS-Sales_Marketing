@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from revenue_os.auth import hash_password
 from revenue_os.database import SessionLocal, init_db
 from revenue_os.models.automation_state import AgentActionLog
-from revenue_os.models.contact import Contact, ContactSource, ContactStatus
+from revenue_os.models.contact import Company, Contact, ContactSource, ContactStatus
 from revenue_os.models.organization import (
     MembershipStatus,
     Organization,
@@ -38,8 +38,33 @@ DEMO_EMAIL = os.environ.get("FOUNDER_DEMO_EMAIL", "founder@demo.local")
 DEMO_PASSWORD = os.environ.get("FOUNDER_DEMO_PASSWORD", "FounderDemo123!")
 DEMO_NAME = os.environ.get("FOUNDER_DEMO_NAME", "Demo Founder")
 DEMO_ORG = os.environ.get("FOUNDER_DEMO_ORG", "Demo Workspace")
+DEMO_COMPANY_NAME = "Acme Labs"
+DEMO_COMPANY_DOMAIN = "acmelabs.demo.local"
+DEMO_COMPANY_ID = "ca11e001-0000-4000-8000-000000000001"
 DEMAND_ID = "11111111-1111-1111-1111-111111111111"
-CONTACT_ID = "22222222-2222-2222-2222-222222222222"
+CONTACT_ID = "c2222222-2222-2222-2222-222222222222"
+CONTACT_EMAIL = "alex.prospect@example.com"
+
+
+def ensure_demo_company(db) -> Company:  # noqa: ANN001
+    """Create or reuse the Founder demo Company. Repeat-safe via unique domain."""
+    company = (
+        db.query(Company).filter(Company.domain == DEMO_COMPANY_DOMAIN).first()
+    )
+    if company is None:
+        company = db.query(Company).filter(Company.name == DEMO_COMPANY_NAME).first()
+    if company is None:
+        company = Company(
+            id=uuid.UUID(DEMO_COMPANY_ID),
+            name=DEMO_COMPANY_NAME,
+            domain=DEMO_COMPANY_DOMAIN,
+        )
+        db.add(company)
+        db.flush()
+    elif company.domain is None:
+        company.domain = DEMO_COMPANY_DOMAIN
+        db.flush()
+    return company
 
 
 def seed() -> None:
@@ -87,18 +112,22 @@ def seed() -> None:
                 )
             )
 
-        contact = db.get(Contact, uuid.UUID(CONTACT_ID))
+        company = ensure_demo_company(db)
+
+        contact = (
+            db.query(Contact).filter(Contact.email == CONTACT_EMAIL).first()
+        )
         if contact is None:
             contact = Contact(
                 id=uuid.UUID(CONTACT_ID),
                 organization_id=org.id,
                 first_name="Alex",
                 last_name="Prospect",
-                email="alex.prospect@example.com",
+                email=CONTACT_EMAIL,
                 status=ContactStatus.LEAD,
                 lead_score=72,
                 source=ContactSource.WEB_FORM,
-                company="Acme Labs",
+                company=company,
             )
             db.add(contact)
 
