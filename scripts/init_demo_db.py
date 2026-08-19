@@ -4,6 +4,7 @@
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Never
 import uuid
 
 # Add project root to path
@@ -17,6 +18,50 @@ from revenue_os.analytics.core import (
     DashboardType,
 )
 from revenue_os.analytics.dashboards import DashboardBuilder
+
+
+def _assert_never(value: Never) -> Never:
+    raise TypeError(f"Unhandled demo metric type: {value}")
+
+
+def demo_metric_base_target(metric: AnalyticsMetric) -> float:
+    """Deterministic demo baseline. Preserves target_value when present."""
+    if metric.target_value is not None:
+        return float(metric.target_value)
+    metric_type = metric.metric_type
+    if metric_type is MetricType.REVENUE:
+        return 1_000_000.0
+    if metric_type is MetricType.PERCENTAGE:
+        return 50.0
+    if metric_type is MetricType.TIME:
+        return 45.0
+    if metric_type is MetricType.COUNT:
+        return 100.0
+    if metric_type is MetricType.RATIO:
+        return 75.0
+    if metric_type is MetricType.CUSTOM:
+        return 50.0
+    _assert_never(metric_type)
+
+
+def demo_metric_sample_value(metric: AnalyticsMetric, day_offset: int) -> float:
+    """Type-aware demo sample value. Safe when target_value is None."""
+    jitter_key = hash(str(day_offset))
+    if metric.metric_type is MetricType.REVENUE:
+        value = 750000 + (day_offset * 5000) + (jitter_key % 50000)
+    elif metric.metric_type is MetricType.PERCENTAGE:
+        value = demo_metric_base_target(metric) + ((jitter_key % 20) - 10)
+    elif metric.metric_type is MetricType.TIME:
+        value = demo_metric_base_target(metric) + ((jitter_key % 10) - 5)
+    elif metric.metric_type is MetricType.COUNT:
+        value = demo_metric_base_target(metric) + ((jitter_key % 20) - 10)
+    elif metric.metric_type is MetricType.RATIO:
+        value = demo_metric_base_target(metric) + ((jitter_key % 40) - 20)
+    elif metric.metric_type is MetricType.CUSTOM:
+        value = demo_metric_base_target(metric) + (jitter_key % 40)
+    else:
+        _assert_never(metric.metric_type)
+    return max(0.0, float(value))
 
 
 def init_database():
@@ -171,17 +216,7 @@ def record_demo_data_points():
         for day_offset in range(30):
             timestamp = now - timedelta(days=day_offset)
 
-            # Generate realistic values based on metric type
-            if metric.metric_type == MetricType.REVENUE:
-                value = 750000 + (day_offset * 5000) + (hash(str(day_offset)) % 50000)
-            elif metric.metric_type == MetricType.PERCENTAGE:
-                value = metric.target_value + ((hash(str(day_offset)) % 20) - 10)
-            elif metric.metric_type == MetricType.TIME:
-                value = metric.target_value + ((hash(str(day_offset)) % 10) - 5)
-            elif metric.metric_type == MetricType.COUNT:
-                value = metric.target_value + ((hash(str(day_offset)) % 20) - 10)
-            else:
-                value = 50 + (hash(str(day_offset)) % 40)
+            value = demo_metric_sample_value(metric, day_offset)
 
             # Record data point with dimensions
             dimensions = ["enterprise", "mid-market", "smb"]
