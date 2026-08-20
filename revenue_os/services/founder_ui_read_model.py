@@ -32,6 +32,9 @@ from revenue_os.services.commercial_decision_loop import (
     compose_commercial_decision_items,
     summarize_decision_loop,
 )
+from revenue_os.services.commercial_funnel_intelligence import (
+    compose_commercial_funnel_snapshot,
+)
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
@@ -817,9 +820,11 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
             "completed": 0,
             "informational": 0,
         },
+        "commercial_funnel": {},
         "errors": [],
     }
     flow_contacts: list[dict[str, Any]] = []
+    flow: dict[str, Any] | None = None
     org_uuid = _org_uuid(organization_id)
     if org_uuid is None:
         snapshot["state"] = "unavailable"
@@ -927,6 +932,16 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         organization_id=organization_id,
     )
     snapshot["decision_loop"] = summarize_decision_loop(snapshot["decision_items"])
+    snapshot["commercial_funnel"] = compose_commercial_funnel_snapshot(
+        organization_id=organization_id,
+        operator_flow=flow,
+        pending_approvals=snapshot["pending_approvals"],
+        pending_demands=snapshot["pending_demands"],
+        follow_up_signals=snapshot["follow_up_signals"],
+        meeting_interest=snapshot["meeting_interest"],
+        recent_activity=snapshot["recent_activity"],
+        decision_items=snapshot["decision_items"],
+    )
     snapshot["ai_completed_count"] = len(snapshot.get("recent_activity") or [])
     return snapshot
 
