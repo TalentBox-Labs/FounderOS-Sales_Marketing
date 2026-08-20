@@ -96,6 +96,70 @@
   {% endif %}
 </div>
 
+{% set cf = snapshot.commercial_funnel or {} %}
+{% if cf.state == 'ok' %}
+<div class="founder-card" data-testid="command-commercial-funnel" style="margin-bottom:20px">
+  <div class="founder-card-title">Commercial funnel &amp; pipeline</div>
+  <p class="founder-meta" data-testid="funnel-intro">
+    Demand → pipeline → outcomes from existing spine state. Counts only — not finance metrics.
+  </p>
+  <div class="founder-stat-row" data-testid="funnel-summary">
+    <div class="founder-stat" data-testid="funnel-stat-demand-pending">
+      <div class="founder-stat-label">Demand pending</div>
+      <div class="founder-stat-val">{{ cf.summary.demand_pending }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-demand-accepted">
+      <div class="founder-stat-label">Demand accepted</div>
+      <div class="founder-stat-val">{{ cf.summary.demand_accepted }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-open-deals">
+      <div class="founder-stat-label">Open deals</div>
+      <div class="founder-stat-val">{{ cf.summary.open_deals }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-closed-won">
+      <div class="founder-stat-label">Closed won</div>
+      <div class="founder-stat-val">{{ cf.summary.deals_closed_won }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-outcomes-pending">
+      <div class="founder-stat-label">Outcomes pending</div>
+      <div class="founder-stat-val">{{ cf.summary.outcomes_pending_decision }}</div>
+    </div>
+  </div>
+  {% if cf.pipeline.by_stage %}
+  <div class="founder-meta" data-testid="funnel-pipeline-stages">
+    <strong>Open pipeline by stage:</strong>
+    {% for stage, count in cf.pipeline.by_stage|dictsort %}
+      {{ stage }} ({{ count }}){% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if cf.attention.entries %}
+  <div data-testid="funnel-attention" style="margin-top:12px">
+    <strong>Where it may be stuck</strong>
+    {% for item in cf.attention.entries %}
+    <div class="founder-list-item" data-testid="funnel-attention-item" data-reason="{{ item.reason_code }}">
+      <span class="pill amber">{{ item.label }}</span>
+      <span class="founder-meta">({{ item.count }}) · {{ item.detail }}</span>
+      {% if item.href %}<div class="founder-meta"><a href="{{ item.href }}">Open →</a></div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="founder-empty" data-testid="funnel-attention-empty">No stuck states detected from canonical workflow</p>
+  {% endif %}
+  {% if cf.recent_movement %}
+  <div data-testid="funnel-recent-movement" style="margin-top:12px">
+    <strong>Recent commercial movement</strong>
+    {% for m in cf.recent_movement[:4] %}
+    <div class="founder-list-item">
+      <span class="founder-meta">{{ m.label or m.action_type }} · {{ m.occurred_at or '—' }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="founder-grid">
   <div class="founder-card" data-testid="command-approvals">
       <div class="founder-card-title">Pending approvals <a href="/pending-approvals" class="btn btn-ghost btn-sm">View all →</a></div>
