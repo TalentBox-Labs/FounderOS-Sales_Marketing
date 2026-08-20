@@ -90,6 +90,7 @@ def resolve_tenant_context(
     request: Request | None = None,
     *,
     organization_id_hint: str | None = None,
+    fail_closed_on_db_error: bool = False,
 ) -> TenantContext | None:
     """Server-derived TenantContext. Client hints are validated against membership."""
     req = request if request is not None else current_request()
@@ -140,8 +141,14 @@ def resolve_tenant_context(
             membership_role=assert_valid_membership_role(selected.role or "member"),
             membership_status=selected.status.value,
         )
-    except SQLAlchemyError:
-        logger.warning("Tenant resolution DB unavailable — falling back to legacy mode")
+    except SQLAlchemyError as exc:
+        logger.warning("Tenant resolution DB unavailable")
+        if fail_closed_on_db_error:
+            raise HTTPException(
+                status_code=503,
+                detail="Tenant resolution unavailable",
+            ) from exc
+        logger.warning("Falling back to legacy read mode")
         return None
     finally:
         db.close()

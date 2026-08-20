@@ -24,6 +24,7 @@ from revenue_os.services.mutation_authority import HumanAuthorityError
 from revenue_os.services.tenant_mutation_guard import (
     after_demand_accept,
     optional_tenant_mutation,
+    require_tenant_mutation,
     scoped_contact,
     scoped_demand_handoff,
 )
@@ -104,14 +105,18 @@ def cockpit_accept_qualified_demand(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """MC04.5 accept via trusted server operator — canonical service path only."""
-    tenant = optional_tenant_mutation()
+    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
     db = SessionLocal()
     try:
         scoped_demand_handoff(db, tenant, body.demand_id.strip())
         try:
             result = accept_qualified_demand(
-                db, body.demand_id.strip(), operator, body.notes.strip()
+                db,
+                body.demand_id.strip(),
+                operator,
+                body.notes.strip(),
+                organization_id=tenant.organization_id,
             )
             after_demand_accept(db, tenant, result)
         except HumanAuthorityError as exc:

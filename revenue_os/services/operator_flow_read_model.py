@@ -147,15 +147,15 @@ def _pending_qualified_demands(
     db, *, organization_id: str | None = None
 ) -> list[dict[str, Any]]:  # noqa: ANN001
     org_uuid = _org_uuid(organization_id)
+    if org_uuid is None:
+        return []
     handoff_q = db.query(AgentActionLog).filter(AgentActionLog.action_type == QD_HANDOFF)
-    if org_uuid is not None:
-        handoff_q = handoff_q.filter(AgentActionLog.organization_id == org_uuid)
+    handoff_q = handoff_q.filter(AgentActionLog.organization_id == org_uuid)
     handoffs = handoff_q.order_by(AgentActionLog.created_at.desc()).all()
     accepted_q = db.query(AgentActionLog).filter(AgentActionLog.action_type == QD_ACCEPTED)
     rejected_q = db.query(AgentActionLog).filter(AgentActionLog.action_type == QD_REJECTED)
-    if org_uuid is not None:
-        accepted_q = accepted_q.filter(AgentActionLog.organization_id == org_uuid)
-        rejected_q = rejected_q.filter(AgentActionLog.organization_id == org_uuid)
+    accepted_q = accepted_q.filter(AgentActionLog.organization_id == org_uuid)
+    rejected_q = rejected_q.filter(AgentActionLog.organization_id == org_uuid)
     accepted = {row.target_id for row in accepted_q.all() if row.target_id}
     rejected = {row.target_id for row in rejected_q.all() if row.target_id}
     pending: list[dict[str, Any]] = []

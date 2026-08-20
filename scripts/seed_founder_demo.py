@@ -33,7 +33,6 @@ from revenue_os.services.qualified_demand_service import (
     PersonPayload,
     register_marketing_handoff,
 )
-from revenue_os.services.tenant_scoped_access import stamp_agent_action_log_organization
 
 DEMO_EMAIL = os.environ.get("FOUNDER_DEMO_EMAIL", "founder@demo.local")
 DEMO_PASSWORD = os.environ.get("FOUNDER_DEMO_PASSWORD", "FounderDemo123!")
@@ -159,11 +158,10 @@ def seed() -> None:
                     "campaign": "demo-inbound",
                 },
             )
-            register_marketing_handoff(db, payload, DEMO_NAME)
-            stamp_agent_action_log_organization(
+            register_marketing_handoff(
                 db,
-                action_type=ACTION_HANDOFF,
-                target_id=DEMAND_ID,
+                payload,
+                DEMO_NAME,
                 organization_id=str(org.id),
             )
 

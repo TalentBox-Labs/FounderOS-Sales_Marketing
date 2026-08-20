@@ -10,11 +10,17 @@ from pydantic import BaseModel, Field
 
 from revenue_os.automation.events import Event, EventBus, EventType
 from revenue_os.database import SessionLocal
+from revenue_os.services.mutation_authority import HumanAuthorityError
 from revenue_os.services.qualified_demand_service import (
     QualifiedDemandPayload,
     accept_qualified_demand,
     register_marketing_handoff,
     reject_qualified_demand,
+)
+from revenue_os.services.tenant_mutation_guard import (
+    optional_tenant_mutation,
+    require_tenant_mutation,
+    scoped_demand_handoff,
 )
 from runner_api_routers.utils import _verify_api_key
 from src.tools.editorial_approval import is_human_approver
@@ -85,7 +91,13 @@ def marketing_qualified_demand_handoff(
 
     db = SessionLocal()
     try:
-        result = register_marketing_handoff(db, payload, req.requested_by.strip())
+        tenant = require_tenant_mutation()
+        result = register_marketing_handoff(
+            db,
+            payload,
+            req.requested_by.strip(),
+            organization_id=tenant.organization_id,
+        )
     finally:
         db.close()
 
@@ -120,9 +132,15 @@ def sales_intake_accept(
     _human_gate(req.requested_by, "Sales demand intake accept")
     db = SessionLocal()
     try:
+        tenant = require_tenant_mutation()
+        scoped_demand_handoff(db, tenant, req.demand_id.strip())
         try:
             result = accept_qualified_demand(
-                db, req.demand_id, req.requested_by.strip(), req.notes
+                db,
+                req.demand_id,
+                req.requested_by.strip(),
+                req.notes,
+                organization_id=tenant.organization_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -161,9 +179,15 @@ def sales_intake_reject(
     _human_gate(req.requested_by, "Sales demand intake reject")
     db = SessionLocal()
     try:
+        tenant = require_tenant_mutation()
+        scoped_demand_handoff(db, tenant, req.demand_id.strip())
         try:
             result = reject_qualified_demand(
-                db, req.demand_id, req.requested_by.strip(), req.reason
+                db,
+                req.demand_id,
+                req.requested_by.strip(),
+                req.reason,
+                organization_id=tenant.organization_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -25,10 +25,7 @@ from revenue_os.services.qualified_demand_service import (
     QualifiedDemandPayload,
     register_marketing_handoff,
 )
-from revenue_os.services.tenant_mutation_guard import (
-    after_demand_register,
-    optional_tenant_mutation,
-)
+from revenue_os.services.tenant_mutation_guard import require_tenant_mutation
 from runner_api_routers.cockpit import _trusted_cockpit_operator
 from runner_api_routers.utils import _verify_api_key
 
@@ -89,7 +86,7 @@ def register_manual_demand(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """Trusted-human manual registration → MC04.5 handoff (no Contact/Deal yet)."""
-    tenant = optional_tenant_mutation()
+    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
 
     if body.demand_id:
@@ -148,8 +145,12 @@ def register_manual_demand(
     db = SessionLocal()
     try:
         try:
-            result = register_marketing_handoff(db, payload, operator)
-            after_demand_register(db, tenant, demand_id)
+            result = register_marketing_handoff(
+                db,
+                payload,
+                operator,
+                organization_id=tenant.organization_id,
+            )
         except (HumanAuthorityError, ValueError) as exc:
             raise _service_http(exc) from exc
     finally:

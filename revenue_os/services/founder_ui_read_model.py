@@ -804,13 +804,17 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         "errors": [],
     }
     flow_contacts: list[dict[str, Any]] = []
+    org_uuid = _org_uuid(organization_id)
     try:
         flow = build_operator_flow_snapshot(organization_id=organization_id)
         flow_contacts = flow.get("contacts") or []
-        snapshot["pending_demands"] = _enrich_pending_demands(
-            flow.get("pending_demands") or [],
-            organization_id=organization_id,
-        )
+        if org_uuid is not None:
+            snapshot["pending_demands"] = _enrich_pending_demands(
+                flow.get("pending_demands") or [],
+                organization_id=organization_id,
+            )
+        else:
+            snapshot["pending_demands"] = []
         snapshot["pending_demand_count"] = len(snapshot["pending_demands"])
         deals = flow.get("deals") or []
         snapshot["pipeline"]["contacts"] = len(flow_contacts)
