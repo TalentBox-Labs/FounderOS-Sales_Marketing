@@ -2,7 +2,7 @@
 
 {% block title %}Command Center — Founder OS{% endblock %}
 {% block topbar_title %}Command Center{% endblock %}
-{% block topbar_meta %}What needs your attention — people, approvals, and commercial work{% endblock %}
+{% block topbar_meta %}What needs your attention — decide, act through governed paths, see what followed{% endblock %}
 
 {% block topbar_right %}
   {% if operator.configured %}
@@ -15,13 +15,26 @@
 
 {% block content %}
 <p class="founder-meta" data-testid="command-spine-intro" style="margin-bottom:16px">
-  People needing attention, decisions only you can make, and what the system already learned.
-  AI can research, draft, and propose. Sending and booking still require your approval.
+  What needs your attention, why it matters, who is involved, and what happens next —
+  through existing governed Sales and Approvals paths. AI can research, draft, and propose.
+  Sending and booking still require your approval.
 </p>
 
-<div class="founder-stat-row">
-  <div class="founder-stat" data-testid="command-stat-approvals">
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="command-unavailable">{{ snapshot.message or 'Organization context required' }}</p>
+{% else %}
+
+<div class="founder-stat-row" data-testid="command-decision-summary">
+  <div class="founder-stat" data-testid="command-stat-requires">
     <div class="founder-stat-label">Needs your decision</div>
+    <div class="founder-stat-val">{{ snapshot.decision_loop.requires_founder }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-ready">
+    <div class="founder-stat-label">Ready / recommended</div>
+    <div class="founder-stat-val">{{ snapshot.decision_loop.ready }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-approvals">
+    <div class="founder-stat-label">Approvals waiting</div>
     <div class="founder-stat-val">{{ snapshot.pending_approval_count }}</div>
   </div>
   <div class="founder-stat" data-testid="command-stat-demand">
@@ -36,6 +49,51 @@
     <div class="founder-stat-label">Deals on people</div>
     <div class="founder-stat-val">{{ snapshot.pipeline.deals }}</div>
   </div>
+</div>
+
+<div class="founder-card" data-testid="command-decision-loop" style="margin-bottom:20px">
+  <div class="founder-card-title">Commercial decisions</div>
+  {% if not snapshot.decision_items %}
+    <p class="founder-empty">Nothing needs your attention right now</p>
+  {% else %}
+    {% for item in snapshot.decision_items[:12] %}
+    <div class="founder-list-item" data-testid="command-decision-item" data-authority="{{ item.authority_state }}" data-kind="{{ item.kind }}">
+      {% if item.authority_state == 'requires_founder' %}
+      <span class="pill amber" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% elif item.authority_state == 'ready' %}
+      <span class="pill green" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% elif item.authority_state == 'completed' %}
+      <span class="pill blue" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% else %}
+      <span class="pill gray" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% endif %}
+      <strong>{{ item.title }}</strong>
+      {% if item.person_label or item.company_label %}
+      <div class="founder-meta">
+        {% if item.person_label %}{{ item.person_label }}{% endif %}
+        {% if item.person_label and item.company_label %} · {% endif %}
+        {% if item.company_label %}{{ item.company_label }}{% endif %}
+      </div>
+      {% endif %}
+      {% if item.reason %}
+      <div class="founder-meta">{{ item.reason }}</div>
+      {% endif %}
+      {% if item.proposed_action %}
+      <div class="founder-meta">Next: {{ item.proposed_action }}</div>
+      {% endif %}
+      {% if item.outcome %}
+      <div class="founder-meta">Outcome: {{ item.outcome }}</div>
+      {% endif %}
+      <div class="founder-meta">
+        {% if item.href %}<a href="{{ item.href }}">Open →</a>{% endif %}
+        {% if item.provenance and item.provenance.action_type %}
+        · <span data-testid="decision-provenance">{{ item.provenance.action_type }}</span>
+        {% endif %}
+        {% if item.occurred_at %} · {{ item.occurred_at }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
 </div>
 
 <div class="founder-grid">
@@ -157,4 +215,5 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
 {% endblock %}
