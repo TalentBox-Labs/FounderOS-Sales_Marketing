@@ -109,12 +109,88 @@ def _find_audit(db: Session, action_type: str, demand_id: str) -> AgentActionLog
     )
 
 
+def _tenant_org_uuid(organization_id: str | None) -> uuid_lib.UUID | None:
+    if organization_id is None:
+        return None
+    try:
+        return uuid_lib.UUID(str(organization_id))
+    except ValueError:
+        return None
+
+
+def _apply_contact_org_filter(query, organization_id: str | None):  # noqa: ANN001
+    org_uuid = _tenant_org_uuid(organization_id)
+    if org_uuid is not None:
+        return query.filter(Contact.organization_id == org_uuid)
+    return query
+
+
+def _stamp_new_contact_org(contact: Contact, organization_id: str | None) -> None:
+    org_uuid = _tenant_org_uuid(organization_id)
+    if org_uuid is not None:
+        contact.organization_id = org_uuid
+
+
+def _find_contact_by_email(
+    db: Session, email: str, *, organization_id: str | None
+) -> Contact | None:
+    query = db.query(Contact).filter(Contact.email == email)
+    query = _apply_contact_org_filter(query, organization_id)
+    return query.first()
+
+
+def _resolve_company_hint(
+    db: Session,
+    payload: QualifiedDemandPayload,
+    *,
+    organization_id: str | None,
+) -> Company | None:
+    """Resolve company hint only on legacy unscoped paths.
+
+    Company has no tenant key; when organization_id is present, skip lookup/bind.
+    """
+    if organization_id is not None:
+        return None
+    if not payload.company_hint or not payload.company_hint.name:
+        return None
+    company = (
+        db.query(Company)
+        .filter(Company.name == payload.company_hint.name)
+        .first()
+    )
+    if company is None and payload.company_hint.domain:
+        company = (
+            db.query(Company)
+            .filter(Company.domain == payload.company_hint.domain)
+            .first()
+        )
+    if company is None:
+        company = Company(name=payload.company_hint.name)
+        if payload.company_hint.domain:
+            company.domain = payload.company_hint.domain
+        db.add(company)
+        db.flush()
+    return company
+
+
 def register_marketing_handoff(
-    db: Session, payload: QualifiedDemandPayload, requested_by: str
+    db: Session,
+    payload: QualifiedDemandPayload,
+    requested_by: str,
+    *,
+    organization_id: str | None = None,
 ) -> dict[str, Any]:
-    """Marketing-side handoff registration — does not write Revenue CRM entities."""
+    """Marketing-side handoff registration — does not write Revenue CRM entities.
+
+    organization_id=None is legacy/internal-test compatibility only.
+    Production HTTP routes must pass trusted tenant organization_id.
+    """
+    org_uuid = _tenant_org_uuid(organization_id)
     existing = _find_audit(db, ACTION_HANDOFF, payload.demand_id)
     if existing is not None:
+        if org_uuid is not None and existing.organization_id is not None:
+            if str(existing.organization_id) != str(org_uuid):
+                raise ValueError("QualifiedDemand handoff not in tenant scope")
         return {
             "ok": True,
             "idempotent": True,
@@ -134,6 +210,7 @@ def register_marketing_handoff(
             target_type="qualified_demand",
             target_id=payload.demand_id,
             status="completed",
+            organization_id=org_uuid,
             detail={
                 "payload": payload.model_dump(),
                 "requested_by": requested_by,
@@ -162,17 +239,58 @@ def _require_handoff(db: Session, demand_id: str) -> dict[str, Any]:
     return row.detail["payload"]
 
 
+def _assert_handoff_in_tenant_scope(
+    db: Session,
+    demand_id: str,
+    organization_id: str | None,
+    *,
+    action: str,
+) -> None:
+    org_uuid = _tenant_org_uuid(organization_id)
+    if org_uuid is None:
+        return
+    handoff = _find_audit(db, ACTION_HANDOFF, demand_id)
+    if (
+        handoff is None
+        or handoff.organization_id is None
+        or str(handoff.organization_id) != str(org_uuid)
+    ):
+        raise ValueError(f"QualifiedDemand {action} not in tenant scope")
+
+
 def accept_qualified_demand(
-    db: Session, demand_id: str, requested_by: str, notes: str = ""
+    db: Session,
+    demand_id: str,
+    requested_by: str,
+    notes: str = "",
+    *,
+    organization_id: str | None = None,
 ) -> dict[str, Any]:
-    """Sales intake accept — creates or links canonical Contact; no auto-qualify or Deal."""
+    """Sales intake accept — creates or links canonical Contact; no auto-qualify or Deal.
+
+    organization_id=None is legacy/internal-test compatibility only.
+    Production HTTP routes must pass trusted tenant organization_id.
+    """
+    org_uuid = _tenant_org_uuid(organization_id)
     prior = _find_audit(db, ACTION_ACCEPTED, demand_id)
     if prior is not None and prior.detail:
+        if org_uuid is not None and prior.organization_id is not None:
+            if str(prior.organization_id) != str(org_uuid):
+                raise ValueError("QualifiedDemand accept not in tenant scope")
+        contact_id = prior.detail.get("contact_id")
+        if org_uuid is not None and contact_id:
+            try:
+                cid = uuid_lib.UUID(str(contact_id))
+            except ValueError as exc:
+                raise ValueError("QualifiedDemand accept not in tenant scope") from exc
+            existing = db.get(Contact, cid)
+            if existing is None or str(existing.organization_id) != str(org_uuid):
+                raise ValueError("QualifiedDemand accept not in tenant scope")
         return {
             "ok": True,
             "idempotent": True,
             "demand_id": demand_id,
-            "contact_id": prior.detail.get("contact_id"),
+            "contact_id": contact_id,
             "created": prior.detail.get("created", False),
             "merged": prior.detail.get("merged", False),
             "requested_by": prior.detail.get("requested_by", requested_by),
@@ -180,12 +298,15 @@ def accept_qualified_demand(
 
     require_human_mutation_authority(requested_by, action="Sales demand intake accept")
 
+    _assert_handoff_in_tenant_scope(
+        db, demand_id, organization_id, action="accept"
+    )
     payload_dict = _require_handoff(db, demand_id)
     payload = QualifiedDemandPayload.model_validate(payload_dict)
     email = payload.person.email.strip().lower()
     first_name, last_name = _split_name(payload.person.name)
 
-    existing_contact = db.query(Contact).filter(Contact.email == email).first()
+    existing_contact = _find_contact_by_email(db, email, organization_id=organization_id)
     created = False
     merged = False
 
@@ -210,24 +331,9 @@ def accept_qualified_demand(
             status=ContactStatus.LEAD,
             notes=f"[MC04 handoff {payload.demand_id}] {_provenance_note(payload)}",
         )
-        if payload.company_hint and payload.company_hint.name:
-            company = (
-                db.query(Company)
-                .filter(Company.name == payload.company_hint.name)
-                .first()
-            )
-            if company is None and payload.company_hint.domain:
-                company = (
-                    db.query(Company)
-                    .filter(Company.domain == payload.company_hint.domain)
-                    .first()
-                )
-            if company is None:
-                company = Company(name=payload.company_hint.name)
-                if payload.company_hint.domain:
-                    company.domain = payload.company_hint.domain
-                db.add(company)
-                db.flush()
+        _stamp_new_contact_org(contact, organization_id)
+        company = _resolve_company_hint(db, payload, organization_id=organization_id)
+        if company is not None:
             contact.company_id = company.id
         db.add(contact)
         created = True
@@ -242,6 +348,7 @@ def accept_qualified_demand(
             target_type="qualified_demand",
             target_id=demand_id,
             status="completed",
+            organization_id=org_uuid,
             detail={
                 "contact_id": contact_id,
                 "created": created,
@@ -272,11 +379,24 @@ def accept_qualified_demand(
 
 
 def reject_qualified_demand(
-    db: Session, demand_id: str, requested_by: str, reason: str
+    db: Session,
+    demand_id: str,
+    requested_by: str,
+    reason: str,
+    *,
+    organization_id: str | None = None,
 ) -> dict[str, Any]:
-    """Sales intake reject — audit only; no CRM entity."""
+    """Sales intake reject — audit only; no CRM entity.
+
+    organization_id=None is legacy/internal-test compatibility only.
+    Production HTTP routes must pass trusted tenant organization_id.
+    """
+    org_uuid = _tenant_org_uuid(organization_id)
     prior = _find_audit(db, ACTION_REJECTED, demand_id)
     if prior is not None:
+        if org_uuid is not None and prior.organization_id is not None:
+            if str(prior.organization_id) != str(org_uuid):
+                raise ValueError("QualifiedDemand reject not in tenant scope")
         return {
             "ok": True,
             "idempotent": True,
@@ -287,6 +407,9 @@ def reject_qualified_demand(
 
     require_human_mutation_authority(requested_by, action="Sales demand intake reject")
 
+    _assert_handoff_in_tenant_scope(
+        db, demand_id, organization_id, action="reject"
+    )
     _require_handoff(db, demand_id)
 
     prior_accept = _find_audit(db, ACTION_ACCEPTED, demand_id)
@@ -300,6 +423,7 @@ def reject_qualified_demand(
             target_type="qualified_demand",
             target_id=demand_id,
             status="completed",
+            organization_id=org_uuid,
             detail={
                 "reason": reason.strip(),
                 "requested_by": requested_by,

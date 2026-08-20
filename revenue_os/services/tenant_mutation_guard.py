@@ -36,6 +36,15 @@ from revenue_os.services.tenant_scoped_access import (
 )
 
 
+def require_tenant_mutation() -> TenantContext:
+    """Fail closed when organization context is missing for tenant-scoped mutations."""
+    tenant = resolve_tenant_context(fail_closed_on_db_error=True)
+    if tenant is None:
+        raise HTTPException(status_code=403, detail="Organization context required")
+    require_tenant_mutation_role(tenant)
+    return tenant
+
+
 def optional_tenant_mutation() -> TenantContext | None:
     """Return tenant context when resolvable; None preserves legacy env-operator paths."""
     tenant = resolve_tenant_context()

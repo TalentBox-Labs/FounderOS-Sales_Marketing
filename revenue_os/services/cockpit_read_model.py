@@ -56,23 +56,37 @@ def _load_pending_qualified_demands(
     db, *, organization_id: str | None = None
 ) -> list[dict[str, Any]]:  # noqa: ANN001
     org_uuid = _org_uuid(organization_id)
-    handoff_q = db.query(AgentActionLog).filter(
-        AgentActionLog.action_type == ACTION_HANDOFF
+    if org_uuid is None:
+        return []
+    handoff_q = (
+        db.query(AgentActionLog)
+        .filter(
+            AgentActionLog.action_type == ACTION_HANDOFF,
+            AgentActionLog.organization_id == org_uuid,
+        )
+        .order_by(AgentActionLog.created_at.desc())
     )
-    if org_uuid is not None:
-        handoff_q = handoff_q.filter(AgentActionLog.organization_id == org_uuid)
-    handoffs = handoff_q.order_by(AgentActionLog.created_at.desc()).all()
-    accepted_q = db.query(AgentActionLog).filter(
-        AgentActionLog.action_type == ACTION_ACCEPTED
-    )
-    rejected_q = db.query(AgentActionLog).filter(
-        AgentActionLog.action_type == ACTION_REJECTED
-    )
-    if org_uuid is not None:
-        accepted_q = accepted_q.filter(AgentActionLog.organization_id == org_uuid)
-        rejected_q = rejected_q.filter(AgentActionLog.organization_id == org_uuid)
-    accepted = {row.target_id for row in accepted_q.all() if row.target_id}
-    rejected = {row.target_id for row in rejected_q.all() if row.target_id}
+    handoffs = handoff_q.all()
+    accepted = {
+        row.target_id
+        for row in db.query(AgentActionLog)
+        .filter(
+            AgentActionLog.action_type == ACTION_ACCEPTED,
+            AgentActionLog.organization_id == org_uuid,
+        )
+        .all()
+        if row.target_id
+    }
+    rejected = {
+        row.target_id
+        for row in db.query(AgentActionLog)
+        .filter(
+            AgentActionLog.action_type == ACTION_REJECTED,
+            AgentActionLog.organization_id == org_uuid,
+        )
+        .all()
+        if row.target_id
+    }
     pending: list[dict[str, Any]] = []
     for row in handoffs:
         demand_id = row.target_id or ""

@@ -44,6 +44,7 @@ from revenue_os.services.tenant_mutation_guard import (
     after_outcome_handoff,
     assign_new_deal_org,
     optional_tenant_mutation,
+    require_tenant_mutation,
     scoped_contact,
     scoped_deal,
     scoped_demand_handoff,
@@ -118,14 +119,18 @@ def operator_accept_demand(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """MC04.5 accept via trusted server operator — canonical service path only."""
-    tenant = optional_tenant_mutation()
+    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
     db = SessionLocal()
     try:
         scoped_demand_handoff(db, tenant, body.demand_id.strip())
         try:
             result = accept_qualified_demand(
-                db, body.demand_id.strip(), operator, body.notes.strip()
+                db,
+                body.demand_id.strip(),
+                operator,
+                body.notes.strip(),
+                organization_id=tenant.organization_id,
             )
             after_demand_accept(db, tenant, result)
         except (HumanAuthorityError, ValueError) as exc:
@@ -140,7 +145,7 @@ def operator_reject_demand(
     body: DemandDecisionBody,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    tenant = optional_tenant_mutation()
+    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
     reason = body.reason.strip() or body.notes.strip()
     if len(reason) < 2:
@@ -150,7 +155,11 @@ def operator_reject_demand(
         scoped_demand_handoff(db, tenant, body.demand_id.strip())
         try:
             result = reject_qualified_demand(
-                db, body.demand_id.strip(), operator, reason
+                db,
+                body.demand_id.strip(),
+                operator,
+                reason,
+                organization_id=tenant.organization_id,
             )
             after_demand_reject(db, tenant, body.demand_id.strip())
         except (HumanAuthorityError, ValueError) as exc:

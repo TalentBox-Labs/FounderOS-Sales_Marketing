@@ -39,7 +39,6 @@ from revenue_os.services.qualified_demand_service import (
     register_marketing_handoff,
 )
 from revenue_os.services.tenant_resolution import ORGANIZATION_COOKIE
-from revenue_os.services.tenant_scoped_access import stamp_agent_action_log_organization
 from runner_api import app
 
 _ORG_A = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -224,12 +223,8 @@ def _register_org_demand(
             marketing_qualification=qualification,
             content_attribution=attribution,
         )
-        register_marketing_handoff(db, payload, _OPERATOR)
-        stamp_agent_action_log_organization(
-            db,
-            action_type=ACTION_HANDOFF,
-            target_id=demand_id,
-            organization_id=str(org_id),
+        register_marketing_handoff(
+            db, payload, _OPERATOR, organization_id=str(org_id)
         )
     finally:
         db.close()
