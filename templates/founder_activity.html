@@ -24,6 +24,9 @@
       {% if e.action_type %} · <span data-testid="activity-event-type">{{ e.action_type }}</span>{% endif %}
       {% if e.source %} · {{ e.source }}{% endif %}
       {% if e.actor %} · {{ e.actor }}{% endif %}
+      {% if e.authority_class == 'SYSTEM_RECOMMENDED' %} · system recommended{% endif %}
+      {% if e.authority_class == 'HUMAN_DECIDED' %} · human decided{% endif %}
+      {% if e.demand_source_label %} · {{ e.demand_source_label }}{% endif %}
       {% if e.target_type and e.target_id %}
       · {{ e.target_type }}
       {% if e.target_type == 'contact' %}

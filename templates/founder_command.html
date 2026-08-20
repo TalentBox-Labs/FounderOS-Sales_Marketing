@@ -61,7 +61,13 @@
       {% for d in snapshot.pending_demands[:5] %}
       <div class="founder-list-item">
         <strong>{{ d.name or d.email or d.demand_id }}</strong>
-        <div class="founder-meta">{{ d.source }} · {{ d.registered_at or '—' }} · Review intake on People</div>
+        <div class="founder-meta">
+          <span class="pill amber" data-testid="command-demand-decision">{{ d.human_decision_label or 'Needs your decision' }}</span>
+          · {{ d.source_label or d.source }} · {{ d.registered_at or '—' }}
+        </div>
+        {% if d.why_it_matters %}
+        <div class="founder-meta">{{ d.why_it_matters }}</div>
+        {% endif %}
       </div>
       {% endfor %}
     {% endif %}

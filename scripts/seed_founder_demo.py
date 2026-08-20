@@ -27,12 +27,13 @@ from revenue_os.models.organization import (
     OrganizationStatus,
 )
 from revenue_os.models.user import User
+from revenue_os.services.marketing_qualified_demand import compose_marketing_qualified_demand
 from revenue_os.services.qualified_demand_service import (
     ACTION_HANDOFF,
-    QualifiedDemandPayload,
     PersonPayload,
     register_marketing_handoff,
 )
+from revenue_os.services.tenant_scoped_access import stamp_agent_action_log_organization
 
 DEMO_EMAIL = os.environ.get("FOUNDER_DEMO_EMAIL", "founder@demo.local")
 DEMO_PASSWORD = os.environ.get("FOUNDER_DEMO_PASSWORD", "FounderDemo123!")
@@ -140,13 +141,31 @@ def seed() -> None:
             .first()
         )
         if existing_handoff is None:
-            payload = QualifiedDemandPayload(
+            payload = compose_marketing_qualified_demand(
                 demand_id=DEMAND_ID,
                 occurred_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                source="manual",
+                source="web_form",
+                channel="website",
                 person=PersonPayload(email="new.demand@example.com", name="New Demand Lead"),
+                company_hint={"name": "Inbound Co"},
+                marketing_qualification={
+                    "tier": "mql",
+                    "score": 72,
+                    "reason": "Requested a product walkthrough from the website form.",
+                    "qualification_mode": "marketing_signal",
+                },
+                content_attribution={
+                    "utm_source": "website",
+                    "campaign": "demo-inbound",
+                },
             )
             register_marketing_handoff(db, payload, DEMO_NAME)
+            stamp_agent_action_log_organization(
+                db,
+                action_type=ACTION_HANDOFF,
+                target_id=DEMAND_ID,
+                organization_id=str(org.id),
+            )
 
         db.commit()
         print("✅ Founder demo seed complete")

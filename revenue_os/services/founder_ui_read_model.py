@@ -18,6 +18,7 @@ from revenue_os.models.activity import Activity, ActivityType, MeetingActivity
 from revenue_os.models.automation_state import AgentActionLog
 from revenue_os.models.contact import Contact
 from revenue_os.models.deal import Deal
+from revenue_os.models.organization import Organization
 from revenue_os.services.approvals import list_requests, pending_count
 from revenue_os.services.booking_eligibility import (
     STATE_ALREADY_BOOKED,
@@ -38,6 +39,21 @@ from revenue_os.services.tenant_context import TenantContext
 from revenue_os.services.tenant_scoped_access import TenantAccessError, get_contact_for_tenant
 
 logger = logging.getLogger(__name__)
+
+QD_HANDOFF = "qualified_demand_handoff"
+QD_ACCEPTED = "qualified_demand_accepted"
+QD_REJECTED = "qualified_demand_rejected"
+
+_DEMAND_SOURCE_LABELS: dict[str, str] = {
+    "web_form": "Website form",
+    "campaign": "Campaign",
+    "social": "Social",
+    "linkedin": "LinkedIn",
+    "referral": "Referral",
+    "event": "Event",
+    "manual": "Manually registered",
+    "outreach": "Outreach",
+}
 
 ACTION_LABELS: dict[str, str] = {
     "qualified_demand_handoff": "Demand registered",
@@ -94,6 +110,191 @@ def _org_uuid(organization_id: str | None) -> uuid_lib.UUID | None:
         return uuid_lib.UUID(str(organization_id))
     except ValueError:
         return None
+
+
+def _demand_source_label(source: str | None) -> str:
+    if not source:
+        return "Source not stored"
+    key = str(source).strip().lower().replace("-", "_")
+    return _DEMAND_SOURCE_LABELS.get(key, str(source).replace("_", " ").title())
+
+
+def _qualification_reason_text(marketing_qualification: dict[str, Any] | None) -> str | None:
+    if not marketing_qualification:
+        return None
+    for key in ("reason", "notes", "summary"):
+        value = marketing_qualification.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    parts: list[str] = []
+    tier = marketing_qualification.get("tier")
+    score = marketing_qualification.get("score")
+    if isinstance(tier, str) and tier.strip():
+        parts.append(f"Marketing qualification: {tier.strip()}")
+    if isinstance(score, (int, float)):
+        parts.append(f"stored score {score}")
+    if not parts:
+        return None
+    return " · ".join(parts)
+
+
+def _demand_signal_items(
+    *,
+    content_attribution: dict[str, Any] | None,
+    marketing_qualification: dict[str, Any] | None,
+    channel: str | None,
+) -> list[str]:
+    items: list[str] = []
+    if channel:
+        items.append(f"Channel: {channel}")
+    if content_attribution:
+        for key, label in (
+            ("utm_source", "UTM source"),
+            ("campaign", "Campaign"),
+            ("content", "Content"),
+            ("source_detail", "Source detail"),
+            ("registration_mode", "Registration mode"),
+        ):
+            value = content_attribution.get(key)
+            if isinstance(value, str) and value.strip():
+                items.append(f"{label}: {value.strip()}")
+            elif value is True:
+                items.append(f"{label}: yes")
+    if marketing_qualification:
+        mode = marketing_qualification.get("qualification_mode")
+        if isinstance(mode, str) and mode.strip():
+            items.append(f"Qualification mode: {mode.strip()}")
+    return items
+
+
+def _organization_display_name(org_uuid: uuid_lib.UUID) -> str | None:
+    db = SessionLocal()
+    try:
+        org = db.query(Organization).filter(Organization.id == org_uuid).first()
+        if org is None:
+            return None
+        name = getattr(org, "name", None)
+        return str(name) if name else None
+    finally:
+        db.close()
+
+
+def _handoff_payloads_for_org(
+    *,
+    org_uuid: uuid_lib.UUID,
+    demand_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Load QD payloads only for demand IDs already in the scoped snapshot."""
+    cleaned = [d for d in demand_ids if d]
+    if not cleaned:
+        return {}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(AgentActionLog)
+            .filter(AgentActionLog.action_type == QD_HANDOFF)
+            .filter(AgentActionLog.organization_id == org_uuid)
+            .filter(AgentActionLog.target_id.in_(cleaned))
+            .all()
+        )
+        payloads: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not row.target_id:
+                continue
+            payload = (row.detail or {}).get("payload")
+            if isinstance(payload, dict):
+                payloads[str(row.target_id)] = payload
+        return payloads
+    finally:
+        db.close()
+
+
+def _present_pending_demand(
+    row: dict[str, Any],
+    *,
+    payload: dict[str, Any] | None,
+    workspace_name: str | None,
+) -> dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    person = payload.get("person") if isinstance(payload.get("person"), dict) else {}
+    company_hint = (
+        payload.get("company_hint") if isinstance(payload.get("company_hint"), dict) else {}
+    )
+    mq = (
+        payload.get("marketing_qualification")
+        if isinstance(payload.get("marketing_qualification"), dict)
+        else None
+    )
+    attr = (
+        payload.get("content_attribution")
+        if isinstance(payload.get("content_attribution"), dict)
+        else None
+    )
+    source = payload.get("source") or row.get("source")
+    channel = payload.get("channel") or row.get("channel")
+    reason = _qualification_reason_text(mq)
+    out = dict(row)
+    out["name"] = out.get("name") or person.get("name")
+    out["email"] = out.get("email") or person.get("email")
+    out["source"] = source
+    out["source_label"] = _demand_source_label(str(source) if source else None)
+    out["channel"] = channel
+    out["company_hint_name"] = company_hint.get("name") if company_hint else None
+    out["qualification_state"] = "system_recommended"
+    out["qualification_state_label"] = "System recommended — not a human decision"
+    out["qualification_reason"] = reason
+    out["qualification_reason_missing"] = reason is None
+    out["signals"] = _demand_signal_items(
+        content_attribution=attr,
+        marketing_qualification=mq,
+        channel=str(channel) if channel else None,
+    )
+    out["human_decision_state"] = "awaiting_intake"
+    out["human_decision_label"] = "Needs your decision"
+    out["authority_class"] = "SYSTEM_RECOMMENDED"
+    if reason:
+        out["why_it_matters"] = reason
+    else:
+        out["why_it_matters"] = (
+            "This was handed off as qualified demand. "
+            "No extra qualification notes were stored."
+        )
+    out["what_happens_next"] = (
+        "If you accept, this person is added to People. "
+        "Marketing cannot send outreach or change deals from here."
+    )
+    out["workspace_context"] = workspace_name
+    out["contact_link"] = out.get("contact_link") or "not_yet_created"
+    return out
+
+
+def _enrich_pending_demands(
+    raw: list[dict[str, Any]],
+    *,
+    organization_id: str | None,
+) -> list[dict[str, Any]]:
+    org_uuid = _org_uuid(organization_id)
+    if org_uuid is None:
+        return [_present_pending_demand(row, payload=None, workspace_name=None) for row in raw]
+    workspace_name = _organization_display_name(org_uuid)
+    demand_ids = [str(row.get("demand_id") or "") for row in raw]
+    payloads = _handoff_payloads_for_org(org_uuid=org_uuid, demand_ids=demand_ids)
+    return [
+        _present_pending_demand(
+            row,
+            payload=payloads.get(str(row.get("demand_id") or "")),
+            workspace_name=workspace_name,
+        )
+        for row in raw
+    ]
+
+
+def _activity_authority_class(action_type: str | None) -> str | None:
+    if action_type == QD_HANDOFF:
+        return "SYSTEM_RECOMMENDED"
+    if action_type in (QD_ACCEPTED, QD_REJECTED):
+        return "HUMAN_DECIDED"
+    return None
 
 
 def _human_action(action_type: str) -> str:
@@ -519,6 +720,10 @@ def _org_scoped_actions(
     rows = query.limit(min(limit, 200)).all()
     events: list[dict[str, Any]] = []
     for row in rows:
+        payload = (row.detail or {}).get("payload") if isinstance(row.detail, dict) else None
+        demand_source = None
+        if isinstance(payload, dict) and row.action_type == QD_HANDOFF:
+            demand_source = payload.get("source")
         events.append(
             {
                 "id": str(row.id) if row.id else None,
@@ -531,6 +736,10 @@ def _org_scoped_actions(
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "detail": row.detail or {},
                 "source": "agent_log",
+                "authority_class": _activity_authority_class(row.action_type),
+                "demand_source_label": (
+                    _demand_source_label(str(demand_source)) if demand_source else None
+                ),
             }
         )
     return events
@@ -598,7 +807,10 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
     try:
         flow = build_operator_flow_snapshot(organization_id=organization_id)
         flow_contacts = flow.get("contacts") or []
-        snapshot["pending_demands"] = flow.get("pending_demands") or []
+        snapshot["pending_demands"] = _enrich_pending_demands(
+            flow.get("pending_demands") or [],
+            organization_id=organization_id,
+        )
         snapshot["pending_demand_count"] = len(snapshot["pending_demands"])
         deals = flow.get("deals") or []
         snapshot["pipeline"]["contacts"] = len(flow_contacts)
@@ -744,10 +956,14 @@ def build_demand_contacts_snapshot(*, organization_id: str | None = None) -> dic
             )
             for c in raw_contacts
         ]
+        pending = _enrich_pending_demands(
+            flow.get("pending_demands") or [],
+            organization_id=str(org_uuid),
+        )
         return {
             "generated_at": _utc_now(),
             "state": "ok",
-            "pending_demands": flow.get("pending_demands") or [],
+            "pending_demands": pending,
             "contacts": people,
             "message": "",
         }
