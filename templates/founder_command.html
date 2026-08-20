@@ -15,9 +15,10 @@
 
 {% block content %}
 <p class="founder-meta" data-testid="command-spine-intro" style="margin-bottom:16px">
-  What needs your attention, why it matters, who is involved, and what happens next —
-  through existing governed Sales and Approvals paths. AI can research, draft, and propose.
-  Sending and booking still require your approval.
+  What needs your attention, why it matters, and what you can decide here —
+  through existing governed Sales and Approvals paths. Some actions happen on this
+  page; others continue on the person workspace or Approval Inbox. Sending and booking
+  still require your approval.
 </p>
 
 {% if snapshot.state == 'unavailable' %}
@@ -84,8 +85,42 @@
       {% if item.outcome %}
       <div class="founder-meta">Outcome: {{ item.outcome }}</div>
       {% endif %}
+      {% if item.command_actions %}
+      <div class="founder-meta" data-testid="command-actions" style="margin-top:8px">
+        {% for action in item.command_actions %}
+          {% if action.execution_mode == 'INLINE_GOVERNED' %}
+            {% if operator.configured %}
+            <button type="button"
+              class="btn {% if action.requires_reason %}btn-ghost{% else %}btn-primary{% endif %} btn-sm"
+              style="margin:4px 4px 0 0"
+              data-testid="command-inline-action"
+              data-action-type="{{ action.action_type }}"
+              data-endpoint="{{ action.endpoint }}"
+              data-subject="{{ action.subject_id }}"
+              data-requires-reason="{{ 'true' if action.requires_reason else 'false' }}"
+              onclick="commandInlineAction(this)">{{ action.label }}</button>
+            {% else %}
+            <span class="founder-meta">Sign in as a human operator to {{ action.label | lower }}</span>
+            {% endif %}
+          {% elif action.execution_mode == 'NAVIGATE_GOVERNED' %}
+            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-nav-action"
+               href="{{ action.href }}">{{ action.label }} →</a>
+            <span class="pill gray">{{ action.execution_mode_label }}</span>
+          {% else %}
+            {% if action.href %}
+            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-info-action"
+               href="{{ action.href }}">{{ action.label }} →</a>
+            {% endif %}
+            <span class="pill gray">{{ action.execution_mode_label }}</span>
+          {% endif %}
+          {% if action.reason %}
+          <div class="founder-meta">{{ action.reason }}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
       <div class="founder-meta">
-        {% if item.href %}<a href="{{ item.href }}">Open →</a>{% endif %}
+        {% if item.href and not item.command_actions %}<a href="{{ item.href }}">Open →</a>{% endif %}
         {% if item.provenance and item.provenance.action_type %}
         · <span data-testid="decision-provenance">{{ item.provenance.action_type }}</span>
         {% endif %}
@@ -280,4 +315,74 @@
   </div>
 </div>
 {% endif %}
+
+<pre id="command-action-result" data-testid="command-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function commandPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+function commandResult(msg, ok) {
+  const el = document.getElementById('command-action-result');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+}
+async function commandInlineAction(btn) {
+  const endpoint = btn.getAttribute('data-endpoint');
+  const actionType = btn.getAttribute('data-action-type');
+  const subject = btn.getAttribute('data-subject');
+  const needsReason = btn.getAttribute('data-requires-reason') === 'true';
+  if (!endpoint || !actionType) {
+    commandResult('This action is not available.', false);
+    return;
+  }
+  let body = {};
+  if (actionType === 'qualified_demand_accept') {
+    if (!confirm('Accept this demand? A person will be added through the existing intake path.')) return;
+    body = { demand_id: subject };
+  } else if (actionType === 'qualified_demand_reject') {
+    const reason = prompt('Why are you rejecting this demand?');
+    if (!reason || reason.trim().length < 2) {
+      commandResult('A short reject reason is required.', false);
+      return;
+    }
+    if (!confirm('Reject this demand? No person will be created.')) return;
+    body = { demand_id: subject, reason: reason.trim() };
+  } else if (actionType === 'approval_approve') {
+    if (!confirm('Approve this proposal? The existing approval path will run the governed action.')) return;
+    body = {};
+  } else if (actionType === 'approval_reject') {
+    if (!confirm('Reject this proposal? Nothing will be sent or booked.')) return;
+    body = {};
+  } else {
+    commandResult('This action cannot be completed from Command Center.', false);
+    return;
+  }
+  if (needsReason && actionType === 'qualified_demand_reject' && !(body.reason || '').trim()) {
+    commandResult('A short reject reason is required.', false);
+    return;
+  }
+  btn.disabled = true;
+  const res = await commandPost(endpoint, body);
+  const detail = (res.data && (res.data.detail || res.data.message)) || res.status;
+  if (res.ok) {
+    commandResult('Decision recorded. Refreshing…', true);
+    setTimeout(() => location.reload(), 700);
+  } else {
+    btn.disabled = false;
+    commandResult('Could not complete decision: ' + detail, false);
+  }
+}
+</script>
 {% endblock %}
