@@ -28,6 +28,10 @@ from revenue_os.services.booking_eligibility import (
     STATE_STOPPED,
 )
 from revenue_os.services.calendar_executor import CONNECTOR_OUTLOOK, resolve_calendar_connector
+from revenue_os.services.commercial_decision_loop import (
+    compose_commercial_decision_items,
+    summarize_decision_loop,
+)
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
@@ -714,9 +718,13 @@ def _org_scoped_actions(
     db, *, organization_id: str | None, limit: int = 50
 ) -> list[dict[str, Any]]:  # noqa: ANN001
     org_uuid = _org_uuid(organization_id)
-    query = db.query(AgentActionLog).order_by(AgentActionLog.created_at.desc())
-    if org_uuid is not None:
-        query = query.filter(AgentActionLog.organization_id == org_uuid)
+    if org_uuid is None:
+        return []
+    query = (
+        db.query(AgentActionLog)
+        .filter(AgentActionLog.organization_id == org_uuid)
+        .order_by(AgentActionLog.created_at.desc())
+    )
     rows = query.limit(min(limit, 200)).all()
     events: list[dict[str, Any]] = []
     for row in rows:
@@ -801,20 +809,30 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         "meeting_booking_pending": [],
         "follow_up_signals": [],
         "recent_activity": [],
+        "decision_items": [],
+        "decision_loop": {
+            "total": 0,
+            "requires_founder": 0,
+            "ready": 0,
+            "completed": 0,
+            "informational": 0,
+        },
         "errors": [],
     }
     flow_contacts: list[dict[str, Any]] = []
     org_uuid = _org_uuid(organization_id)
+    if org_uuid is None:
+        snapshot["state"] = "unavailable"
+        snapshot["message"] = "Organization context required"
+        return snapshot
+
     try:
         flow = build_operator_flow_snapshot(organization_id=organization_id)
         flow_contacts = flow.get("contacts") or []
-        if org_uuid is not None:
-            snapshot["pending_demands"] = _enrich_pending_demands(
-                flow.get("pending_demands") or [],
-                organization_id=organization_id,
-            )
-        else:
-            snapshot["pending_demands"] = []
+        snapshot["pending_demands"] = _enrich_pending_demands(
+            flow.get("pending_demands") or [],
+            organization_id=organization_id,
+        )
         snapshot["pending_demand_count"] = len(snapshot["pending_demands"])
         deals = flow.get("deals") or []
         snapshot["pipeline"]["contacts"] = len(flow_contacts)
@@ -849,12 +867,11 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         snapshot["recent_activity"] = _org_scoped_actions(
             db, organization_id=organization_id, limit=12
         )
-        org_uuid = _org_uuid(organization_id)
-        reply_q = db.query(AgentActionLog).filter(
-            AgentActionLog.action_type == "rev_orch_reply_assessment"
+        reply_q = (
+            db.query(AgentActionLog)
+            .filter(AgentActionLog.action_type == "rev_orch_reply_assessment")
+            .filter(AgentActionLog.organization_id == org_uuid)
         )
-        if org_uuid is not None:
-            reply_q = reply_q.filter(AgentActionLog.organization_id == org_uuid)
         reply_logs = reply_q.order_by(AgentActionLog.created_at.desc()).limit(8).all()
         for log in reply_logs:
             summary = _reply_summary_from_assessment(log.detail or {})
@@ -901,6 +918,15 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
     finally:
         db.close()
 
+    snapshot["decision_items"] = compose_commercial_decision_items(
+        pending_demands=snapshot["pending_demands"],
+        pending_approvals=snapshot["pending_approvals"],
+        meeting_interest=snapshot["meeting_interest"],
+        follow_up_signals=snapshot["follow_up_signals"],
+        recent_activity=snapshot["recent_activity"],
+        organization_id=organization_id,
+    )
+    snapshot["decision_loop"] = summarize_decision_loop(snapshot["decision_items"])
     snapshot["ai_completed_count"] = len(snapshot.get("recent_activity") or [])
     return snapshot
 
