@@ -4,9 +4,13 @@ Give Hermes a goal ("20 qualified leads", "$500K pipeline") and it:
 
   1. generates an executable plan from a library of proven revenue plays
   2. executes plan steps through the same services the API uses
-     (scoring, qualification, deal creation) — every action audited
+     (scoring, qualification) — every action audited
   3. measures progress against the goal metric on every heartbeat check
   4. marks the goal achieved when the target is reached
+
+ACP-1: commercial actions require explicit organization_id. Autonomous Deal
+creation (create_deals_for_qualified) is PROHIBITED regardless of org.
+Contact.organization_id is ownership validation only — never tenant activation.
 
 The planner is deliberately deterministic (rule-based) so it runs without
 an LLM; emitted events (lead_qualified, deal_created) flow through the
@@ -25,6 +29,15 @@ from revenue_os.database import SessionLocal
 from revenue_os.models.contact import Contact, ContactStatus
 from revenue_os.models.goals import Goal, GoalStep
 from revenue_os.services.activity_log import log_agent_action
+from revenue_os.services.acp1_autonomous_boundary import (
+    BLOCKED_HERMES_DEAL,
+    BLOCKED_MISSING_TENANT,
+    assert_contact_org,
+    hermes_action_allowed,
+    log_autonomous_blocked,
+    org_uuid_or_none,
+    require_organization_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +51,36 @@ QUALIFY_SCORE_THRESHOLD = 70
 # ── Progress measurement ─────────────────────────────────────────────────────
 
 
-def measure_metric(db: Session, metric: str) -> float:
-    """Current absolute value of a goal metric."""
+def measure_metric(
+    db: Session, metric: str, *, organization_id: str | None = None
+) -> float:
+    """Current absolute value of a goal metric.
+
+    When organization_id is provided, counts are org-scoped. Autonomous
+    callers must pass organization_id (ACP-1).
+    """
+    org_uuid = org_uuid_or_none(organization_id) if organization_id else None
     if metric == "qualified_leads":
-        return float(
-            db.query(Contact).filter(Contact.status == ContactStatus.QUALIFIED).count()
-        )
+        q = db.query(Contact).filter(Contact.status == ContactStatus.QUALIFIED)
+        if org_uuid is not None:
+            q = q.filter(Contact.organization_id == org_uuid)
+        return float(q.count())
     if metric == "pipeline_value":
         from revenue_os.services.deal_automation_service import get_pipeline_health
-        return float(get_pipeline_health(db).get("total_pipeline_value", 0) or 0)
+
+        return float(
+            get_pipeline_health(db, organization_id=organization_id).get(
+                "total_pipeline_value", 0
+            )
+            or 0
+        )
     if metric == "deals_closed":
         from revenue_os.models.deal import Deal, DealStage
-        return float(db.query(Deal).filter(Deal.stage == DealStage.CLOSED_WON).count())
+
+        q = db.query(Deal).filter(Deal.stage == DealStage.CLOSED_WON)
+        if org_uuid is not None:
+            q = q.filter(Deal.organization_id == org_uuid)
+        return float(q.count())
     raise ValueError(f"Unsupported metric: {metric}")
 
 
@@ -57,35 +88,84 @@ def measure_metric(db: Session, metric: str) -> float:
 
 
 def action_score_unscored_leads(db: Session, params: dict) -> dict[str, Any]:
-    """Score contacts that have no lead score yet."""
+    """Score contacts that have no lead score yet — org-scoped (ACP-1)."""
     from revenue_os.services.lead_scoring_service import score_contact
+
+    organization_id = require_organization_id(params)
+    if organization_id is None:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_score_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"action": "score_unscored_leads"},
+        )
+
+    org_uuid = org_uuid_or_none(organization_id)
+    if org_uuid is None:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_score_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"action": "score_unscored_leads", "invalid_org": True},
+        )
 
     limit = int(params.get("limit", 50))
     contacts = (
         db.query(Contact)
+        .filter(Contact.organization_id == org_uuid)
         .filter((Contact.lead_score == None) | (Contact.lead_score == 0))  # noqa: E711
         .limit(limit)
         .all()
     )
     scored = 0
     for contact in contacts:
+        if not assert_contact_org(contact, organization_id):
+            continue
         try:
             score_contact(db, contact)
             scored += 1
+            log_agent_action(
+                actor=ACTOR,
+                action_type="lead_scored",
+                target_type="contact",
+                target_id=str(contact.id),
+                organization_id=organization_id,
+                detail={"source": "hermes"},
+            )
         except Exception as e:
             logger.warning(f"Hermes scoring failed for {contact.id}: {e}")
     db.commit()
-    return {"scored": scored}
+    return {"ok": True, "scored": scored, "organization_id": organization_id}
 
 
 def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
     """Identify high-scoring leads/prospects eligible for human qualification.
 
     SALES A4: does not mutate Contact.status — human gate required via CRM API.
+    ACP-1: org-scoped read/recommend only.
     """
+    organization_id = require_organization_id(params)
+    if organization_id is None:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_qualify_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"action": "qualify_high_scorers"},
+        )
+
+    org_uuid = org_uuid_or_none(organization_id)
+    if org_uuid is None:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_qualify_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"action": "qualify_high_scorers", "invalid_org": True},
+        )
+
     threshold = int(params.get("threshold", QUALIFY_SCORE_THRESHOLD))
     candidates = (
         db.query(Contact)
+        .filter(Contact.organization_id == org_uuid)
         .filter(
             Contact.lead_score >= threshold,
             Contact.status.in_([ContactStatus.LEAD, ContactStatus.PROSPECT]),
@@ -103,12 +183,14 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
             "suggested_status": ContactStatus.QUALIFIED.value,
         }
         for contact in candidates
+        if assert_contact_org(contact, organization_id)
     ]
 
     log_agent_action(
         actor=ACTOR,
         action_type="qualify_high_scorers_recommendation",
         target_type="contact_batch",
+        organization_id=organization_id,
         detail={
             "threshold": threshold,
             "eligible_count": len(eligible),
@@ -116,38 +198,49 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
         },
     )
 
-    return {"eligible": eligible, "qualified": 0, "status_mutated": False}
+    return {
+        "ok": True,
+        "eligible": eligible,
+        "qualified": 0,
+        "status_mutated": False,
+        "organization_id": organization_id,
+    }
 
 
 def action_create_deals_for_qualified(db: Session, params: dict) -> dict[str, Any]:
-    """Open a deal for every qualified contact that doesn't have one yet."""
-    from revenue_os.services.deal_automation_service import create_deal_from_contact
+    """ACP-1: Hermes autonomous Deal creation is PROHIBITED.
 
-    default_value = float(params.get("default_value", 5000.0))
-    contacts = (
-        db.query(Contact)
-        .filter(Contact.status == ContactStatus.QUALIFIED)
-        .limit(int(params.get("limit", 25)))
-        .all()
+    organization_id does not make this action eligible.
+    """
+    organization_id = require_organization_id(params)
+    return log_autonomous_blocked(
+        actor=ACTOR,
+        action_type="hermes_deal_create_blocked",
+        reason=BLOCKED_HERMES_DEAL,
+        organization_id=organization_id,
+        detail={
+            "action": "create_deals_for_qualified",
+            "deals_created": 0,
+            "note": "Hermes may not create Deals under ACP-1",
+        },
     )
-    created = 0
-    for contact in contacts:
-        try:
-            deal = create_deal_from_contact(db, contact, value=default_value)
-            if deal is not None:
-                created += 1
-        except Exception as e:
-            logger.warning(f"Deal creation failed for {contact.id}: {e}")
-    db.commit()
-    return {"deals_created": created, "qualified_considered": len(contacts)}
 
 
 def action_check_deals_at_risk(db: Session, params: dict) -> dict[str, Any]:
-    """Surface at-risk deals so workflows/n8n can chase them."""
+    """Surface at-risk deals so workflows/n8n can chase them — org-scoped."""
     from revenue_os.automation.events import emit_deal_at_risk
     from revenue_os.services.deal_automation_service import get_deals_at_risk
 
-    at_risk = get_deals_at_risk(db)
+    organization_id = require_organization_id(params)
+    if organization_id is None:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_deal_risk_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"action": "check_deals_at_risk"},
+        )
+
+    at_risk = get_deals_at_risk(db, organization_id=organization_id)
     for deal in at_risk:
         deal_id = str(deal.get("deal_id") or deal.get("id") or "")
         try:
@@ -158,7 +251,19 @@ def action_check_deals_at_risk(db: Session, params: dict) -> dict[str, Any]:
             )
         except Exception:
             pass
-    return {"deals_at_risk": len(at_risk)}
+        log_agent_action(
+            actor=ACTOR,
+            action_type="deal_at_risk_flagged",
+            target_type="deal",
+            target_id=deal_id,
+            organization_id=organization_id,
+            detail=deal,
+        )
+    return {
+        "ok": True,
+        "deals_at_risk": len(at_risk),
+        "organization_id": organization_id,
+    }
 
 
 ACTION_REGISTRY: dict[str, Callable[[Session, dict], dict[str, Any]]] = {
@@ -269,8 +374,13 @@ def _get_steps(db: Session, goal_id: str) -> list[GoalStep]:
     )
 
 
-def run_goal_check(goal_id: str) -> dict[str, Any]:
-    """One Hermes cycle for a goal: execute due steps, measure, adapt status."""
+def run_goal_check(
+    goal_id: str, *, organization_id: str | None = None
+) -> dict[str, Any]:
+    """One Hermes cycle for a goal: execute due steps, measure, adapt status.
+
+    Autonomous callers must supply organization_id (ACP-1).
+    """
     db = SessionLocal()
     try:
         goal = db.get(Goal, goal_id)
@@ -279,10 +389,31 @@ def run_goal_check(goal_id: str) -> dict[str, Any]:
         if goal.status not in ("active",):
             return {"goal_id": goal_id, "status": goal.status, "skipped": True}
 
+        if organization_id is None:
+            blocked = log_autonomous_blocked(
+                actor=ACTOR,
+                action_type="hermes_goal_blocked",
+                reason=BLOCKED_MISSING_TENANT,
+                target_type="goal",
+                target_id=goal_id,
+                detail={"title": goal.title},
+            )
+            return {**blocked, "goal_id": goal_id, "steps_executed": []}
+
         executed: list[dict[str, Any]] = []
         for step in _get_steps(db, goal_id):
             due = step.status == "pending" or (step.repeat and step.status != "failed")
             if not due:
+                continue
+            if not hermes_action_allowed(step.action_type):
+                result = action_create_deals_for_qualified(
+                    db, {**(step.params or {}), "organization_id": organization_id}
+                )
+                step.status = "blocked"
+                step.result = result
+                executed.append({"step": step.title, **result})
+                step.runs += 1
+                step.executed_at = datetime.now(timezone.utc)
                 continue
             action = ACTION_REGISTRY.get(step.action_type)
             if action is None:
@@ -290,8 +421,14 @@ def run_goal_check(goal_id: str) -> dict[str, Any]:
                 step.result = {"error": f"unknown action {step.action_type}"}
                 continue
             try:
-                result = action(db, step.params or {})
-                step.status = "completed"
+                params = dict(step.params or {})
+                params["organization_id"] = organization_id
+                result = action(db, params)
+                step.status = (
+                    "completed"
+                    if result.get("ok", True) and not result.get("blocked")
+                    else "blocked"
+                )
                 step.result = result
                 executed.append({"step": step.title, **result})
             except Exception as e:
@@ -302,7 +439,9 @@ def run_goal_check(goal_id: str) -> dict[str, Any]:
             step.runs += 1
             step.executed_at = datetime.now(timezone.utc)
 
-        goal.current_value = measure_metric(db, goal.metric)
+        goal.current_value = measure_metric(
+            db, goal.metric, organization_id=organization_id
+        )
         goal.last_checked_at = datetime.now(timezone.utc)
         goal.checks += 1
         achieved = goal.current_value >= goal.target_value
@@ -314,6 +453,7 @@ def run_goal_check(goal_id: str) -> dict[str, Any]:
             "goal_id": goal_id,
             "title": goal.title,
             "status": goal.status,
+            "organization_id": organization_id,
             "current_value": goal.current_value,
             "target_value": goal.target_value,
             "progress": round(goal.progress(), 3),
@@ -325,22 +465,42 @@ def run_goal_check(goal_id: str) -> dict[str, Any]:
     log_agent_action(
         actor=ACTOR,
         action_type="goal_achieved" if summary["status"] == "achieved" else "goal_checked",
-        target_type="goal", target_id=goal_id,
+        target_type="goal",
+        target_id=goal_id,
+        organization_id=organization_id,
         detail=summary,
     )
     return summary
 
 
-def check_all_active_goals() -> dict[str, Any]:
-    """Heartbeat entrypoint: run one cycle for every active goal."""
+def check_all_active_goals(
+    *, organization_ids: list[str] | None = None
+) -> dict[str, Any]:
+    """Heartbeat entrypoint: run one cycle per active goal per authorized org."""
+    if not organization_ids:
+        return log_autonomous_blocked(
+            actor=ACTOR,
+            action_type="hermes_goal_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"note": "check_all_active_goals requires explicit organization_ids"},
+        )
+
     db = SessionLocal()
     try:
         goal_ids = [g.id for g in db.query(Goal).filter(Goal.status == "active").all()]
     finally:
         db.close()
 
-    results = [run_goal_check(goal_id) for goal_id in goal_ids]
+    results: list[dict[str, Any]] = []
+    for organization_id in organization_ids:
+        for goal_id in goal_ids:
+            results.append(
+                run_goal_check(goal_id, organization_id=organization_id)
+            )
     return {
+        "ok": True,
         "goals_checked": len(results),
+        "organizations": list(organization_ids),
         "achieved": sum(1 for r in results if r.get("status") == "achieved"),
+        "blocked": sum(1 for r in results if r.get("blocked")),
     }

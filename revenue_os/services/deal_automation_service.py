@@ -74,6 +74,11 @@ def create_deal_from_contact(
         owner_id=owner_id,
         expected_close_date=datetime.now(timezone.utc) + timedelta(days=45),  # 45-day cycle
     )
+    # Ownership correctness only — does not authorize autonomous Deal creation (ACP-1).
+    if contact.organization_id is not None:
+        from revenue_os.services.tenant_scoped_access import stamp_new_deal_org
+
+        stamp_new_deal_org(deal, str(contact.organization_id))
 
     db.add(deal)
     db.commit()

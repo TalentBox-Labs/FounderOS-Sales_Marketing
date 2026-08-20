@@ -309,11 +309,29 @@ def contact_has_stop_tags(contact: Contact) -> bool:
     return _contact_stop_tags(contact)
 
 
-def scan_eligible_follow_ups(db: Session, *, limit: int = 25) -> list[dict[str, str]]:
-    """Scheduler scan — server-trusted Contact.organization_id only."""
+def scan_eligible_follow_ups(
+    db: Session,
+    *,
+    organization_id: str,
+    limit: int = 25,
+) -> list[dict[str, str]]:
+    """Scheduler scan — mandatory organization scope (ACP-1).
+
+    Contact.organization_id validates ownership; it does not authorize tenant
+    activation (caller must already resolve autonomous orgs via ACP-1 boundary).
+    """
+    import uuid as uuid_lib
+
+    from revenue_os.services.acp1_autonomous_boundary import assert_contact_org
+
+    try:
+        org_uuid = uuid_lib.UUID(str(organization_id))
+    except ValueError:
+        return []
+
     contacts = (
         db.query(Contact)
-        .filter(Contact.organization_id.isnot(None), Contact.email.isnot(None))
+        .filter(Contact.organization_id == org_uuid, Contact.email.isnot(None))
         .limit(limit * 4)
         .all()
     )
@@ -321,6 +339,8 @@ def scan_eligible_follow_ups(db: Session, *, limit: int = 25) -> list[dict[str, 
     for contact in contacts:
         if len(eligible) >= limit:
             break
+        if not assert_contact_org(contact, organization_id):
+            continue
         result = evaluate_follow_up_eligibility(db, contact)
         if result.get("eligible"):
             eligible.append(
