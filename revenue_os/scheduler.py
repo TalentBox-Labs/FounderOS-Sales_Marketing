@@ -60,8 +60,13 @@ def _resolve_orgs_or_block(db, *, action_type: str) -> tuple[list[str] | None, d
 
 
 def job_score_new_leads() -> dict[str, Any]:
-    """Score contacts with no lead score — per authorized organization only."""
+    """Score contacts with no lead score — per authorized organization only.
+
+    ACP-2: each contact score is governed work (propose → ACP-1 evaluate → execute).
+    """
     from revenue_os.models.contact import Contact
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_LEAD_SCORE, WorkState
     from revenue_os.services.lead_scoring_service import score_contact
 
     db = SessionLocal()
@@ -72,6 +77,7 @@ def job_score_new_leads() -> dict[str, Any]:
 
         total_considered = 0
         total_scored = 0
+        blocked_n = 0
         per_org: list[dict[str, Any]] = []
         for organization_id in orgs or []:
             org_uuid = org_uuid_or_none(organization_id)
@@ -86,6 +92,7 @@ def job_score_new_leads() -> dict[str, Any]:
             )
             scored = 0
             for contact in contacts:
+                total_considered += 1
                 if not assert_contact_org(contact, organization_id):
                     log_autonomous_blocked(
                         actor=ACTOR,
@@ -95,21 +102,40 @@ def job_score_new_leads() -> dict[str, Any]:
                         target_type="contact",
                         target_id=str(contact.id),
                     )
+                    blocked_n += 1
                     continue
-                try:
-                    payload = score_contact(db, contact)
-                    scored += 1
+
+                def _exec(work, c=contact):  # noqa: ANN001
+                    payload = score_contact(db, c)
                     log_agent_action(
                         actor=ACTOR,
                         action_type="lead_scored",
                         target_type="contact",
-                        target_id=str(contact.id),
+                        target_id=str(c.id),
                         organization_id=organization_id,
-                        detail={"score": payload["score"], "status_changed": False},
+                        detail={
+                            "score": payload["score"],
+                            "status_changed": False,
+                            "work_id": work.work_id,
+                        },
                     )
-                except Exception as e:
-                    logger.warning(f"Scoring failed for contact {contact.id}: {e}")
-            total_considered += len(contacts)
+                    return {"score": payload["score"]}
+
+                work = orchestrate(
+                    db,
+                    work_kind=WORK_LEAD_SCORE,
+                    organization_id=organization_id,
+                    source="scheduler",
+                    actor=ACTOR,
+                    executor=_exec,
+                    target_type="contact",
+                    target_id=str(contact.id),
+                    logical_key="unscored",
+                )
+                if work.state == WorkState.SUCCEEDED and not work.result.get("deduplicated"):
+                    scored += 1
+                elif work.state != WorkState.SUCCEEDED:
+                    blocked_n += 1
             total_scored += scored
             per_org.append(
                 {
@@ -123,14 +149,21 @@ def job_score_new_leads() -> dict[str, Any]:
             "ok": True,
             "contacts_considered": total_considered,
             "contacts_scored": total_scored,
+            "blocked_or_skipped": blocked_n,
             "organizations": per_org,
+            "orchestrated": True,
         }
     finally:
         db.close()
 
 
 def job_scan_follow_up_eligibility() -> dict[str, Any]:
-    """Propose governed follow-ups per authorized org (human approval still required)."""
+    """Propose governed follow-ups per authorized org (human approval still required).
+
+    ACP-2: proposal is orchestrated AUTONOMOUS; send remains HUMAN_REQUIRED via ApprovalRequest.
+    """
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_FOLLOW_UP_PROPOSE, WorkState
     from revenue_os.services.follow_up_eligibility import scan_eligible_follow_ups
     from revenue_os.services.revenue_orchestration_service import run_follow_up_proposal_scheduled
 
@@ -158,24 +191,45 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
                         target_id=item.get("contact_id"),
                     )
                     continue
-                result = run_follow_up_proposal_scheduled(
-                    db,
-                    organization_id,
-                    item["contact_id"],
-                )
-                if result.get("ok"):
-                    proposed += 1
-                    log_agent_action(
-                        actor=ACTOR,
-                        action_type="followup_proposal_scheduled",
-                        target_type="contact",
-                        target_id=item["contact_id"],
-                        organization_id=organization_id,
-                        detail={
-                            "cadence_step": item.get("cadence_step"),
-                            "approval_id": result.get("approval_id"),
-                        },
+
+                def _exec(work, it=item, oid=organization_id):  # noqa: ANN001
+                    result = run_follow_up_proposal_scheduled(
+                        db, oid, it["contact_id"]
                     )
+                    if result.get("ok"):
+                        log_agent_action(
+                            actor=ACTOR,
+                            action_type="followup_proposal_scheduled",
+                            target_type="contact",
+                            target_id=it["contact_id"],
+                            organization_id=oid,
+                            detail={
+                                "cadence_step": it.get("cadence_step"),
+                                "approval_id": result.get("approval_id"),
+                                "work_id": work.work_id,
+                            },
+                        )
+                        return {
+                            "ok": True,
+                            "approval_id": result.get("approval_id"),
+                            "waiting_human": True,
+                            "escalation_reason": "follow_up_send_requires_approval",
+                        }
+                    return {"blocked": True, "blocked_reason": result.get("reason") or "not_eligible"}
+
+                work = orchestrate(
+                    db,
+                    work_kind=WORK_FOLLOW_UP_PROPOSE,
+                    organization_id=organization_id,
+                    source="scheduler",
+                    actor=ACTOR,
+                    executor=_exec,
+                    target_type="contact",
+                    target_id=item["contact_id"],
+                    logical_key=str(item.get("cadence_step") or "step"),
+                )
+                if work.state in (WorkState.SUCCEEDED, WorkState.WAITING_HUMAN):
+                    proposed += 1
                 else:
                     skipped += 1
         db.commit()
@@ -185,6 +239,7 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
             "proposals_filed": proposed,
             "skipped": skipped,
             "organizations": list(orgs or []),
+            "orchestrated": True,
         }
     finally:
         db.close()
