@@ -11,7 +11,7 @@
 {% block content %}
 {% if snapshot.state == 'unavailable' %}
 <p class="founder-empty" data-testid="demand-unavailable">{{ snapshot.message }}</p>
-{% else %}
+{% endif %}
 
 <p class="founder-meta" data-testid="people-spine-intro" style="margin-bottom:16px">
   New demand waits for an intake decision. Accepted people open a workspace for research, outreach, replies, and meetings.
@@ -23,10 +23,28 @@
     <p class="founder-empty">No demand awaiting intake decision</p>
   {% else %}
     {% for d in snapshot.pending_demands %}
-    <div class="founder-list-item" data-demand-id="{{ d.demand_id }}">
+    <div class="founder-list-item" data-testid="demand-pending-item" data-demand-id="{{ d.demand_id }}">
       <strong>{{ d.name or d.email or d.demand_id }}</strong>
-      <div class="founder-meta">{{ d.email }} · {{ d.source }} · {{ d.registered_at or '—' }}</div>
-      <div class="founder-meta">Intake still requires a human decision.</div>
+      <div class="founder-meta">
+        {{ d.email }}
+        · {{ d.source_label or d.source or 'Source not stored' }}
+        · {{ d.registered_at or '—' }}
+        {% if d.company_hint_name %} · {{ d.company_hint_name }}{% endif %}
+      </div>
+      <div class="founder-meta">
+        <span class="pill amber" data-testid="demand-decision-state">{{ d.human_decision_label or 'Needs your decision' }}</span>
+        <span class="pill gray">{{ d.qualification_state_label or 'System recommended' }}</span>
+      </div>
+      <div class="founder-meta" data-testid="demand-why-it-matters"><strong>Why it matters:</strong> {{ d.why_it_matters }}</div>
+      {% if d.signals %}
+      <div class="founder-meta" data-testid="demand-signals">Signals: {{ d.signals | join(' · ') }}</div>
+      {% elif d.qualification_reason_missing %}
+      <div class="founder-meta" data-testid="demand-signals">No extra stored signals</div>
+      {% endif %}
+      <div class="founder-meta" data-testid="demand-what-happens-next"><strong>What happens next:</strong> {{ d.what_happens_next }}</div>
+      {% if d.workspace_context %}
+      <div class="founder-meta">Workspace: {{ d.workspace_context }}</div>
+      {% endif %}
       <div style="margin-top:8px">
         <a href="/operator#stage-demand" class="btn btn-primary btn-sm">Review intake →</a>
       </div>
@@ -62,5 +80,4 @@
     </div>
   {% endif %}
 </div>
-{% endif %}
 {% endblock %}
