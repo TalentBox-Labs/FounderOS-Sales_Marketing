@@ -35,6 +35,10 @@ from revenue_os.services.commercial_decision_loop import (
 from revenue_os.services.commercial_funnel_intelligence import (
     compose_commercial_funnel_snapshot,
 )
+from revenue_os.services.command_operating_surface import (
+    attach_command_actions,
+    summarize_command_actions,
+)
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
@@ -821,6 +825,12 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
             "informational": 0,
         },
         "commercial_funnel": {},
+        "command_action_summary": {
+            "inline_governed": 0,
+            "navigate_governed": 0,
+            "information_only": 0,
+            "total": 0,
+        },
         "errors": [],
     }
     flow_contacts: list[dict[str, Any]] = []
@@ -931,7 +941,14 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         recent_activity=snapshot["recent_activity"],
         organization_id=organization_id,
     )
+    snapshot["decision_items"] = attach_command_actions(
+        snapshot["decision_items"],
+        organization_id=organization_id,
+    )
     snapshot["decision_loop"] = summarize_decision_loop(snapshot["decision_items"])
+    snapshot["command_action_summary"] = summarize_command_actions(
+        snapshot["decision_items"]
+    )
     snapshot["commercial_funnel"] = compose_commercial_funnel_snapshot(
         organization_id=organization_id,
         operator_flow=flow,
