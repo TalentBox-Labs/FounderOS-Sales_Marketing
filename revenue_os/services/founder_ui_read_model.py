@@ -20,6 +20,7 @@ from revenue_os.models.contact import Contact
 from revenue_os.models.deal import Deal
 from revenue_os.models.organization import Organization
 from revenue_os.services.approvals import list_requests, pending_count
+from revenue_os.services.acp2_oversight import compose_orchestration_summary
 from revenue_os.services.booking_eligibility import (
     STATE_ALREADY_BOOKED,
     STATE_ELIGIBLE,
@@ -825,6 +826,16 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
             "informational": 0,
         },
         "commercial_funnel": {},
+        "agent_orchestration": {
+            "counts": {
+                "succeeded": 0,
+                "blocked": 0,
+                "awaiting_human": 0,
+                "failed": 0,
+                "exhausted": 0,
+            },
+            "source": "AgentActionLog.acp2_*",
+        },
         "command_action_summary": {
             "inline_governed": 0,
             "navigate_governed": 0,
@@ -959,6 +970,17 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         recent_activity=snapshot["recent_activity"],
         decision_items=snapshot["decision_items"],
     )
+    try:
+        _odb = SessionLocal()
+        try:
+            snapshot["agent_orchestration"] = compose_orchestration_summary(
+                _odb, organization_id=str(organization_id)
+            )
+        finally:
+            _odb.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Command center ACP-2 orchestration summary unavailable: %s", exc)
+        snapshot["errors"].append("agent_orchestration")
     snapshot["ai_completed_count"] = len(snapshot.get("recent_activity") or [])
     return snapshot
 

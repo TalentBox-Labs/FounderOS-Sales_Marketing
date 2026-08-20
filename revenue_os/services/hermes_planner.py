@@ -208,22 +208,49 @@ def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
 
 
 def action_create_deals_for_qualified(db: Session, params: dict) -> dict[str, Any]:
-    """ACP-1: Hermes autonomous Deal creation is PROHIBITED.
+    """ACP-1/ACP-2: Hermes autonomous Deal creation is PROHIBITED.
 
-    organization_id does not make this action eligible.
+    Routes through ACP-2 orchestration so planner output cannot grant authority.
+    Preserves ACP-1 blocked provenance action_type for freeze compatibility.
     """
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_HERMES_DEAL_CREATE
+
     organization_id = require_organization_id(params)
-    return log_autonomous_blocked(
+
+    def _never(_work):  # noqa: ANN001
+        raise RuntimeError("hermes_deal_create_executor_must_not_run")
+
+    work = orchestrate(
+        db,
+        work_kind=WORK_HERMES_DEAL_CREATE,
+        organization_id=organization_id,
+        source="hermes",
+        actor=ACTOR,
+        executor=_never,
+        target_type="deal_batch",
+        logical_key="qualified",
+    )
+    # ACP-1 freeze-compatible provenance (in addition to acp2_work_blocked)
+    log_autonomous_blocked(
         actor=ACTOR,
         action_type="hermes_deal_create_blocked",
-        reason=BLOCKED_HERMES_DEAL,
+        reason=work.failure_reason or BLOCKED_HERMES_DEAL,
         organization_id=organization_id,
         detail={
             "action": "create_deals_for_qualified",
             "deals_created": 0,
-            "note": "Hermes may not create Deals under ACP-1",
+            "work_id": work.work_id,
+            "note": "Hermes may not create Deals under ACP-1/ACP-2",
         },
     )
+    return {
+        "ok": False,
+        "blocked": True,
+        "blocked_reason": work.failure_reason or BLOCKED_HERMES_DEAL,
+        "deals_created": 0,
+        "work": work.to_dict(),
+    }
 
 
 def action_check_deals_at_risk(db: Session, params: dict) -> dict[str, Any]:
