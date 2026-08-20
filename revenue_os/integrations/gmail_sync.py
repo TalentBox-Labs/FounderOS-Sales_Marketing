@@ -123,8 +123,27 @@ def _get_message(access_token: str, message_id: str) -> dict[str, Any]:
     return resp.json()
 
 
-def sync_inbox() -> dict[str, Any]:
-    """Pull recent inbox messages and log matched-contact ones to their timeline."""
+def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
+    """Pull recent inbox messages and log matched-contact ones to their timeline.
+
+    ACP-1: commercial contact matching requires explicit organization_ids.
+    Without authorized orgs, fail closed (no global Contact email scan).
+    """
+    from revenue_os.services.acp1_autonomous_boundary import (
+        BLOCKED_MISSING_TENANT,
+        assert_contact_org,
+        log_autonomous_blocked,
+        org_uuid_or_none,
+    )
+
+    if not organization_ids:
+        return log_autonomous_blocked(
+            actor="heartbeat",
+            action_type="gmail_sync_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"note": "Gmail sync requires explicit autonomous organization scope"},
+        )
+
     config = _vault_config()
     if not config or not config.get("refresh_token"):
         return {"ok": False, "reason": "Gmail is not connected — connect it on the Integrations page."}
@@ -143,6 +162,16 @@ def sync_inbox() -> dict[str, Any]:
     from revenue_os.database import SessionLocal
     from revenue_os.models.activity import Activity, ActivityType, EmailActivity
     from revenue_os.models.contact import Contact
+    from revenue_os.services.activity_log import log_agent_action
+
+    org_uuids = [u for u in (org_uuid_or_none(o) for o in organization_ids) if u is not None]
+    if not org_uuids:
+        return log_autonomous_blocked(
+            actor="heartbeat",
+            action_type="gmail_sync_blocked",
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"note": "No valid organization UUIDs for Gmail sync"},
+        )
 
     db = SessionLocal()
     checked = matched = created = 0
@@ -152,7 +181,10 @@ def sync_inbox() -> dict[str, Any]:
             db.query(EmailActivity.message_id).filter(EmailActivity.message_id.in_(message_ids)).all()
         }
         contacts_by_email = {
-            c.email.lower(): c for c in db.query(Contact).filter(Contact.email.isnot(None)).all()
+            c.email.lower(): c
+            for c in db.query(Contact)
+            .filter(Contact.email.isnot(None), Contact.organization_id.in_(org_uuids))
+            .all()
         }
 
         for message_id in message_ids:
@@ -169,7 +201,11 @@ def sync_inbox() -> dict[str, Any]:
             sender = _extract_email(headers.get("From", ""))
             contact = contacts_by_email.get(sender)
             if contact is None:
-                continue  # not a known contact — skip rather than dump inbox noise
+                continue  # not a known in-scope contact — skip rather than dump inbox noise
+
+            org_id = str(contact.organization_id) if contact.organization_id else None
+            if org_id is None or not assert_contact_org(contact, org_id):
+                continue
 
             matched += 1
             activity = Activity(
@@ -186,9 +222,23 @@ def sync_inbox() -> dict[str, Any]:
             contact.last_contacted_at = datetime.now(timezone.utc)
             db.add(contact)
             created += 1
+            log_agent_action(
+                actor="heartbeat",
+                action_type="gmail_inbound_matched",
+                target_type="contact",
+                target_id=str(contact.id),
+                organization_id=org_id,
+                detail={"message_id": message_id},
+            )
 
         db.commit()
     finally:
         db.close()
 
-    return {"ok": True, "checked": checked, "matched": matched, "created": created}
+    return {
+        "ok": True,
+        "checked": checked,
+        "matched": matched,
+        "created": created,
+        "organizations": list(organization_ids),
+    }

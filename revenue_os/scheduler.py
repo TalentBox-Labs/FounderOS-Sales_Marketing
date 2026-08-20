@@ -5,11 +5,17 @@ laptop (SQLite, `uvicorn runner_api:app`) and in production. Each job run is
 persisted to `heartbeat_runs` and every action taken is written to the
 `agent_action_log` audit trail.
 
+ACP-1: commercial jobs require explicit autonomous tenant resolution
+(allowlist ∩ ACTIVE Organization, or ACTIVE Organization). No global
+Contact/Deal commercial queries.
+
 Configuration (environment variables):
     HEARTBEAT_ENABLED=1|0            master switch (default 1)
     HEARTBEAT_LEAD_SCORING_SEC       default 3600  (hourly)
     HEARTBEAT_DEAL_RISK_SEC          default 21600 (every 6 hours)
     HEARTBEAT_METRICS_SNAPSHOT_SEC   default 3600  (hourly)
+    ACP1_AUTONOMOUS_ORGANIZATION_IDS optional comma-separated org UUID allowlist
+    HEARTBEAT_ORGANIZATION_IDS       alias for the allowlist
 """
 
 from __future__ import annotations
@@ -17,192 +23,295 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from revenue_os.database import SessionLocal
 from revenue_os.models.automation_state import HeartbeatRun
 from revenue_os.services.activity_log import log_agent_action
+from revenue_os.services.acp1_autonomous_boundary import (
+    BLOCKED_MISSING_TENANT,
+    assert_contact_org,
+    log_autonomous_blocked,
+    org_uuid_or_none,
+    resolve_autonomous_organization_ids,
+)
 
 logger = logging.getLogger(__name__)
 
 ACTOR = "heartbeat"
 
 
+def _resolve_orgs_or_block(db, *, action_type: str) -> tuple[list[str] | None, dict[str, Any] | None]:
+    orgs = resolve_autonomous_organization_ids(db)
+    if not orgs:
+        blocked = log_autonomous_blocked(
+            actor=ACTOR,
+            action_type=action_type,
+            reason=BLOCKED_MISSING_TENANT,
+            detail={"note": "No ACTIVE Organization (or allowlist∩ACTIVE) for autonomous work"},
+        )
+        return None, blocked
+    return orgs, None
+
+
 # ── Job implementations ──────────────────────────────────────────────────────
 
 
 def job_score_new_leads() -> dict[str, Any]:
-    """Score contacts that have no lead score yet (up to 25 per run)."""
+    """Score contacts with no lead score — per authorized organization only."""
     from revenue_os.models.contact import Contact
     from revenue_os.services.lead_scoring_service import score_contact
 
     db = SessionLocal()
     try:
-        contacts = (
-            db.query(Contact)
-            .filter((Contact.lead_score == None) | (Contact.lead_score == 0))  # noqa: E711
-            .limit(25)
-            .all()
-        )
-        scored = 0
-        for contact in contacts:
-            try:
-                payload = score_contact(db, contact)
-                scored += 1
-                log_agent_action(
-                    actor=ACTOR,
-                    action_type="lead_scored",
-                    target_type="contact",
-                    target_id=str(contact.id),
-                    detail={"score": payload["score"], "status_changed": False},
-                )
-            except Exception as e:
-                logger.warning(f"Scoring failed for contact {contact.id}: {e}")
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="lead_score_blocked")
+        if blocked is not None:
+            return blocked
+
+        total_considered = 0
+        total_scored = 0
+        per_org: list[dict[str, Any]] = []
+        for organization_id in orgs or []:
+            org_uuid = org_uuid_or_none(organization_id)
+            if org_uuid is None:
+                continue
+            contacts = (
+                db.query(Contact)
+                .filter(Contact.organization_id == org_uuid)
+                .filter((Contact.lead_score == None) | (Contact.lead_score == 0))  # noqa: E711
+                .limit(25)
+                .all()
+            )
+            scored = 0
+            for contact in contacts:
+                if not assert_contact_org(contact, organization_id):
+                    log_autonomous_blocked(
+                        actor=ACTOR,
+                        action_type="lead_score_blocked",
+                        reason="tenant_entity_mismatch",
+                        organization_id=organization_id,
+                        target_type="contact",
+                        target_id=str(contact.id),
+                    )
+                    continue
+                try:
+                    payload = score_contact(db, contact)
+                    scored += 1
+                    log_agent_action(
+                        actor=ACTOR,
+                        action_type="lead_scored",
+                        target_type="contact",
+                        target_id=str(contact.id),
+                        organization_id=organization_id,
+                        detail={"score": payload["score"], "status_changed": False},
+                    )
+                except Exception as e:
+                    logger.warning(f"Scoring failed for contact {contact.id}: {e}")
+            total_considered += len(contacts)
+            total_scored += scored
+            per_org.append(
+                {
+                    "organization_id": organization_id,
+                    "contacts_considered": len(contacts),
+                    "contacts_scored": scored,
+                }
+            )
         db.commit()
-        return {"contacts_considered": len(contacts), "contacts_scored": scored}
+        return {
+            "ok": True,
+            "contacts_considered": total_considered,
+            "contacts_scored": total_scored,
+            "organizations": per_org,
+        }
     finally:
         db.close()
 
 
 def job_scan_follow_up_eligibility() -> dict[str, Any]:
-    """Propose governed follow-ups for eligible contacts (human approval still required)."""
+    """Propose governed follow-ups per authorized org (human approval still required)."""
     from revenue_os.services.follow_up_eligibility import scan_eligible_follow_ups
     from revenue_os.services.revenue_orchestration_service import run_follow_up_proposal_scheduled
 
     db = SessionLocal()
     try:
-        candidates = scan_eligible_follow_ups(db)
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="followup_scan_blocked")
+        if blocked is not None:
+            return blocked
+
         proposed = 0
         skipped = 0
-        for item in candidates:
-            result = run_follow_up_proposal_scheduled(
-                db,
-                item["organization_id"],
-                item["contact_id"],
-            )
-            if result.get("ok"):
-                proposed += 1
-                log_agent_action(
-                    actor=ACTOR,
-                    action_type="followup_proposal_scheduled",
-                    target_type="contact",
-                    target_id=item["contact_id"],
-                    organization_id=item["organization_id"],
-                    detail={
-                        "cadence_step": item.get("cadence_step"),
-                        "approval_id": result.get("approval_id"),
-                    },
+        candidates_total = 0
+        for organization_id in orgs or []:
+            candidates = scan_eligible_follow_ups(db, organization_id=organization_id)
+            candidates_total += len(candidates)
+            for item in candidates:
+                if str(item.get("organization_id")) != str(organization_id):
+                    skipped += 1
+                    log_autonomous_blocked(
+                        actor=ACTOR,
+                        action_type="followup_proposal_blocked",
+                        reason="tenant_entity_mismatch",
+                        organization_id=organization_id,
+                        target_type="contact",
+                        target_id=item.get("contact_id"),
+                    )
+                    continue
+                result = run_follow_up_proposal_scheduled(
+                    db,
+                    organization_id,
+                    item["contact_id"],
                 )
-            else:
-                skipped += 1
+                if result.get("ok"):
+                    proposed += 1
+                    log_agent_action(
+                        actor=ACTOR,
+                        action_type="followup_proposal_scheduled",
+                        target_type="contact",
+                        target_id=item["contact_id"],
+                        organization_id=organization_id,
+                        detail={
+                            "cadence_step": item.get("cadence_step"),
+                            "approval_id": result.get("approval_id"),
+                        },
+                    )
+                else:
+                    skipped += 1
         db.commit()
         return {
-            "candidates": len(candidates),
+            "ok": True,
+            "candidates": candidates_total,
             "proposals_filed": proposed,
             "skipped": skipped,
+            "organizations": list(orgs or []),
         }
     finally:
         db.close()
 
 
 def job_check_deals_at_risk() -> dict[str, Any]:
-    """Detect at-risk deals and emit events so workflows can react."""
+    """Detect at-risk deals per authorized organization and emit events."""
     from revenue_os.automation.events import emit_deal_at_risk
     from revenue_os.services.deal_automation_service import get_deals_at_risk
 
     db = SessionLocal()
     try:
-        at_risk = get_deals_at_risk(db)
-        for deal in at_risk:
-            deal_id = str(deal.get("deal_id") or deal.get("id") or "")
-            try:
-                emit_deal_at_risk(
-                    deal_id=deal_id,
-                    risk_score=int(deal.get("risk_score", 0)),
-                    days_overdue=int(deal.get("days_overdue", 0)),
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="deal_at_risk_blocked")
+        if blocked is not None:
+            return blocked
+
+        flagged = 0
+        for organization_id in orgs or []:
+            at_risk = get_deals_at_risk(db, organization_id=organization_id)
+            for deal in at_risk:
+                deal_id = str(deal.get("deal_id") or deal.get("id") or "")
+                try:
+                    emit_deal_at_risk(
+                        deal_id=deal_id,
+                        risk_score=int(deal.get("risk_score", 0)),
+                        days_overdue=int(deal.get("days_overdue", 0)),
+                    )
+                except Exception as e:
+                    logger.warning(f"emit_deal_at_risk failed for {deal_id}: {e}")
+                log_agent_action(
+                    actor=ACTOR,
+                    action_type="deal_at_risk_flagged",
+                    target_type="deal",
+                    target_id=deal_id,
+                    organization_id=organization_id,
+                    detail=deal,
                 )
-            except Exception as e:
-                logger.warning(f"emit_deal_at_risk failed for {deal_id}: {e}")
-            log_agent_action(
-                actor=ACTOR,
-                action_type="deal_at_risk_flagged",
-                target_type="deal",
-                target_id=deal_id,
-                detail=deal,
-            )
-        return {"deals_at_risk": len(at_risk)}
+                flagged += 1
+        return {"ok": True, "deals_at_risk": flagged, "organizations": list(orgs or [])}
     finally:
         db.close()
 
 
 def job_hermes_goal_check() -> dict[str, Any]:
-    """Run one Hermes planning cycle for every active goal."""
+    """Run Hermes cycles only when autonomous tenants resolve; org injected into steps."""
     from revenue_os.services.hermes_planner import check_all_active_goals
 
-    return check_all_active_goals()
+    db = SessionLocal()
+    try:
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="hermes_goal_blocked")
+        if blocked is not None:
+            return blocked
+    finally:
+        db.close()
+
+    return check_all_active_goals(organization_ids=list(orgs or []))
 
 
 def job_sync_gmail_inbox() -> dict[str, Any]:
-    """Pull recent Gmail inbox messages, log matched-contact ones to their timeline.
-
-    No-ops cleanly (returns ok:false with a reason) when Gmail isn't
-    connected — this job is always registered, but does nothing until a
-    founder completes OAuth on the Integrations page.
-    """
+    """Pull Gmail inbox; match contacts only within authorized organizations."""
     from revenue_os.integrations.gmail_sync import sync_inbox
 
-    return sync_inbox()
+    db = SessionLocal()
+    try:
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="gmail_sync_blocked")
+        if blocked is not None:
+            return blocked
+    finally:
+        db.close()
+
+    return sync_inbox(organization_ids=list(orgs or []))
 
 
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
-    """Persist a pipeline-health snapshot as analytics data points."""
+    """Persist pipeline-health snapshots per authorized organization."""
     from revenue_os.analytics.core import AnalyticsEngine, AnalyticsMetric, MetricType
     from revenue_os.services.deal_automation_service import get_pipeline_health
 
     db = SessionLocal()
     try:
-        health = get_pipeline_health(db)
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="metrics_snapshot_blocked")
+        if blocked is not None:
+            return blocked
+
+        recorded_all: dict[str, Any] = {"ok": True, "organizations": {}}
+        for organization_id in orgs or []:
+            health = get_pipeline_health(db, organization_id=organization_id)
+            snapshot_metrics = {
+                "pipeline_total_value": (
+                    MetricType.REVENUE, "$", "Total open pipeline value",
+                    float(health.get("total_pipeline_value", 0) or 0),
+                ),
+                "pipeline_deal_count": (
+                    MetricType.COUNT, "deals", "Number of open deals",
+                    float(health.get("total_deals", 0) or 0),
+                ),
+                "pipeline_weighted_forecast": (
+                    MetricType.REVENUE, "$", "Probability-weighted forecast",
+                    float(health.get("weighted_forecast", 0) or 0),
+                ),
+            }
+            recorded: dict[str, Any] = {}
+            for metric_id, (mtype, unit, description, value) in snapshot_metrics.items():
+                if AnalyticsEngine.get_metric(metric_id) is None:
+                    AnalyticsEngine.register_metric(AnalyticsMetric(
+                        id=metric_id,
+                        name=metric_id.replace("_", " ").title(),
+                        metric_type=mtype,
+                        calculation="heartbeat snapshot",
+                        unit=unit,
+                        description=description,
+                    ))
+                AnalyticsEngine.record_data_point(
+                    metric_id, value, dimension=f"org:{organization_id}"
+                )
+                recorded[metric_id] = value
+            log_agent_action(
+                actor=ACTOR,
+                action_type="metrics_snapshot",
+                target_type="pipeline",
+                organization_id=organization_id,
+                detail=recorded,
+            )
+            recorded_all["organizations"][organization_id] = recorded
+        return recorded_all
     finally:
         db.close()
-
-    snapshot_metrics = {
-        "pipeline_total_value": (
-            MetricType.REVENUE, "$", "Total open pipeline value",
-            float(health.get("total_pipeline_value", 0) or 0),
-        ),
-        "pipeline_deal_count": (
-            MetricType.COUNT, "deals", "Number of open deals",
-            float(health.get("total_deals", 0) or 0),
-        ),
-        "pipeline_weighted_forecast": (
-            MetricType.REVENUE, "$", "Probability-weighted forecast",
-            float(health.get("weighted_forecast", 0) or 0),
-        ),
-    }
-
-    recorded = {}
-    for metric_id, (mtype, unit, description, value) in snapshot_metrics.items():
-        if AnalyticsEngine.get_metric(metric_id) is None:
-            AnalyticsEngine.register_metric(AnalyticsMetric(
-                id=metric_id,
-                name=metric_id.replace("_", " ").title(),
-                metric_type=mtype,
-                calculation="heartbeat snapshot",
-                unit=unit,
-                description=description,
-            ))
-        AnalyticsEngine.record_data_point(metric_id, value, dimension="snapshot")
-        recorded[metric_id] = value
-
-    log_agent_action(
-        actor=ACTOR,
-        action_type="metrics_snapshot",
-        target_type="pipeline",
-        detail=recorded,
-    )
-    return recorded
 
 
 # ── Scheduler core ───────────────────────────────────────────────────────────
