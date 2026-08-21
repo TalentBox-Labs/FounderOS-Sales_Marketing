@@ -1,7 +1,7 @@
-"""ACP-2 founder oversight read model — compose AgentActionLog orchestration events.
+"""ACP-2/ACP-3 founder oversight read model — compose AgentActionLog events.
 
 Not a new SoT. Dedupes by work_id / idempotency_key for summary counts.
-Suitable for Founder Command attachment without a new dashboard (COS-6 deferred).
+ACP-3 adds reconciliation buckets + pause/kill/resume gate visibility.
 """
 
 from __future__ import annotations
@@ -21,6 +21,9 @@ from revenue_os.services.acp2_orchestration import (
     LOG_ORCH_SUCCEEDED,
     LOG_ORCH_WAITING,
 )
+from revenue_os.services.acp3_durable_runtime import runtime_gates
+from revenue_os.services.acp3_reconciliation import reconcile_organization
+from revenue_os.services.acp3_runtime_contract import LOG_ACP3_AMBIGUOUS
 
 _ORCH_TYPES = frozenset(
     {
@@ -30,6 +33,7 @@ _ORCH_TYPES = frozenset(
         LOG_ORCH_FAILED,
         LOG_ORCH_EXHAUSTED,
         LOG_ORCH_RETRYABLE,
+        LOG_ACP3_AMBIGUOUS,
     }
 )
 
@@ -37,7 +41,7 @@ _ORCH_TYPES = frozenset(
 def compose_orchestration_summary(
     db: Session, *, organization_id: str, limit: int = 200
 ) -> dict[str, Any]:
-    """Org-scoped orchestration summary for founder oversight."""
+    """Org-scoped orchestration + durable recovery summary for founder oversight."""
     try:
         org_uuid = uuid_lib.UUID(str(organization_id))
     except ValueError:
@@ -52,7 +56,6 @@ def compose_orchestration_summary(
         .all()
     )
 
-    # Latest event per work identity (prefer work_id, else idempotency_key)
     latest: dict[str, AgentActionLog] = {}
     for row in rows:
         detail = row.detail or {}
@@ -84,6 +87,8 @@ def compose_orchestration_summary(
             buckets["blocked"].append(item)
         elif row.action_type == LOG_ORCH_EXHAUSTED:
             buckets["exhausted"].append(item)
+        elif row.action_type == LOG_ACP3_AMBIGUOUS:
+            buckets["ambiguous_effect"].append(item)
         elif row.action_type in (LOG_ORCH_FAILED, LOG_ORCH_RETRYABLE):
             buckets["failed"].append(item)
 
@@ -100,14 +105,24 @@ def compose_orchestration_summary(
         if i.get("execution_mode") == "HUMAN_REQUIRED"
     ]
 
+    gates = runtime_gates()
+    reconcile = reconcile_organization(db, organization_id=organization_id, limit=limit)
+    retryable = reconcile.get("buckets", {}).get("retryable", [])[:20]
+    ambiguous = (
+        buckets.get("ambiguous_effect", [])[:20]
+        or reconcile.get("buckets", {}).get("ambiguous_effect", [])[:20]
+    )
+
     return {
         "organization_id": organization_id,
-        "active": buckets.get("failed", [])[:10],  # retryable surfaced under failed
+        "active": buckets.get("failed", [])[:10],
         "succeeded_recently": buckets.get("succeeded_recently", [])[:20],
         "blocked": buckets.get("blocked", [])[:20],
         "awaiting_human": buckets.get("awaiting_human", [])[:20],
         "failed": buckets.get("failed", [])[:20],
         "exhausted": buckets.get("exhausted", [])[:20],
+        "retryable": retryable,
+        "ambiguous_effect": ambiguous,
         "autonomous_count": len(autonomous),
         "human_required_count": len(human_required),
         "counts": {
@@ -116,23 +131,25 @@ def compose_orchestration_summary(
             "awaiting_human": len(buckets.get("awaiting_human", [])),
             "failed": len(buckets.get("failed", [])),
             "exhausted": len(buckets.get("exhausted", [])),
+            "retryable": len(retryable),
+            "ambiguous_effect": len(ambiguous),
+            "requires_founder_action": reconcile.get("requires_founder_action", 0),
         },
-        "source": "AgentActionLog.acp2_*",
+        "source": "AgentActionLog.acp2_*+acp3_*",
         "pause": {
-            "heartbeat_paused": _env_paused("HEARTBEAT_ENABLED"),
-            "acp2_execution_killed": _env_paused("ACP2_AUTONOMOUS_EXECUTION_ENABLED"),
+            "heartbeat_paused": gates["heartbeat_paused"],
+            "acp2_execution_killed": gates["acp2_execution_killed"],
+            "acp3_resume_enabled": gates["acp3_resume_enabled"],
+            "new_mutating_work_allowed": gates["new_mutating_work_allowed"],
+            "recovery_execution_allowed": gates["recovery_execution_allowed"],
         },
+        "runtime_gates": gates,
+        "reconcile_counts": reconcile.get("counts", {}),
     }
 
 
-def _env_paused(name: str) -> bool:
-    import os
-
-    default = "1"
-    return os.environ.get(name, default) in ("0", "false", "False")
-
-
 def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[str, Any]:
+    gates = runtime_gates()
     out = {
         "organization_id": organization_id,
         "active": [],
@@ -141,6 +158,8 @@ def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[st
         "awaiting_human": [],
         "failed": [],
         "exhausted": [],
+        "retryable": [],
+        "ambiguous_effect": [],
         "autonomous_count": 0,
         "human_required_count": 0,
         "counts": {
@@ -149,12 +168,20 @@ def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[st
             "awaiting_human": 0,
             "failed": 0,
             "exhausted": 0,
+            "retryable": 0,
+            "ambiguous_effect": 0,
+            "requires_founder_action": 0,
         },
-        "source": "AgentActionLog.acp2_*",
+        "source": "AgentActionLog.acp2_*+acp3_*",
         "pause": {
-            "heartbeat_paused": _env_paused("HEARTBEAT_ENABLED"),
-            "acp2_execution_killed": _env_paused("ACP2_AUTONOMOUS_EXECUTION_ENABLED"),
+            "heartbeat_paused": gates["heartbeat_paused"],
+            "acp2_execution_killed": gates["acp2_execution_killed"],
+            "acp3_resume_enabled": gates["acp3_resume_enabled"],
+            "new_mutating_work_allowed": gates["new_mutating_work_allowed"],
+            "recovery_execution_allowed": gates["recovery_execution_allowed"],
         },
+        "runtime_gates": gates,
+        "reconcile_counts": {},
     }
     if error:
         out["error"] = error
