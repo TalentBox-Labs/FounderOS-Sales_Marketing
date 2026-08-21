@@ -221,6 +221,29 @@ def run_follow_up_proposal_scheduled(
         return {"ok": False, "reason": str(exc)}
 
 
+def run_booking_proposal_scheduled(
+    db: Session,
+    organization_id: str,
+    contact_id: str,
+) -> dict[str, Any]:
+    """Scheduler path — proposal-only; soft-fail expected eligibility/calendar failures.
+
+    Composes ``_run_booking_proposal``. Does not write calendars or create meetings.
+    """
+    try:
+        contact = get_contact_for_tenant(db, organization_id, contact_id)
+    except TenantAccessError:
+        return {"ok": False, "reason": "Contact not in tenant scope"}
+
+    if str(contact.organization_id) != str(organization_id):
+        return {"ok": False, "reason": "Organization mismatch"}
+
+    try:
+        return _run_booking_proposal(db, organization_id, contact_id)
+    except RevenueOrchestrationError as exc:
+        return {"ok": False, "reason": str(exc)}
+
+
 def _run_follow_up_proposal(
     db: Session,
     org_id: str,

@@ -204,3 +204,46 @@ def revalidate_booking_execution(
     expected_key = payload.get("idempotency_key")
     if expected_key and eligibility.get("idempotency_key") and expected_key != eligibility["idempotency_key"]:
         raise ValueError("Idempotency key mismatch — booking blocked")
+
+
+def scan_eligible_bookings(
+    db: Session,
+    *,
+    organization_id: str,
+    limit: int = 25,
+) -> list[dict[str, str]]:
+    """Scheduler scan — mandatory organization scope (ACP-1).
+
+    Composes canonical ``evaluate_booking_eligibility`` only. Does not broaden
+    policy, query calendars, or persist eligibility state.
+    """
+    from revenue_os.services.acp1_autonomous_boundary import assert_contact_org
+
+    try:
+        org_uuid = uuid.UUID(str(organization_id))
+    except ValueError:
+        return []
+
+    contacts = (
+        db.query(Contact)
+        .filter(Contact.organization_id == org_uuid, Contact.email.isnot(None))
+        .limit(limit * 4)
+        .all()
+    )
+    eligible: list[dict[str, str]] = []
+    for contact in contacts:
+        if len(eligible) >= limit:
+            break
+        if not assert_contact_org(contact, organization_id):
+            continue
+        result = evaluate_booking_eligibility(db, contact, organization_id)
+        if result.get("eligible"):
+            eligible.append(
+                {
+                    "organization_id": str(contact.organization_id),
+                    "contact_id": str(contact.id),
+                    "idempotency_key": str(result.get("idempotency_key") or ""),
+                    "source_activity_id": str(result.get("source_activity_id") or ""),
+                }
+            )
+    return eligible

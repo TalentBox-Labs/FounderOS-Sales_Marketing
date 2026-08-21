@@ -79,7 +79,7 @@ _CATALOG: dict[str, EffectSpec] = {
         WORK_BOOKING_PROPOSE,
         EFFECT_PROPOSE,
         ExecutionMode.AUTONOMOUS,
-        frozenset({"booking_worker", "orchestrator"}),
+        frozenset({"heartbeat", "booking_worker", "orchestrator"}),
         "booking_propose",
     ),
     WORK_BOOKING_EXECUTE: EffectSpec(
