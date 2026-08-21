@@ -350,36 +350,103 @@ def decide(
     *,
     tenant: TenantContext | None = None,
 ) -> dict[str, Any]:
-    """Apply a human decision. Approval executes the action synchronously."""
+    """Apply a human decision. Approval executes the action synchronously.
+
+    ACP-4: concurrent approve is serialized via SELECT FOR UPDATE (when supported)
+    plus a deterministic process/DB claim so at most one effect executor runs.
+    """
+    from revenue_os.services.acp4_distributed_claim import (
+        release_process_local_claim,
+        try_acquire_claim,
+    )
+
     approver = _human_decider(tenant, decided_by if tenant is None else None)
 
     db = SessionLocal()
+    claim_key = None
+    claim_backend = None
     try:
+        # Row lock when the dialect supports it (PostgreSQL).
+        q = db.query(ApprovalRequest).filter(ApprovalRequest.id == str(request_id).strip())
+        try:
+            request = q.with_for_update().one_or_none()
+        except Exception:
+            request = q.one_or_none()
+
+        if request is None:
+            raise ValueError(f"Approval request not found: {request_id}")
+
+        # Tenant binding — required for approve/reject when tenant provided;
+        # also enforce payload/contact org match against tenant.
         if tenant is not None:
             try:
-                request = get_approval_for_tenant(db, tenant.organization_id, request_id)
+                bound = get_approval_for_tenant(db, tenant.organization_id, request_id)
             except TenantAccessError as exc:
                 raise ValueError("Approval request not found") from exc
-        else:
-            request = db.get(ApprovalRequest, request_id)
-            if request is None:
-                raise ValueError(f"Approval request not found: {request_id}")
+            if bound.id != request.id:
+                raise ValueError("Approval request not found")
 
         if request.status != "pending":
             raise ValueError(f"Request already {request.status}")
 
-        request.decided_by = approver
-        request.decided_at = datetime.now(timezone.utc)
-        request.decision_note = note
+        org_id = None
+        if tenant is not None:
+            org_id = str(tenant.organization_id)
+        else:
+            payload = request.payload or {}
+            if payload.get("organization_id"):
+                org_id = str(payload.get("organization_id"))
+            elif request.target_type == "contact" and request.target_id:
+                from revenue_os.models.contact import Contact
+
+                try:
+                    c = db.get(Contact, uuid_lib.UUID(str(request.target_id)))
+                except ValueError:
+                    c = None
+                if c is not None and c.organization_id is not None:
+                    org_id = str(c.organization_id)
 
         if not approve:
+            request.decided_by = approver
+            request.decided_at = datetime.now(timezone.utc)
+            request.decision_note = note
             request.status = "rejected"
             db.commit()
             result = request.to_dict()
         else:
+            if not org_id:
+                raise ValueError("Approval execution requires organization scope")
+
+            # Cross-check payload org when present
+            payload_org = (request.payload or {}).get("organization_id")
+            if payload_org is not None and str(payload_org) != str(org_id):
+                raise ValueError("Approval organization mismatch — execution blocked")
+
+            claim = try_acquire_claim(
+                db,
+                organization_id=str(org_id),
+                idempotency_key=f"approval_execute:{request_id}",
+            )
+            claim_key = claim.claim_key
+            claim_backend = claim.backend
+            if not claim.acquired:
+                raise ValueError(
+                    "Approval execution claim unavailable — concurrent decide in progress"
+                )
+
+            # Re-read status under claim (TOCTOU close) before mutating
+            db.refresh(request)
+            if request.status != "pending":
+                raise ValueError(f"Request already {request.status}")
+
+            request.decided_by = approver
+            request.decided_at = datetime.now(timezone.utc)
+            request.decision_note = note
             request.status = "approved"
             prior = request.execution_result or {}
-            if prior.get("executed") and prior.get("handed_to_n8n"):
+            if prior.get("executed") and (
+                prior.get("handed_to_n8n") or prior.get("effect_completed")
+            ):
                 db.commit()
                 result = request.to_dict()
             else:
@@ -393,6 +460,7 @@ def decide(
                     try:
                         request.execution_result = {
                             "executed": True,
+                            "effect_completed": True,
                             **executor(db, request.payload or {}),
                         }
                     except Exception as e:
@@ -401,6 +469,10 @@ def decide(
                 db.commit()
                 result = request.to_dict()
     finally:
+        # Process-local claims also release via session hooks on commit/rollback;
+        # explicit release covers early raise paths before commit.
+        if claim_backend == "process_local_test_only":
+            release_process_local_claim(claim_key)
         db.close()
 
     org_id = None

@@ -66,9 +66,9 @@ def job_score_new_leads() -> dict[str, Any]:
     ACP-3: pause/kill gate before discovery.
     """
     from revenue_os.models.contact import Contact
-    from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_LEAD_SCORE, WorkState
     from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
     from revenue_os.services.lead_scoring_service import score_contact
 
     gate = gate_new_mutating_work(actor=ACTOR)
@@ -127,7 +127,7 @@ def job_score_new_leads() -> dict[str, Any]:
                     )
                     return {"score": payload["score"]}
 
-                work = orchestrate(
+                work = orchestrate_claimed(
                     db,
                     work_kind=WORK_LEAD_SCORE,
                     organization_id=organization_id,
@@ -169,9 +169,9 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
     ACP-2: proposal is orchestrated AUTONOMOUS; send remains HUMAN_REQUIRED via ApprovalRequest.
     ACP-3: pause/kill gate before discovery.
     """
-    from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_FOLLOW_UP_PROPOSE, WorkState
     from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
     from revenue_os.services.follow_up_eligibility import scan_eligible_follow_ups
     from revenue_os.services.revenue_orchestration_service import run_follow_up_proposal_scheduled
 
@@ -229,7 +229,7 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
                         }
                     return {"blocked": True, "blocked_reason": result.get("reason") or "not_eligible"}
 
-                work = orchestrate(
+                work = orchestrate_claimed(
                     db,
                     work_kind=WORK_FOLLOW_UP_PROPOSE,
                     organization_id=organization_id,
@@ -263,9 +263,9 @@ def job_check_deals_at_risk() -> dict[str, Any]:
     ACP-3: each deal flag is governed WorkItem (observational emit + provenance).
     """
     from revenue_os.automation.events import emit_deal_at_risk
-    from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_DEAL_AT_RISK, WorkState
     from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
     from revenue_os.services.deal_automation_service import get_deals_at_risk
 
     gate = gate_new_mutating_work(actor=ACTOR)
@@ -304,7 +304,7 @@ def job_check_deals_at_risk() -> dict[str, Any]:
                     )
                     return {"ok": True, "deal_id": did}
 
-                work = orchestrate(
+                work = orchestrate_claimed(
                     db,
                     work_kind=WORK_DEAL_AT_RISK,
                     organization_id=organization_id,
@@ -353,9 +353,9 @@ def job_sync_gmail_inbox() -> dict[str, Any]:
     ACP-3: per-org sync is a governed WorkItem (Activity writes are org-scoped).
     """
     from revenue_os.integrations.gmail_sync import sync_inbox
-    from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_GMAIL_INBOUND, WorkState
     from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
 
     gate = gate_new_mutating_work(actor=ACTOR)
     if gate is not None:
@@ -378,7 +378,7 @@ def job_sync_gmail_inbox() -> dict[str, Any]:
             def _exec(_work, oid=organization_id):  # noqa: ANN001
                 return sync_inbox(organization_ids=[oid])
 
-            work = orchestrate(
+            work = orchestrate_claimed(
                 db,
                 work_kind=WORK_GMAIL_INBOUND,
                 organization_id=organization_id,

@@ -24,6 +24,12 @@ from revenue_os.services.acp2_orchestration import (
 from revenue_os.services.acp3_durable_runtime import runtime_gates
 from revenue_os.services.acp3_reconciliation import reconcile_organization
 from revenue_os.services.acp3_runtime_contract import LOG_ACP3_AMBIGUOUS
+from revenue_os.services.acp4_production_runtime import (
+    LOG_CLAIM_UNAVAILABLE,
+    LOG_FENCE_REJECTED,
+    LOG_STALE_EXECUTOR_REJECTED,
+    coordination_backend_info,
+)
 
 _ORCH_TYPES = frozenset(
     {
@@ -34,6 +40,9 @@ _ORCH_TYPES = frozenset(
         LOG_ORCH_EXHAUSTED,
         LOG_ORCH_RETRYABLE,
         LOG_ACP3_AMBIGUOUS,
+        LOG_CLAIM_UNAVAILABLE,
+        LOG_FENCE_REJECTED,
+        LOG_STALE_EXECUTOR_REJECTED,
     }
 )
 
@@ -89,6 +98,10 @@ def compose_orchestration_summary(
             buckets["exhausted"].append(item)
         elif row.action_type == LOG_ACP3_AMBIGUOUS:
             buckets["ambiguous_effect"].append(item)
+        elif row.action_type == LOG_CLAIM_UNAVAILABLE:
+            buckets["claim_rejected"].append(item)
+        elif row.action_type in (LOG_FENCE_REJECTED, LOG_STALE_EXECUTOR_REJECTED):
+            buckets["fence_rejected"].append(item)
         elif row.action_type in (LOG_ORCH_FAILED, LOG_ORCH_RETRYABLE):
             buckets["failed"].append(item)
 
@@ -112,6 +125,8 @@ def compose_orchestration_summary(
         buckets.get("ambiguous_effect", [])[:20]
         or reconcile.get("buckets", {}).get("ambiguous_effect", [])[:20]
     )
+    claim_rejected = buckets.get("claim_rejected", [])[:20]
+    fence_rejected = buckets.get("fence_rejected", [])[:20]
 
     return {
         "organization_id": organization_id,
@@ -123,6 +138,8 @@ def compose_orchestration_summary(
         "exhausted": buckets.get("exhausted", [])[:20],
         "retryable": retryable,
         "ambiguous_effect": ambiguous,
+        "claim_rejected": claim_rejected,
+        "fence_rejected": fence_rejected,
         "autonomous_count": len(autonomous),
         "human_required_count": len(human_required),
         "counts": {
@@ -133,9 +150,11 @@ def compose_orchestration_summary(
             "exhausted": len(buckets.get("exhausted", [])),
             "retryable": len(retryable),
             "ambiguous_effect": len(ambiguous),
+            "claim_rejected": len(claim_rejected),
+            "fence_rejected": len(fence_rejected),
             "requires_founder_action": reconcile.get("requires_founder_action", 0),
         },
-        "source": "AgentActionLog.acp2_*+acp3_*",
+        "source": "AgentActionLog.acp2_*+acp3_*+acp4_*",
         "pause": {
             "heartbeat_paused": gates["heartbeat_paused"],
             "acp2_execution_killed": gates["acp2_execution_killed"],
@@ -145,6 +164,7 @@ def compose_orchestration_summary(
         },
         "runtime_gates": gates,
         "reconcile_counts": reconcile.get("counts", {}),
+        "acp4_coordination": coordination_backend_info(db),
     }
 
 
@@ -160,6 +180,8 @@ def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[st
         "exhausted": [],
         "retryable": [],
         "ambiguous_effect": [],
+        "claim_rejected": [],
+        "fence_rejected": [],
         "autonomous_count": 0,
         "human_required_count": 0,
         "counts": {
@@ -170,9 +192,11 @@ def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[st
             "exhausted": 0,
             "retryable": 0,
             "ambiguous_effect": 0,
+            "claim_rejected": 0,
+            "fence_rejected": 0,
             "requires_founder_action": 0,
         },
-        "source": "AgentActionLog.acp2_*+acp3_*",
+        "source": "AgentActionLog.acp2_*+acp3_*+acp4_*",
         "pause": {
             "heartbeat_paused": gates["heartbeat_paused"],
             "acp2_execution_killed": gates["acp2_execution_killed"],
@@ -182,6 +206,11 @@ def _empty_summary(organization_id: str, *, error: str | None = None) -> dict[st
         },
         "runtime_gates": gates,
         "reconcile_counts": {},
+        "acp4_coordination": {
+            "dialect": "unknown",
+            "mechanism": "unavailable",
+            "distributed_safety_claimed": False,
+        },
     }
     if error:
         out["error"] = error
