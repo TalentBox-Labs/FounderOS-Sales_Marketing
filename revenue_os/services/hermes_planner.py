@@ -368,6 +368,10 @@ def generate_plan(metric: str) -> list[dict[str, Any]]:
     """Deterministic plan templates per goal metric.
 
     Steps with repeat=True re-run on every goal check; one-shot steps run once.
+
+    ACP-5: never plan PROHIBITED autonomous Deal creation as executable work.
+    Deal opening remains a human/approval path; Hermes may only score, recommend
+    qualification, and flag at-risk deals.
     """
     if metric == "qualified_leads":
         return [
@@ -381,15 +385,17 @@ def generate_plan(metric: str) -> list[dict[str, Any]]:
         return [
             {"title": "Score all unscored leads", "action_type": "score_unscored_leads",
              "params": {"limit": 100}, "repeat": True},
-            {"title": "Qualify high-scoring contacts", "action_type": "qualify_high_scorers",
+            {"title": "Qualify high-scoring contacts for founder review",
+             "action_type": "qualify_high_scorers",
              "params": {"threshold": QUALIFY_SCORE_THRESHOLD}, "repeat": True},
-            {"title": "Open deals for qualified contacts",
-             "action_type": "create_deals_for_qualified", "params": {}, "repeat": True},
+            {"title": "Flag at-risk deals for follow-up",
+             "action_type": "check_deals_at_risk", "params": {}, "repeat": True},
         ]
     if metric == "deals_closed":
         return [
-            {"title": "Open deals for qualified contacts",
-             "action_type": "create_deals_for_qualified", "params": {}, "repeat": True},
+            {"title": "Qualify high-scoring contacts for founder Deal review",
+             "action_type": "qualify_high_scorers",
+             "params": {"threshold": QUALIFY_SCORE_THRESHOLD}, "repeat": True},
             {"title": "Flag at-risk deals for follow-up",
              "action_type": "check_deals_at_risk", "params": {}, "repeat": True},
         ]
