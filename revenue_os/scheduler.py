@@ -63,11 +63,17 @@ def job_score_new_leads() -> dict[str, Any]:
     """Score contacts with no lead score — per authorized organization only.
 
     ACP-2: each contact score is governed work (propose → ACP-1 evaluate → execute).
+    ACP-3: pause/kill gate before discovery.
     """
     from revenue_os.models.contact import Contact
     from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_LEAD_SCORE, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
     from revenue_os.services.lead_scoring_service import score_contact
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -161,11 +167,17 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
     """Propose governed follow-ups per authorized org (human approval still required).
 
     ACP-2: proposal is orchestrated AUTONOMOUS; send remains HUMAN_REQUIRED via ApprovalRequest.
+    ACP-3: pause/kill gate before discovery.
     """
     from revenue_os.services.acp2_orchestration import orchestrate
     from revenue_os.services.acp2_work_contract import WORK_FOLLOW_UP_PROPOSE, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
     from revenue_os.services.follow_up_eligibility import scan_eligible_follow_ups
     from revenue_os.services.revenue_orchestration_service import run_follow_up_proposal_scheduled
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -246,9 +258,19 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
 
 
 def job_check_deals_at_risk() -> dict[str, Any]:
-    """Detect at-risk deals per authorized organization and emit events."""
+    """Detect at-risk deals per authorized organization and emit events.
+
+    ACP-3: each deal flag is governed WorkItem (observational emit + provenance).
+    """
     from revenue_os.automation.events import emit_deal_at_risk
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_DEAL_AT_RISK, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
     from revenue_os.services.deal_automation_service import get_deals_at_risk
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -257,35 +279,62 @@ def job_check_deals_at_risk() -> dict[str, Any]:
             return blocked
 
         flagged = 0
+        day_key = datetime.now(timezone.utc).strftime("%Y%m%d")
         for organization_id in orgs or []:
             at_risk = get_deals_at_risk(db, organization_id=organization_id)
             for deal in at_risk:
                 deal_id = str(deal.get("deal_id") or deal.get("id") or "")
-                try:
-                    emit_deal_at_risk(
-                        deal_id=deal_id,
-                        risk_score=int(deal.get("risk_score", 0)),
-                        days_overdue=int(deal.get("days_overdue", 0)),
+
+                def _exec(work, d=deal, did=deal_id, oid=organization_id):  # noqa: ANN001
+                    try:
+                        emit_deal_at_risk(
+                            deal_id=did,
+                            risk_score=int(d.get("risk_score", 0)),
+                            days_overdue=int(d.get("days_overdue", 0)),
+                        )
+                    except Exception as e:
+                        logger.warning(f"emit_deal_at_risk failed for {did}: {e}")
+                    log_agent_action(
+                        actor=ACTOR,
+                        action_type="deal_at_risk_flagged",
+                        target_type="deal",
+                        target_id=did,
+                        organization_id=oid,
+                        detail={**d, "work_id": work.work_id},
                     )
-                except Exception as e:
-                    logger.warning(f"emit_deal_at_risk failed for {deal_id}: {e}")
-                log_agent_action(
+                    return {"ok": True, "deal_id": did}
+
+                work = orchestrate(
+                    db,
+                    work_kind=WORK_DEAL_AT_RISK,
+                    organization_id=organization_id,
+                    source="scheduler",
                     actor=ACTOR,
-                    action_type="deal_at_risk_flagged",
+                    executor=_exec,
                     target_type="deal",
                     target_id=deal_id,
-                    organization_id=organization_id,
-                    detail=deal,
+                    logical_key=day_key,
                 )
-                flagged += 1
-        return {"ok": True, "deals_at_risk": flagged, "organizations": list(orgs or [])}
+                if work.state == WorkState.SUCCEEDED:
+                    flagged += 1
+        return {
+            "ok": True,
+            "deals_at_risk": flagged,
+            "organizations": list(orgs or []),
+            "orchestrated": True,
+        }
     finally:
         db.close()
 
 
 def job_hermes_goal_check() -> dict[str, Any]:
     """Run Hermes cycles only when autonomous tenants resolve; org injected into steps."""
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
     from revenue_os.services.hermes_planner import check_all_active_goals
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -299,8 +348,18 @@ def job_hermes_goal_check() -> dict[str, Any]:
 
 
 def job_sync_gmail_inbox() -> dict[str, Any]:
-    """Pull Gmail inbox; match contacts only within authorized organizations."""
+    """Pull Gmail inbox; match contacts only within authorized organizations.
+
+    ACP-3: per-org sync is a governed WorkItem (Activity writes are org-scoped).
+    """
     from revenue_os.integrations.gmail_sync import sync_inbox
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_GMAIL_INBOUND, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -310,13 +369,62 @@ def job_sync_gmail_inbox() -> dict[str, Any]:
     finally:
         db.close()
 
-    return sync_inbox(organization_ids=list(orgs or []))
+    hour_key = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    results = []
+    db = SessionLocal()
+    try:
+        for organization_id in orgs or []:
+
+            def _exec(_work, oid=organization_id):  # noqa: ANN001
+                return sync_inbox(organization_ids=[oid])
+
+            work = orchestrate(
+                db,
+                work_kind=WORK_GMAIL_INBOUND,
+                organization_id=organization_id,
+                source="scheduler",
+                actor=ACTOR,
+                executor=_exec,
+                target_type="organization",
+                target_id=organization_id,
+                logical_key=hour_key,
+            )
+            results.append(
+                {
+                    "organization_id": organization_id,
+                    "state": work.state.value,
+                    "result": work.result,
+                }
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    return {
+        "ok": True,
+        "organizations": list(orgs or []),
+        "results": results,
+        "orchestrated": True,
+        "succeeded": sum(1 for r in results if r["state"] == WorkState.SUCCEEDED.value),
+    }
 
 
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
-    """Persist pipeline-health snapshots per authorized organization."""
+    """Persist pipeline-health snapshots per authorized organization.
+
+    Observational/read-aggregate — still routed through ACP-2 for provenance
+    and pause/kill consistency (ACP-3 coverage).
+    """
     from revenue_os.analytics.core import AnalyticsEngine, AnalyticsMetric, MetricType
+    from revenue_os.services.acp2_orchestration import orchestrate
+    from revenue_os.services.acp2_work_contract import WORK_METRICS_SNAPSHOT, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
     from revenue_os.services.deal_automation_service import get_pipeline_health
+
+    # Metrics are observational; pause still gates scheduler initiation for consistency.
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
 
     db = SessionLocal()
     try:
@@ -324,49 +432,73 @@ def job_snapshot_pipeline_metrics() -> dict[str, Any]:
         if blocked is not None:
             return blocked
 
-        recorded_all: dict[str, Any] = {"ok": True, "organizations": {}}
+        hour_key = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+        recorded_all: dict[str, Any] = {"ok": True, "organizations": {}, "orchestrated": True}
         for organization_id in orgs or []:
-            health = get_pipeline_health(db, organization_id=organization_id)
-            snapshot_metrics = {
-                "pipeline_total_value": (
-                    MetricType.REVENUE, "$", "Total open pipeline value",
-                    float(health.get("total_pipeline_value", 0) or 0),
-                ),
-                "pipeline_deal_count": (
-                    MetricType.COUNT, "deals", "Number of open deals",
-                    float(health.get("total_deals", 0) or 0),
-                ),
-                "pipeline_weighted_forecast": (
-                    MetricType.REVENUE, "$", "Probability-weighted forecast",
-                    float(health.get("weighted_forecast", 0) or 0),
-                ),
-            }
-            recorded: dict[str, Any] = {}
-            for metric_id, (mtype, unit, description, value) in snapshot_metrics.items():
-                if AnalyticsEngine.get_metric(metric_id) is None:
-                    AnalyticsEngine.register_metric(AnalyticsMetric(
-                        id=metric_id,
-                        name=metric_id.replace("_", " ").title(),
-                        metric_type=mtype,
-                        calculation="heartbeat snapshot",
-                        unit=unit,
-                        description=description,
-                    ))
-                AnalyticsEngine.record_data_point(
-                    metric_id, value, dimension=f"org:{organization_id}"
+
+            def _exec(_work, oid=organization_id):  # noqa: ANN001
+                health = get_pipeline_health(db, organization_id=oid)
+                snapshot_metrics = {
+                    "pipeline_total_value": (
+                        MetricType.REVENUE, "$", "Total open pipeline value",
+                        float(health.get("total_pipeline_value", 0) or 0),
+                    ),
+                    "pipeline_deal_count": (
+                        MetricType.COUNT, "deals", "Number of open deals",
+                        float(health.get("total_deals", 0) or 0),
+                    ),
+                    "pipeline_weighted_forecast": (
+                        MetricType.REVENUE, "$", "Probability-weighted forecast",
+                        float(health.get("weighted_forecast", 0) or 0),
+                    ),
+                }
+                recorded: dict[str, Any] = {}
+                for metric_id, (mtype, unit, description, value) in snapshot_metrics.items():
+                    if AnalyticsEngine.get_metric(metric_id) is None:
+                        AnalyticsEngine.register_metric(AnalyticsMetric(
+                            id=metric_id,
+                            name=metric_id.replace("_", " ").title(),
+                            metric_type=mtype,
+                            calculation="heartbeat snapshot",
+                            unit=unit,
+                            description=description,
+                        ))
+                    AnalyticsEngine.record_data_point(
+                        metric_id, value, dimension=f"org:{oid}"
+                    )
+                    recorded[metric_id] = value
+                log_agent_action(
+                    actor=ACTOR,
+                    action_type="metrics_snapshot",
+                    target_type="pipeline",
+                    organization_id=oid,
+                    detail=recorded,
                 )
-                recorded[metric_id] = value
-            log_agent_action(
-                actor=ACTOR,
-                action_type="metrics_snapshot",
-                target_type="pipeline",
+                return {"ok": True, "metrics": recorded}
+
+            work = orchestrate(
+                db,
+                work_kind=WORK_METRICS_SNAPSHOT,
                 organization_id=organization_id,
-                detail=recorded,
+                source="scheduler",
+                actor=ACTOR,
+                executor=_exec,
+                target_type="pipeline",
+                target_id=organization_id,
+                logical_key=hour_key,
             )
-            recorded_all["organizations"][organization_id] = recorded
+            if work.state == WorkState.SUCCEEDED:
+                recorded_all["organizations"][organization_id] = work.result.get("metrics") or {}
         return recorded_all
     finally:
         db.close()
+
+
+def job_acp3_reconcile() -> dict[str, Any]:
+    """ACP-3 reconciliation / bounded resume pass across authorized tenants."""
+    from revenue_os.services.acp3_durable_runtime import job_reconcile_autonomous_work
+
+    return job_reconcile_autonomous_work()
 
 
 # ── Scheduler core ───────────────────────────────────────────────────────────
@@ -521,6 +653,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "scan_follow_up_eligibility", job_scan_follow_up_eligibility,
         _env_int("HEARTBEAT_FOLLOWUP_SCAN_SEC", 3600),
+    )
+    scheduler.register(
+        "acp3_reconcile", job_acp3_reconcile,
+        _env_int("HEARTBEAT_ACP3_RECONCILE_SEC", 1800),
     )
     if heartbeat_enabled():
         scheduler.start()
