@@ -131,6 +131,108 @@
   {% endif %}
 </div>
 
+{% set orch = snapshot.agent_orchestration or {} %}
+{% set orch_counts = orch.counts or {} %}
+{% set orch_pause = orch.pause or {} %}
+<div class="founder-card" data-testid="command-agent-orchestration" style="margin-bottom:20px">
+  <div class="founder-card-title">Agent operating status</div>
+  <p class="founder-meta" data-testid="agent-orch-intro">
+    What agents are doing, what waits on you, and recent governed outcomes —
+    projected from existing orchestration logs. This does not grant authority;
+    sending and booking still require your approval.
+  </p>
+  <div class="founder-stat-row" data-testid="agent-orch-summary">
+    <div class="founder-stat" data-testid="agent-orch-awaiting">
+      <div class="founder-stat-label">Waiting on founder</div>
+      <div class="founder-stat-val">{{ orch_counts.awaiting_human or 0 }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-succeeded">
+      <div class="founder-stat-label">Succeeded recently</div>
+      <div class="founder-stat-val">{{ orch_counts.succeeded or 0 }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-failed">
+      <div class="founder-stat-label">Failed / retryable</div>
+      <div class="founder-stat-val">{{ (orch_counts.failed or 0) + (orch_counts.retryable or 0) }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-blocked">
+      <div class="founder-stat-label">Blocked / exhausted</div>
+      <div class="founder-stat-val">{{ (orch_counts.blocked or 0) + (orch_counts.exhausted or 0) }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-ambiguous">
+      <div class="founder-stat-label">Ambiguous</div>
+      <div class="founder-stat-val">{{ orch_counts.ambiguous_effect or 0 }}</div>
+    </div>
+  </div>
+  <div class="founder-meta" data-testid="agent-orch-gates" style="margin-top:8px">
+    {% if orch_pause.heartbeat_paused %}
+    <span class="pill amber">Heartbeat paused</span>
+    {% endif %}
+    {% if orch_pause.acp2_execution_killed %}
+    <span class="pill amber">Autonomous execution killed</span>
+    {% endif %}
+    {% if not orch_pause.heartbeat_paused and not orch_pause.acp2_execution_killed %}
+    <span class="pill green">Agents may propose (governed)</span>
+    {% endif %}
+    {% if orch_pause.new_mutating_work_allowed is defined and not orch_pause.new_mutating_work_allowed %}
+    <span class="pill gray">New mutating work blocked</span>
+    {% endif %}
+  </div>
+  {% if orch.awaiting_human %}
+  <div data-testid="agent-orch-awaiting-list" style="margin-top:12px">
+    <strong>Waiting on founder</strong>
+    {% for item in orch.awaiting_human[:5] %}
+    <div class="founder-list-item" data-testid="agent-orch-awaiting-item">
+      <span class="pill amber">awaiting</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.escalation_reason %} · {{ item.escalation_reason }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if orch.succeeded_recently %}
+  <div data-testid="agent-orch-succeeded-list" style="margin-top:12px">
+    <strong>Recent agent successes</strong>
+    {% for item in orch.succeeded_recently[:4] %}
+    <div class="founder-list-item" data-testid="agent-orch-succeeded-item">
+      <span class="pill green">succeeded</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.created_at %} · {{ item.created_at }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if orch.failed or orch.retryable or orch.exhausted or orch.ambiguous_effect %}
+  <div data-testid="agent-orch-exceptions" style="margin-top:12px">
+    <strong>Exceptions / recovery</strong>
+    {% for item in (orch.failed or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-failed-item">
+      <span class="pill amber">failed</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.failure_reason %} · {{ item.failure_reason }}{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.retryable or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-retryable-item">
+      <span class="pill gray">retryable</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or item.recovery_class or 'work' }}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.exhausted or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-exhausted-item">
+      <span class="pill gray">exhausted</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.ambiguous_effect or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-ambiguous-item">
+      <span class="pill amber">ambiguous</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }} — no blind replay</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if not orch.awaiting_human and not orch.succeeded_recently and not orch.failed and not orch.retryable and not orch.exhausted and not orch.ambiguous_effect %}
+  <p class="founder-empty" data-testid="agent-orch-empty">No recent agent orchestration activity for this organization</p>
+  {% endif %}
+</div>
+
 {% set cf = snapshot.commercial_funnel or {} %}
 {% if cf.state == 'ok' %}
 <div class="founder-card" data-testid="command-commercial-funnel" style="margin-bottom:20px">
