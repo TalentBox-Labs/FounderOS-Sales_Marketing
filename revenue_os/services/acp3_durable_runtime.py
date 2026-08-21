@@ -27,7 +27,6 @@ from revenue_os.services.acp2_orchestration import (
     evaluate_authority,
     heartbeat_pause_active,
     propose_work,
-    retry_work,
 )
 from revenue_os.services.acp2_work_contract import (
     WORK_LEAD_SCORE,
@@ -50,6 +49,7 @@ from revenue_os.services.acp3_runtime_contract import (
     LOG_ACP3_RESUME_PASS,
     RecoveryClass,
 )
+from revenue_os.services.acp4_production_runtime import retry_work_claimed
 from revenue_os.services.lead_scoring_service import score_contact
 
 logger = logging.getLogger(__name__)
@@ -207,9 +207,9 @@ def recover_retryable_unit(
         work.state = WorkState.BLOCKED
         return {"ok": False, "blocked": True, "work": work.to_dict(), "note": "prohibited_no_retry"}
 
-    # Resume from RETRYABLE semantics
+    # Resume from RETRYABLE semantics — ACP-4 claim + fence before effect
     work.state = WorkState.RETRYABLE
-    out = retry_work(db, work, executor)
+    out = retry_work_claimed(db, work, executor)
     return {"ok": out.state == WorkState.SUCCEEDED, "work": out.to_dict()}
 
 

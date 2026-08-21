@@ -88,7 +88,13 @@ def measure_metric(
 
 
 def action_score_unscored_leads(db: Session, params: dict) -> dict[str, Any]:
-    """Score contacts that have no lead score yet — org-scoped (ACP-1)."""
+    """Score contacts that have no lead score yet — org-scoped (ACP-1/ACP-4).
+
+    Each contact score is routed through orchestrate_claimed so Hermes cannot
+    bypass ACP-4 claim/fence (same logical identity as scheduler: unscored).
+    """
+    from revenue_os.services.acp2_work_contract import WORK_LEAD_SCORE, WorkState
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
     from revenue_os.services.lead_scoring_service import score_contact
 
     organization_id = require_organization_id(params)
@@ -118,24 +124,49 @@ def action_score_unscored_leads(db: Session, params: dict) -> dict[str, Any]:
         .all()
     )
     scored = 0
+    skipped = 0
     for contact in contacts:
         if not assert_contact_org(contact, organization_id):
             continue
-        try:
-            score_contact(db, contact)
-            scored += 1
+
+        def _exec(work, c=contact):  # noqa: ANN001
+            payload = score_contact(db, c)
             log_agent_action(
                 actor=ACTOR,
                 action_type="lead_scored",
                 target_type="contact",
-                target_id=str(contact.id),
+                target_id=str(c.id),
                 organization_id=organization_id,
-                detail={"source": "hermes"},
+                detail={"source": "hermes", "work_id": work.work_id, "score": payload["score"]},
             )
-        except Exception as e:
-            logger.warning(f"Hermes scoring failed for {contact.id}: {e}")
+            return {"score": payload["score"]}
+
+        work = orchestrate_claimed(
+            db,
+            work_kind=WORK_LEAD_SCORE,
+            organization_id=organization_id,
+            source="hermes",
+            actor=ACTOR,
+            executor=_exec,
+            target_type="contact",
+            target_id=str(contact.id),
+            logical_key="unscored",
+        )
+        if work.state == WorkState.SUCCEEDED and not (work.result or {}).get("deduplicated"):
+            scored += 1
+        elif work.state == WorkState.CANCELLED:
+            skipped += 1
+        elif work.state != WorkState.SUCCEEDED:
+            skipped += 1
     db.commit()
-    return {"ok": True, "scored": scored, "organization_id": organization_id}
+    return {
+        "ok": True,
+        "scored": scored,
+        "skipped": skipped,
+        "organization_id": organization_id,
+        "orchestrated": True,
+        "acp4_claimed": True,
+    }
 
 
 def action_qualify_high_scorers(db: Session, params: dict) -> dict[str, Any]:
@@ -254,8 +285,12 @@ def action_create_deals_for_qualified(db: Session, params: dict) -> dict[str, An
 
 
 def action_check_deals_at_risk(db: Session, params: dict) -> dict[str, Any]:
-    """Surface at-risk deals so workflows/n8n can chase them — org-scoped."""
+    """Surface at-risk deals — org-scoped via ACP-4 claimed WorkItems."""
+    from datetime import datetime, timezone
+
     from revenue_os.automation.events import emit_deal_at_risk
+    from revenue_os.services.acp2_work_contract import WORK_DEAL_AT_RISK, WorkState
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
     from revenue_os.services.deal_automation_service import get_deals_at_risk
 
     organization_id = require_organization_id(params)
@@ -267,29 +302,54 @@ def action_check_deals_at_risk(db: Session, params: dict) -> dict[str, Any]:
             detail={"action": "check_deals_at_risk"},
         )
 
+    day_key = datetime.now(timezone.utc).strftime("%Y%m%d")
     at_risk = get_deals_at_risk(db, organization_id=organization_id)
+    flagged = 0
+    skipped = 0
     for deal in at_risk:
         deal_id = str(deal.get("deal_id") or deal.get("id") or "")
-        try:
-            emit_deal_at_risk(
-                deal_id=deal_id,
-                risk_score=int(deal.get("risk_score", 0)),
-                days_overdue=int(deal.get("days_overdue", 0)),
+
+        def _exec(work, d=deal, did=deal_id, oid=organization_id):  # noqa: ANN001
+            try:
+                emit_deal_at_risk(
+                    deal_id=did,
+                    risk_score=int(d.get("risk_score", 0)),
+                    days_overdue=int(d.get("days_overdue", 0)),
+                )
+            except Exception:
+                pass
+            log_agent_action(
+                actor=ACTOR,
+                action_type="deal_at_risk_flagged",
+                target_type="deal",
+                target_id=did,
+                organization_id=oid,
+                detail={**d, "work_id": work.work_id, "source": "hermes"},
             )
-        except Exception:
-            pass
-        log_agent_action(
+            return {"ok": True, "deal_id": did}
+
+        work = orchestrate_claimed(
+            db,
+            work_kind=WORK_DEAL_AT_RISK,
+            organization_id=organization_id,
+            source="hermes",
             actor=ACTOR,
-            action_type="deal_at_risk_flagged",
+            executor=_exec,
             target_type="deal",
             target_id=deal_id,
-            organization_id=organization_id,
-            detail=deal,
+            logical_key=day_key,
         )
+        if work.state == WorkState.SUCCEEDED and not (work.result or {}).get("deduplicated"):
+            flagged += 1
+        else:
+            skipped += 1
     return {
         "ok": True,
-        "deals_at_risk": len(at_risk),
+        "deals_at_risk": flagged,
+        "skipped": skipped,
         "organization_id": organization_id,
+        "orchestrated": True,
+        "acp4_claimed": True,
     }
 
 
