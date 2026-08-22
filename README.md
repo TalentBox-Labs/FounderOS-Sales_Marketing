@@ -1,4 +1,4 @@
-# WorkCrew CMS OS
+# FounderOs
 
 A content management and scheduling system for technical hiring content automation.
 
