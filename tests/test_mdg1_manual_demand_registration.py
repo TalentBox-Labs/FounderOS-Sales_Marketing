@@ -4,10 +4,24 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+import revenue_os.models  # noqa: F401 — register tables
+import revenue_os.services.tenant_resolution as tenant_resolution_mod
+import runner_api_routers.identity as identity_mod
 import runner_api_routers.manual_demand as mdg_router
 import tests.test_of1_operator_flow as of1
+from revenue_os.auth import hash_password
+from revenue_os.models.base import Base
 from revenue_os.models.contact import ContactStatus
+from revenue_os.models.organization import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
+from revenue_os.models.user import User
 from revenue_os.services.qualified_demand_service import (
     ACTION_HANDOFF as QD_HANDOFF,
     accept_qualified_demand,
@@ -15,6 +29,8 @@ from revenue_os.services.qualified_demand_service import (
 from runner_api import app
 
 _OPERATOR = "Krishna Founder"
+_OPERATOR_EMAIL = "mdg1-operator@example.com"
+_OPERATOR_PASSWORD = "correct-horse-battery"
 _EMAIL = "mdg1@example.com"
 _DEMAND_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 
@@ -27,6 +43,53 @@ def client() -> TestClient:
 @pytest.fixture
 def operator_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
+
+
+@pytest.fixture
+def human_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """SaaS S2+: mutations resolve tenant from a real logged-in session with an
+    active OrganizationMembership — FOUNDER_OS_OPERATOR_NAME alone is legacy
+    fallback only and no longer satisfies require_tenant_mutation()."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'mdg1_identity.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(identity_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(tenant_resolution_mod, "SessionLocal", session_factory)
+
+    db = session_factory()
+    try:
+        user = User(
+            email=_OPERATOR_EMAIL,
+            hashed_password=hash_password(_OPERATOR_PASSWORD),
+            full_name=_OPERATOR,
+            role="owner",
+            is_active=1,
+        )
+        db.add(user)
+        db.flush()
+        org = Organization(name="MDG1 Org", slug="mdg1-org", status=OrganizationStatus.ACTIVE)
+        db.add(org)
+        db.flush()
+        db.add(
+            OrganizationMembership(
+                user_id=user.id,
+                organization_id=org.id,
+                role="owner",
+                status=MembershipStatus.ACTIVE,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.post(
+        "/login",
+        data={"email": _OPERATOR_EMAIL, "password": _OPERATOR_PASSWORD, "next": "/cockpit"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
 
 
 def _db() -> of1._FakeDB:
@@ -46,7 +109,7 @@ def test_registration_ui_opens(client: TestClient, operator_env: None) -> None:
 
 
 def test_valid_manual_demand_registers(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -66,7 +129,7 @@ def test_valid_manual_demand_registers(
 
 
 def test_reuses_mc04_5_register_path(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -83,7 +146,7 @@ def test_reuses_mc04_5_register_path(
 
 
 def test_canonical_contact_only_after_accept(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -101,7 +164,7 @@ def test_canonical_contact_only_after_accept(
 
 
 def test_spoofed_requested_by_ignored(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -162,7 +225,7 @@ def test_validation_rejects_bad_source(
 
 
 def test_idempotent_retry(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -182,7 +245,7 @@ def test_idempotent_retry(
 
 
 def test_provenance_truthful_no_fabricated_utm(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
@@ -209,7 +272,7 @@ def test_provenance_truthful_no_fabricated_utm(
 
 
 def test_no_automatic_deal_or_revenue(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = _db()
     monkeypatch.setattr(mdg_router, "SessionLocal", lambda: db)
