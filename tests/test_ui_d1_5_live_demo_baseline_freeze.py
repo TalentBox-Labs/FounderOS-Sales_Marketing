@@ -361,7 +361,7 @@ def test_command_center_populated(client: TestClient, monkeypatch: pytest.Monkey
     assert r.status_code == 200
     assert "Draft to Alex" in r.text
     assert "New Demand" in r.text
-    assert "Booking eligible" in r.text
+    assert "Ready to propose a meeting" in r.text
     assert "randint" not in r.text
 
 
@@ -593,18 +593,23 @@ def test_booking_eligibility_shown_without_booking_action(
     assert r.status_code == 200
     assert "Meeting interest" in r.text
     assert "Booking eligible" in r.text
-    assert "booking workflow pending" in r.text.lower()
+    # No workspace.booking data seeded -> UI-D2's real booking panel falls
+    # back to its "not eligible" governance state; no actionable UI shown.
+    assert 'data-testid="booking-not-eligible"' in r.text
+    assert "Not eligible for booking yet" in r.text
     lower = r.text.lower()
     assert "book a meeting" not in lower
     assert "select a slot" not in lower
-    assert "availability" not in lower or "not available" in lower
 
 
 def test_no_fake_availability_ui() -> None:
+    # founder_approvals.html legitimately uses book_meeting as the real,
+    # governed ApprovalRequest.action_type value (UI-D2's specialized
+    # rendering) — not fake availability copy. Every other surface should
+    # still have none of it.
     for name in (
         "founder_contact.html",
         "founder_command.html",
-        "founder_approvals.html",
         "founder_activity.html",
         "founder_demand.html",
     ):
@@ -612,6 +617,10 @@ def test_no_fake_availability_ui() -> None:
         assert "book_meeting" not in text
         assert "slot selection" not in text
         assert "calendar booking" not in text
+
+    approvals_text = (TEMPLATES / "founder_approvals.html").read_text().lower()
+    assert "slot selection" not in approvals_text
+    assert "calendar booking" not in approvals_text
 
 
 def test_demo_seed_bounded_to_development() -> None:

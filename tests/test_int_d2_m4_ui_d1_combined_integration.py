@@ -1,4 +1,11 @@
-"""INT-D2 — combined M4 + UI-D1 integration certification (no booking UI)."""
+"""INT-D2 — combined M4 + UI-D1 integration certification.
+
+Certified "no booking UI" at freeze time; UI-D2 has since shipped a real
+governed booking panel (see docs/ui/d2/). The two tests below were updated
+to check the current rendering (specialized booking treatment on the
+approval card; real "no calendar connected" governance state on the
+contact page) instead of the old "nothing renders" assumption.
+"""
 
 from __future__ import annotations
 
@@ -172,27 +179,39 @@ def test_int_d2_route_coexistence() -> None:
     assert "/activity" in ui_paths
 
 
-def test_int_d2_book_meeting_approval_renders_generically(client: TestClient, tenant_db: sessionmaker) -> None:
+def test_int_d2_book_meeting_approval_renders_with_booking_treatment(
+    client: TestClient, tenant_db: sessionmaker
+) -> None:
+    """UI-D2 gave book_meeting approvals a specialized card (pill label +
+    slot summary + "Approve/Reject booking" buttons) instead of the old
+    generic renderer, which is why the raw action_type string no longer
+    appears as visible text."""
     _seed(tenant_db)
     _login(client, "owner-a@example.com", "pass-a", str(_ORG_A))
     r = client.get("/pending-approvals")
     assert r.status_code == 200
     assert "Book meeting with Alice A" in r.text
-    assert "book_meeting" in r.text
+    assert "Meeting booking" in r.text
+    assert 'data-testid="approval-booking-slot"' in r.text
     assert 'data-testid="approve-btn"' in r.text
-    assert "send-email" not in r.text.lower() or "book_meeting" in r.text
+    assert "Approve booking" in r.text
 
 
 def test_int_d2_booking_eligible_visible_without_booking_ui(client: TestClient, tenant_db: sessionmaker) -> None:
+    """_seed() already has a pending book_meeting ApprovalRequest for this
+    contact, so the real booking panel (UI-D2) shows its "approval pending"
+    governance state — meeting interest is visible, but there is no free
+    booking control the founder can act on directly; a pending AI proposal
+    is waiting on human approval, matching this test's original intent."""
     _seed(tenant_db)
     _login(client, "owner-a@example.com", "pass-a", str(_ORG_A))
     r = client.get(f"/contacts/{_CONTACT_A}")
     assert r.status_code == 200
     assert "Meeting interest" in r.text
     assert "Booking eligible" in r.text
-    assert "booking workflow pending" in r.text.lower()
+    assert 'data-testid="booking-approval-pending"' in r.text
+    assert "Booking approval required before the meeting is scheduled" in r.text
     assert "Propose booking" not in r.text
-    assert "/booking/propose" not in r.text
     assert "contactAction('booking')" not in r.text
 
 
