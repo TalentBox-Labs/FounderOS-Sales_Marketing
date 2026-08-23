@@ -265,6 +265,7 @@ def test_command_center_empty(client: TestClient, monkeypatch: pytest.MonkeyPatc
     empty = {
         "generated_at": "now",
         "state": "ok",
+        "message": "",
         "pending_approvals": [],
         "pending_approval_count": 0,
         "pending_demands": [],
@@ -272,8 +273,34 @@ def test_command_center_empty(client: TestClient, monkeypatch: pytest.MonkeyPatc
         "pipeline": {"contacts": 0, "deals": 0, "deals_by_stage": {}},
         "recent_replies": [],
         "meeting_interest": [],
+        "meeting_booking_pending": [],
         "follow_up_signals": [],
         "recent_activity": [],
+        "decision_items": [],
+        "decision_loop": {
+            "total": 0,
+            "requires_founder": 0,
+            "ready": 0,
+            "completed": 0,
+            "informational": 0,
+        },
+        "commercial_funnel": {},
+        "agent_orchestration": {
+            "counts": {
+                "succeeded": 0,
+                "blocked": 0,
+                "awaiting_human": 0,
+                "failed": 0,
+                "exhausted": 0,
+            },
+            "source": "AgentActionLog.acp2_*",
+        },
+        "command_action_summary": {
+            "inline_governed": 0,
+            "navigate_governed": 0,
+            "information_only": 0,
+            "total": 0,
+        },
         "errors": [],
     }
     with patch("runner_api_routers.ui.build_command_center_snapshot", return_value=empty):
@@ -291,6 +318,7 @@ def test_command_center_populated(client: TestClient, monkeypatch: pytest.Monkey
     snap = {
         "generated_at": "now",
         "state": "ok",
+        "message": "",
         "pending_approvals": [{"title": "Draft to Alex", "action_type": "send_outreach_email", "target_id": "c1"}],
         "pending_approval_count": 1,
         "pending_demands": [{"name": "New Demand", "email": "n@x.com", "source": "manual", "demand_id": "d1"}],
@@ -298,8 +326,34 @@ def test_command_center_populated(client: TestClient, monkeypatch: pytest.Monkey
         "pipeline": {"contacts": 2, "deals": 1, "deals_by_stage": {"discovery": 1}},
         "recent_replies": [{"contact_id": str(_CONTACT_A), "reply_type": "INTERESTED", "summary": "yes"}],
         "meeting_interest": [{"contact_id": str(_CONTACT_A), "booking_status": "eligible", "reply_type": "MEETING_INTEREST"}],
+        "meeting_booking_pending": [],
         "follow_up_signals": [{"name": "Alex", "state": "ELIGIBLE", "eligible": True, "contact_id": "c1"}],
         "recent_activity": [{"label": "Demand registered", "created_at": "now"}],
+        "decision_items": [],
+        "decision_loop": {
+            "total": 0,
+            "requires_founder": 0,
+            "ready": 0,
+            "completed": 0,
+            "informational": 0,
+        },
+        "commercial_funnel": {},
+        "agent_orchestration": {
+            "counts": {
+                "succeeded": 0,
+                "blocked": 0,
+                "awaiting_human": 0,
+                "failed": 0,
+                "exhausted": 0,
+            },
+            "source": "AgentActionLog.acp2_*",
+        },
+        "command_action_summary": {
+            "inline_governed": 0,
+            "navigate_governed": 0,
+            "information_only": 0,
+            "total": 0,
+        },
         "errors": [],
     }
     with patch("runner_api_routers.ui.build_command_center_snapshot", return_value=snap):
@@ -573,7 +627,9 @@ def test_demo_seed_bounded_to_development() -> None:
 def test_human_authority_preserved() -> None:
     approvals_js = (TEMPLATES / "founder_approvals.html").read_text()
     contact_js = (TEMPLATES / "founder_contact.html").read_text()
-    assert "requested_by" not in approvals_js
+    # requested_by_label is a server-computed display label, not a client-
+    # supplied requested_by field — excluded before the bare-field check.
+    assert "requested_by" not in approvals_js.replace("requested_by_label", "")
     assert "decided_by" not in approvals_js
     assert 'JSON.stringify({})' in approvals_js
     assert "requested_by" not in contact_js
