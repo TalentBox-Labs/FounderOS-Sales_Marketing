@@ -23,3 +23,10 @@ htmlcov/
 # OS/editor noise
 .DS_Store
 .vscode/
+
+# Runtime files
+server.log
+server.pid
+*.db
+demo.db
+data/chroma_db/

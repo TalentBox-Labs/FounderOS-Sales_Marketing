@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.tools.runtime_paths import REPO_ROOT, load_runtime_config
 from src.tools.tracker_updater import update_tracker
-from src.crew import run_qa_agent
+from src.qa_crew import QACrew
 
 VALIDATOR_MODULES: dict[str, str] = {
     "research_mapper": "src.tools.research_mapper",
@@ -98,9 +98,7 @@ def _maybe_run_crewai_qa() -> None:
     """
     Optional Phase 2 QA artifact generation (soft-fail, non-blocking).
 
-    Input document is chosen in ``src.crew.resolve_crewai_qa_input_paths``:
-    default ``crewai_qa_source`` ``final`` reads runtime ``final_path`` (``05_Final.md``)
-    when present; set ``crewai_qa_source`` to ``draft`` to audit ``04_Draft.md`` only.
+    Uses QACrew which resolves source file (final/draft) via crewai_qa_source config.
     """
     runtime = load_runtime_config()
     if not runtime.get("enable_crewai_qa"):
@@ -111,7 +109,8 @@ def _maybe_run_crewai_qa() -> None:
     out_path = f"{qa_dir.rstrip('/')}/{week}_CrewAI_QA.md"
 
     try:
-        run_qa_agent(output_path=out_path)
+        crew = QACrew()
+        crew.run_qa_agent(output_path=out_path)
     except Exception as e:  # soft-fail by design
         print(
             f"WARNING: CrewAI QA failed (soft continue): {e}",
