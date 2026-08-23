@@ -18,6 +18,7 @@ import tests.test_a4_runner_contact_status as a4
 import tests.test_mc04_qualified_demand as mc04
 import tests.test_mc06_5_commercial_outcome_baseline_freeze as mc06_5
 import tests.test_mdg1_manual_demand_registration as mdg1
+from tests.test_mdg1_manual_demand_registration import human_session
 import tests.test_of1_5_operator_flow_baseline_freeze as of15
 import tests.test_of1_operator_flow as of1
 import tests.test_sales_api_runner as a1
@@ -88,9 +89,9 @@ def test_freeze_registration_post_route() -> None:
 
 
 def test_freeze_trusted_human_can_register(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_valid_manual_demand_registers(client, monkeypatch, operator_env)
+    mdg1.test_valid_manual_demand_registers(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_anonymous_public_caller_blocked(
@@ -112,9 +113,9 @@ def test_freeze_ai_mutation_blocked(
 
 
 def test_freeze_spoofed_human_metadata_blocked(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_spoofed_requested_by_ignored(client, monkeypatch, operator_env)
+    mdg1.test_spoofed_requested_by_ignored(client, monkeypatch, operator_env, human_session)
     assert "requested_by" not in mdg.ManualDemandRegisterBody.model_fields
 
 
@@ -134,9 +135,9 @@ def test_freeze_validation() -> None:
 
 
 def test_freeze_mc04_5_handoff_reused(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_reuses_mc04_5_register_path(client, monkeypatch, operator_env)
+    mdg1.test_reuses_mc04_5_register_path(client, monkeypatch, operator_env, human_session)
     assert "register_marketing_handoff" in _proxy_source()
     assert "QualifiedDemandPayload" in _proxy_source()
 
@@ -162,20 +163,20 @@ def test_freeze_no_persistent_demand_sot() -> None:
 
 
 def test_freeze_no_contact_auto_create(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_canonical_contact_only_after_accept(client, monkeypatch, operator_env)
+    mdg1.test_canonical_contact_only_after_accept(client, monkeypatch, operator_env, human_session)
     mdg1.test_mc04_5_accept_still_required(client, monkeypatch, operator_env)
 
 
 def test_freeze_no_deal_auto_create(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_no_automatic_deal_or_revenue(client, monkeypatch, operator_env)
+    mdg1.test_no_automatic_deal_or_revenue(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_no_revenue_mutation(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     db = mdg1._db()
     monkeypatch.setattr(mdg, "SessionLocal", lambda: db)
@@ -191,9 +192,9 @@ def test_freeze_no_revenue_mutation(
 
 
 def test_freeze_provenance_truthful(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_provenance_truthful_no_fabricated_utm(client, monkeypatch, operator_env)
+    mdg1.test_provenance_truthful_no_fabricated_utm(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_missing_attribution_not_fabricated() -> None:
@@ -205,15 +206,15 @@ def test_freeze_missing_attribution_not_fabricated() -> None:
 
 
 def test_freeze_idempotency(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_idempotent_retry(client, monkeypatch, operator_env)
+    mdg1.test_idempotent_retry(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_duplicate_safety(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
-    mdg1.test_idempotent_retry(client, monkeypatch, operator_env)
+    mdg1.test_idempotent_retry(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_of1_5_unchanged() -> None:
@@ -297,10 +298,10 @@ def test_freeze_total_upstream_demand_partial() -> None:
 
 
 def test_freeze_manual_registration_operable(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: None
 ) -> None:
     mdg1.test_registration_ui_opens(client, operator_env)
-    mdg1.test_valid_manual_demand_registers(client, monkeypatch, operator_env)
+    mdg1.test_valid_manual_demand_registers(client, monkeypatch, operator_env, human_session)
     baseline = _baseline()
     assert "OPERABLE" in baseline
 

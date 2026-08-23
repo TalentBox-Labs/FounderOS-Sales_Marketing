@@ -7,9 +7,23 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+import revenue_os.models  # noqa: F401 — register tables
+import revenue_os.services.tenant_resolution as tenant_resolution_mod
+import runner_api_routers.identity as identity_mod
 import runner_api_routers.qualified_demand as qd_router
+from revenue_os.auth import hash_password
+from revenue_os.models.base import Base
 from revenue_os.models.contact import ContactSource, ContactStatus
+from revenue_os.models.organization import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
+from revenue_os.models.user import User
 from revenue_os.services.qualified_demand_service import (
     ACTION_ACCEPTED,
     ACTION_HANDOFF,
@@ -23,6 +37,8 @@ from runner_api import app
 
 _DEMAND_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 _EMAIL = "demand@example.com"
+_OPERATOR_EMAIL = "mc04-operator@example.com"
+_OPERATOR_PASSWORD = "correct-horse-battery"
 
 
 class _FakeAgentLog:
@@ -151,6 +167,55 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture
+def human_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> str:
+    """SaaS S2+: mutations resolve tenant from a real logged-in session with an
+    active OrganizationMembership — a human-looking requested_by string alone
+    no longer satisfies require_tenant_mutation()."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'mc04_identity.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(identity_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(tenant_resolution_mod, "SessionLocal", session_factory)
+
+    db = session_factory()
+    try:
+        user = User(
+            email=_OPERATOR_EMAIL,
+            hashed_password=hash_password(_OPERATOR_PASSWORD),
+            full_name="Krishna Founder",
+            role="owner",
+            is_active=1,
+        )
+        db.add(user)
+        db.flush()
+        org = Organization(name="MC04 Org", slug="mc04-org", status=OrganizationStatus.ACTIVE)
+        db.add(org)
+        db.flush()
+        db.add(
+            OrganizationMembership(
+                user_id=user.id,
+                organization_id=org.id,
+                role="owner",
+                status=MembershipStatus.ACTIVE,
+            )
+        )
+        db.commit()
+        org_id = str(org.id)
+    finally:
+        db.close()
+
+    r = client.post(
+        "/login",
+        data={"email": _OPERATOR_EMAIL, "password": _OPERATOR_PASSWORD, "next": "/cockpit"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    return org_id
+
+
 def test_register_handoff_does_not_create_contact() -> None:
     db = _FakeDB()
     payload = _payload()
@@ -204,7 +269,7 @@ def test_reject_audit_without_contact() -> None:
 
 
 def test_runner_handoff_and_accept_flow(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     db = _FakeDB()
     monkeypatch.setattr(qd_router, "SessionLocal", lambda: db)
@@ -291,10 +356,10 @@ def test_accept_without_handoff_rejected(
 
 
 def test_reject_creates_audit(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     db = _FakeDB()
-    register_marketing_handoff(db, _payload(), "Krishna Founder")
+    register_marketing_handoff(db, _payload(), "Krishna Founder", organization_id=human_session)
     monkeypatch.setattr(qd_router, "SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/sales/intake/demand/reject",
@@ -310,7 +375,7 @@ def test_reject_creates_audit(
 
 
 def test_handoff_idempotent(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     db = _FakeDB()
     monkeypatch.setattr(qd_router, "SessionLocal", lambda: db)

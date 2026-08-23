@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+import revenue_os.services.tenant_resolution as tenant_resolution_mod
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.manual_demand as mdg_router
 import tests.test_a3_runner_deal_stage as a3
@@ -30,6 +31,12 @@ from revenue_os.config import settings
 from revenue_os.models.base import Base
 from revenue_os.models.contact import Contact
 from revenue_os.models.deal import Deal
+from revenue_os.models.organization import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
 from revenue_os.models.user import User
 from revenue_os.services import identity_context as ctx_mod
 from revenue_os.services.identity_context import (
@@ -92,11 +99,14 @@ def identity_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> sessionmaker
     Base.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine)
     monkeypatch.setattr(identity_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(tenant_resolution_mod, "SessionLocal", session_factory)
     return session_factory
 
 
 @pytest.fixture
 def owner_user(identity_db: sessionmaker) -> User:
+    """SaaS S2+: require_tenant_mutation() needs an active OrganizationMembership
+    for the logged-in user, not just the user row itself."""
     db = identity_db()
     try:
         user = User(
@@ -107,6 +117,18 @@ def owner_user(identity_db: sessionmaker) -> User:
             is_active=1,
         )
         db.add(user)
+        db.flush()
+        org = Organization(name="S15 Org", slug="s15-org", status=OrganizationStatus.ACTIVE)
+        db.add(org)
+        db.flush()
+        db.add(
+            OrganizationMembership(
+                user_id=user.id,
+                organization_id=org.id,
+                role="owner",
+                status=MembershipStatus.ACTIVE,
+            )
+        )
         db.commit()
         db.refresh(user)
         db.expunge(user)
