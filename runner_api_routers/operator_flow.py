@@ -119,8 +119,8 @@ def operator_accept_demand(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """MC04.5 accept via trusted server operator — canonical service path only."""
-    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
+    tenant = require_tenant_mutation()
     db = SessionLocal()
     try:
         scoped_demand_handoff(db, tenant, body.demand_id.strip())
@@ -145,8 +145,8 @@ def operator_reject_demand(
     body: DemandDecisionBody,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
+    tenant = require_tenant_mutation()
     reason = body.reason.strip() or body.notes.strip()
     if len(reason) < 2:
         raise HTTPException(status_code=422, detail="Reject reason is required")
