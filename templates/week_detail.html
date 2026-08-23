@@ -163,7 +163,7 @@
     <button class="btn btn-ghost" onclick="runGeneration('{{ week_id }}')">✍️ Generate Content</button>
     <button class="btn btn-ghost" onclick="runEditor('{{ week_id }}')">✏️ Run Editor</button>
     <button class="btn btn-ghost" onclick="runValidators('{{ week_id }}')">✅ Validate</button>
-    <a href="/weeks/{{ week_id }}/qa-report" class="btn btn-ghost">📊 Full QA Report</a>
+    {# R1C: /weeks/{id}/qa-report has no HTML route — QA artifacts live under output/qa_reports/ #}
     {% if row.final_output_path %}
     <button class="btn btn-ghost" onclick="confirmGoLive('{{ week_id }}')">🚀 Record Go-Live</button>
     {% endif %}

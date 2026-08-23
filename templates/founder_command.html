@@ -1,0 +1,490 @@
+{% extends "base.html" %}
+
+{% block title %}Command Center — Founder OS{% endblock %}
+{% block topbar_title %}Command Center{% endblock %}
+{% block topbar_meta %}What needs your attention — decide, act through governed paths, see what followed{% endblock %}
+
+{% block topbar_right %}
+  {% if operator.configured %}
+  <span class="pill green">{{ operator.operator_name }}</span>
+  {% else %}
+  <span class="pill amber">Sign in to take action</span>
+  {% endif %}
+  <span class="pill gray">{{ snapshot.generated_at }}</span>
+{% endblock %}
+
+{% block content %}
+<p class="founder-meta" data-testid="command-spine-intro" style="margin-bottom:16px">
+  What needs your attention, why it matters, and what you can decide here —
+  through existing governed Sales and Approvals paths. Some actions happen on this
+  page; others continue on the person workspace or Approval Inbox. Sending and booking
+  still require your approval.
+</p>
+
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="command-unavailable">{{ snapshot.message or 'Organization context required' }}</p>
+{% else %}
+
+<div class="founder-stat-row" data-testid="command-decision-summary">
+  <div class="founder-stat" data-testid="command-stat-requires">
+    <div class="founder-stat-label">Needs your decision</div>
+    <div class="founder-stat-val">{{ snapshot.decision_loop.requires_founder }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-ready">
+    <div class="founder-stat-label">Ready / recommended</div>
+    <div class="founder-stat-val">{{ snapshot.decision_loop.ready }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-approvals">
+    <div class="founder-stat-label">Approvals waiting</div>
+    <div class="founder-stat-val">{{ snapshot.pending_approval_count }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-demand">
+    <div class="founder-stat-label">Demand awaiting intake</div>
+    <div class="founder-stat-val">{{ snapshot.pending_demand_count }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-people">
+    <div class="founder-stat-label">People</div>
+    <div class="founder-stat-val">{{ snapshot.pipeline.contacts }}</div>
+  </div>
+  <div class="founder-stat" data-testid="command-stat-deals">
+    <div class="founder-stat-label">Deals on people</div>
+    <div class="founder-stat-val">{{ snapshot.pipeline.deals }}</div>
+  </div>
+</div>
+
+<div class="founder-card" data-testid="command-decision-loop" style="margin-bottom:20px">
+  <div class="founder-card-title">Commercial decisions</div>
+  {% if not snapshot.decision_items %}
+    <p class="founder-empty">Nothing needs your attention right now</p>
+  {% else %}
+    {% for item in snapshot.decision_items[:12] %}
+    <div class="founder-list-item" data-testid="command-decision-item" data-authority="{{ item.authority_state }}" data-kind="{{ item.kind }}">
+      {% if item.authority_state == 'requires_founder' %}
+      <span class="pill amber" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% elif item.authority_state == 'ready' %}
+      <span class="pill green" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% elif item.authority_state == 'completed' %}
+      <span class="pill blue" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% else %}
+      <span class="pill gray" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+      {% endif %}
+      <strong>{{ item.title }}</strong>
+      {% if item.person_label or item.company_label %}
+      <div class="founder-meta">
+        {% if item.person_label %}{{ item.person_label }}{% endif %}
+        {% if item.person_label and item.company_label %} · {% endif %}
+        {% if item.company_label %}{{ item.company_label }}{% endif %}
+      </div>
+      {% endif %}
+      {% if item.reason %}
+      <div class="founder-meta">{{ item.reason }}</div>
+      {% endif %}
+      {% if item.proposed_action %}
+      <div class="founder-meta">Next: {{ item.proposed_action }}</div>
+      {% endif %}
+      {% if item.outcome %}
+      <div class="founder-meta">Outcome: {{ item.outcome }}</div>
+      {% endif %}
+      {% if item.command_actions %}
+      <div class="founder-meta" data-testid="command-actions" style="margin-top:8px">
+        {% for action in item.command_actions %}
+          {% if action.execution_mode == 'INLINE_GOVERNED' %}
+            {% if operator.configured %}
+            <button type="button"
+              class="btn {% if action.requires_reason %}btn-ghost{% else %}btn-primary{% endif %} btn-sm"
+              style="margin:4px 4px 0 0"
+              data-testid="command-inline-action"
+              data-action-type="{{ action.action_type }}"
+              data-endpoint="{{ action.endpoint }}"
+              data-subject="{{ action.subject_id }}"
+              data-requires-reason="{{ 'true' if action.requires_reason else 'false' }}"
+              onclick="commandInlineAction(this)">{{ action.label }}</button>
+            {% else %}
+            <span class="founder-meta">Sign in as a human operator to {{ action.label | lower }}</span>
+            {% endif %}
+          {% elif action.execution_mode == 'NAVIGATE_GOVERNED' %}
+            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-nav-action"
+               href="{{ action.href }}">{{ action.label }} →</a>
+            <span class="pill gray">{{ action.execution_mode_label }}</span>
+          {% else %}
+            {% if action.href %}
+            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-info-action"
+               href="{{ action.href }}">{{ action.label }} →</a>
+            {% endif %}
+            <span class="pill gray">{{ action.execution_mode_label }}</span>
+          {% endif %}
+          {% if action.reason %}
+          <div class="founder-meta">{{ action.reason }}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="founder-meta">
+        {% if item.href and not item.command_actions %}<a href="{{ item.href }}">Open →</a>{% endif %}
+        {% if item.provenance and item.provenance.action_type %}
+        · <span data-testid="decision-provenance">{{ item.provenance.action_type }}</span>
+        {% endif %}
+        {% if item.occurred_at %} · {{ item.occurred_at }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+{% set orch = snapshot.agent_orchestration or {} %}
+{% set orch_counts = orch.counts or {} %}
+{% set orch_pause = orch.pause or {} %}
+<div class="founder-card" data-testid="command-agent-orchestration" style="margin-bottom:20px">
+  <div class="founder-card-title">Agent operating status</div>
+  <p class="founder-meta" data-testid="agent-orch-intro">
+    What agents are doing, what waits on you, and recent governed outcomes —
+    projected from existing orchestration logs. This does not grant authority;
+    sending and booking still require your approval.
+  </p>
+  <div class="founder-stat-row" data-testid="agent-orch-summary">
+    <div class="founder-stat" data-testid="agent-orch-awaiting">
+      <div class="founder-stat-label">Waiting on founder</div>
+      <div class="founder-stat-val">{{ orch_counts.awaiting_human or 0 }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-succeeded">
+      <div class="founder-stat-label">Succeeded recently</div>
+      <div class="founder-stat-val">{{ orch_counts.succeeded or 0 }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-failed">
+      <div class="founder-stat-label">Failed / retryable</div>
+      <div class="founder-stat-val">{{ (orch_counts.failed or 0) + (orch_counts.retryable or 0) }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-blocked">
+      <div class="founder-stat-label">Blocked / exhausted</div>
+      <div class="founder-stat-val">{{ (orch_counts.blocked or 0) + (orch_counts.exhausted or 0) }}</div>
+    </div>
+    <div class="founder-stat" data-testid="agent-orch-ambiguous">
+      <div class="founder-stat-label">Ambiguous</div>
+      <div class="founder-stat-val">{{ orch_counts.ambiguous_effect or 0 }}</div>
+    </div>
+  </div>
+  <div class="founder-meta" data-testid="agent-orch-gates" style="margin-top:8px">
+    {% if orch_pause.heartbeat_paused %}
+    <span class="pill amber">Heartbeat paused</span>
+    {% endif %}
+    {% if orch_pause.acp2_execution_killed %}
+    <span class="pill amber">Autonomous execution killed</span>
+    {% endif %}
+    {% if not orch_pause.heartbeat_paused and not orch_pause.acp2_execution_killed %}
+    <span class="pill green">Agents may propose (governed)</span>
+    {% endif %}
+    {% if orch_pause.new_mutating_work_allowed is defined and not orch_pause.new_mutating_work_allowed %}
+    <span class="pill gray">New mutating work blocked</span>
+    {% endif %}
+  </div>
+  {% if orch.awaiting_human %}
+  <div data-testid="agent-orch-awaiting-list" style="margin-top:12px">
+    <strong>Waiting on founder</strong>
+    {% for item in orch.awaiting_human[:5] %}
+    <div class="founder-list-item" data-testid="agent-orch-awaiting-item">
+      <span class="pill amber">awaiting</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.escalation_reason %} · {{ item.escalation_reason }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if orch.succeeded_recently %}
+  <div data-testid="agent-orch-succeeded-list" style="margin-top:12px">
+    <strong>Recent agent successes</strong>
+    {% for item in orch.succeeded_recently[:4] %}
+    <div class="founder-list-item" data-testid="agent-orch-succeeded-item">
+      <span class="pill green">succeeded</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.created_at %} · {{ item.created_at }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if orch.failed or orch.retryable or orch.exhausted or orch.ambiguous_effect %}
+  <div data-testid="agent-orch-exceptions" style="margin-top:12px">
+    <strong>Exceptions / recovery</strong>
+    {% for item in (orch.failed or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-failed-item">
+      <span class="pill amber">failed</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}{% if item.failure_reason %} · {{ item.failure_reason }}{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.retryable or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-retryable-item">
+      <span class="pill gray">retryable</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or item.recovery_class or 'work' }}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.exhausted or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-exhausted-item">
+      <span class="pill gray">exhausted</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }}</span>
+    </div>
+    {% endfor %}
+    {% for item in (orch.ambiguous_effect or [])[:3] %}
+    <div class="founder-list-item" data-testid="agent-orch-ambiguous-item">
+      <span class="pill amber">ambiguous</span>
+      <span class="founder-meta">{{ item.work_kind or item.action_type or 'work' }} — no blind replay</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if not orch.awaiting_human and not orch.succeeded_recently and not orch.failed and not orch.retryable and not orch.exhausted and not orch.ambiguous_effect %}
+  <p class="founder-empty" data-testid="agent-orch-empty">No recent agent orchestration activity for this organization</p>
+  {% endif %}
+</div>
+
+{% set cf = snapshot.commercial_funnel or {} %}
+{% if cf.state == 'ok' %}
+<div class="founder-card" data-testid="command-commercial-funnel" style="margin-bottom:20px">
+  <div class="founder-card-title">Commercial funnel &amp; pipeline</div>
+  <p class="founder-meta" data-testid="funnel-intro">
+    Demand → pipeline → outcomes from existing spine state. Counts only — not finance metrics.
+  </p>
+  <div class="founder-stat-row" data-testid="funnel-summary">
+    <div class="founder-stat" data-testid="funnel-stat-demand-pending">
+      <div class="founder-stat-label">Demand pending</div>
+      <div class="founder-stat-val">{{ cf.summary.demand_pending }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-demand-accepted">
+      <div class="founder-stat-label">Demand accepted</div>
+      <div class="founder-stat-val">{{ cf.summary.demand_accepted }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-open-deals">
+      <div class="founder-stat-label">Open deals</div>
+      <div class="founder-stat-val">{{ cf.summary.open_deals }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-closed-won">
+      <div class="founder-stat-label">Closed won</div>
+      <div class="founder-stat-val">{{ cf.summary.deals_closed_won }}</div>
+    </div>
+    <div class="founder-stat" data-testid="funnel-stat-outcomes-pending">
+      <div class="founder-stat-label">Outcomes pending</div>
+      <div class="founder-stat-val">{{ cf.summary.outcomes_pending_decision }}</div>
+    </div>
+  </div>
+  {% if cf.pipeline.by_stage %}
+  <div class="founder-meta" data-testid="funnel-pipeline-stages">
+    <strong>Open pipeline by stage:</strong>
+    {% for stage, count in cf.pipeline.by_stage|dictsort %}
+      {{ stage }} ({{ count }}){% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if cf.attention.entries %}
+  <div data-testid="funnel-attention" style="margin-top:12px">
+    <strong>Where it may be stuck</strong>
+    {% for item in cf.attention.entries %}
+    <div class="founder-list-item" data-testid="funnel-attention-item" data-reason="{{ item.reason_code }}">
+      <span class="pill amber">{{ item.label }}</span>
+      <span class="founder-meta">({{ item.count }}) · {{ item.detail }}</span>
+      {% if item.href %}<div class="founder-meta"><a href="{{ item.href }}">Open →</a></div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="founder-empty" data-testid="funnel-attention-empty">No stuck states detected from canonical workflow</p>
+  {% endif %}
+  {% if cf.recent_movement %}
+  <div data-testid="funnel-recent-movement" style="margin-top:12px">
+    <strong>Recent commercial movement</strong>
+    {% for m in cf.recent_movement[:4] %}
+    <div class="founder-list-item">
+      <span class="founder-meta">{{ m.label or m.action_type }} · {{ m.occurred_at or '—' }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="founder-grid">
+  <div class="founder-card" data-testid="command-approvals">
+      <div class="founder-card-title">Pending approvals <a href="/pending-approvals" class="btn btn-ghost btn-sm">View all →</a></div>
+    {% if not snapshot.pending_approvals %}
+      <p class="founder-empty">No approvals waiting</p>
+    {% else %}
+      {% for item in snapshot.pending_approvals[:5] %}
+      <div class="founder-list-item">
+        <strong>{{ item.title or 'Approval request' }}</strong>
+        <div class="founder-meta">{{ item.action_label or item.action_type }} · {% if item.target_id %}<a href="/contacts/{{ item.target_id }}">Open person</a>{% else %}no person linked{% endif %}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-demand">
+    <div class="founder-card-title">Demand needing action <a href="/demand" class="btn btn-ghost btn-sm">People →</a></div>
+    {% if not snapshot.pending_demands %}
+      <p class="founder-empty">No pending demand</p>
+    {% else %}
+      {% for d in snapshot.pending_demands[:5] %}
+      <div class="founder-list-item">
+        <strong>{{ d.name or d.email or d.demand_id }}</strong>
+        <div class="founder-meta">
+          <span class="pill amber" data-testid="command-demand-decision">{{ d.human_decision_label or 'Needs your decision' }}</span>
+          · {{ d.source_label or d.source }} · {{ d.registered_at or '—' }}
+        </div>
+        {% if d.why_it_matters %}
+        <div class="founder-meta">{{ d.why_it_matters }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-replies">
+    <div class="founder-card-title">What the system learned</div>
+    {% if not snapshot.recent_replies %}
+      <p class="founder-empty">No replies assessed yet</p>
+    {% else %}
+      {% for r in snapshot.recent_replies %}
+      <div class="founder-list-item">
+        <strong>{{ r.reply_type_label or r.reply_type or 'Reply' }}</strong>
+        <div class="founder-meta">
+          <a href="/contacts/{{ r.contact_id }}">Open person →</a>
+          {% if r.summary %} · {{ r.summary[:80] }}{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-meeting-interest">
+    <div class="founder-card-title">Meeting interest</div>
+    {% if not snapshot.meeting_interest %}
+      <p class="founder-empty">No meeting interest detected</p>
+    {% else %}
+      {% for m in snapshot.meeting_interest %}
+      <div class="founder-list-item">
+        <span class="pill amber">Meeting interest</span>
+        {% if m.booking_status == 'eligible' %}
+        <span class="pill green">Ready to propose a meeting</span>
+        {% endif %}
+        <div class="founder-meta">
+          <a href="/contacts/{{ m.contact_id }}">Open person workspace →</a>
+          {% if m.booking_status == 'eligible' %}
+          · <a href="/contacts/{{ m.contact_id }}#contact-booking-panel">Review times →</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-meeting-bookings">
+    <div class="founder-card-title">Meeting approvals <a href="/pending-approvals" class="btn btn-ghost btn-sm">Inbox →</a></div>
+    {% if not snapshot.get('meeting_booking_pending') %}
+      <p class="founder-empty">No meeting bookings awaiting approval</p>
+    {% else %}
+      {% for item in snapshot.meeting_booking_pending[:5] %}
+      <div class="founder-list-item">
+        <span class="pill blue">Approval required</span>
+        <strong>{{ item.title or 'Meeting booking' }}</strong>
+        {% if item.booking_display %}
+        <div class="founder-meta">{{ item.booking_display.slot_start_display }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-followups">
+    <div class="founder-card-title">Follow-up signals</div>
+    {% if not snapshot.follow_up_signals %}
+      <p class="founder-empty">No follow-ups due</p>
+    {% else %}
+      {% for f in snapshot.follow_up_signals %}
+      <div class="founder-list-item">
+        <strong>{{ f.name or f.contact_id }}</strong>
+        <div class="founder-meta">{% if f.eligible %}Eligible for a proposed follow-up{% else %}{{ f.state }}{% endif %}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="founder-card" data-testid="command-activity">
+    <div class="founder-card-title">Recent activity <a href="/activity" class="btn btn-ghost btn-sm">Full history →</a></div>
+    {% if not snapshot.recent_activity %}
+      <p class="founder-empty">No recent activity</p>
+    {% else %}
+      {% for e in snapshot.recent_activity[:6] %}
+      <div class="founder-list-item">
+        <strong>{{ e.label }}</strong>
+        <div class="founder-meta">{{ e.created_at or '—' }}</div>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<pre id="command-action-result" data-testid="command-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function commandPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+function commandResult(msg, ok) {
+  const el = document.getElementById('command-action-result');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+}
+async function commandInlineAction(btn) {
+  const endpoint = btn.getAttribute('data-endpoint');
+  const actionType = btn.getAttribute('data-action-type');
+  const subject = btn.getAttribute('data-subject');
+  const needsReason = btn.getAttribute('data-requires-reason') === 'true';
+  if (!endpoint || !actionType) {
+    commandResult('This action is not available.', false);
+    return;
+  }
+  let body = {};
+  if (actionType === 'qualified_demand_accept') {
+    if (!confirm('Accept this demand? A person will be added through the existing intake path.')) return;
+    body = { demand_id: subject };
+  } else if (actionType === 'qualified_demand_reject') {
+    const reason = prompt('Why are you rejecting this demand?');
+    if (!reason || reason.trim().length < 2) {
+      commandResult('A short reject reason is required.', false);
+      return;
+    }
+    if (!confirm('Reject this demand? No person will be created.')) return;
+    body = { demand_id: subject, reason: reason.trim() };
+  } else if (actionType === 'approval_approve') {
+    if (!confirm('Approve this proposal? The existing approval path will run the governed action.')) return;
+    body = {};
+  } else if (actionType === 'approval_reject') {
+    if (!confirm('Reject this proposal? Nothing will be sent or booked.')) return;
+    body = {};
+  } else {
+    commandResult('This action cannot be completed from Command Center.', false);
+    return;
+  }
+  if (needsReason && actionType === 'qualified_demand_reject' && !(body.reason || '').trim()) {
+    commandResult('A short reject reason is required.', false);
+    return;
+  }
+  btn.disabled = true;
+  const res = await commandPost(endpoint, body);
+  const detail = (res.data && (res.data.detail || res.data.message)) || res.status;
+  if (res.ok) {
+    commandResult('Decision recorded. Refreshing…', true);
+    setTimeout(() => location.reload(), 700);
+  } else {
+    btn.disabled = false;
+    commandResult('Could not complete decision: ' + detail, false);
+  }
+}
+</script>
+{% endblock %}

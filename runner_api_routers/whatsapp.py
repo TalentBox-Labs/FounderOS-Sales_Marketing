@@ -42,8 +42,10 @@ def configure_whatsapp(
             business_account_id=config.get("business_account_id", ""),
         )
         from revenue_os.services.credentials_vault import save_credentials
+        from revenue_os.services.integration_tenant_resolution import resolve_integration_org_id
 
-        save_credentials("whatsapp", "messaging", config)
+        org_id = resolve_integration_org_id()
+        save_credentials("whatsapp", "messaging", config, organization_id=org_id)
         return {"ok": True, "message": "WhatsApp configured successfully"}
     except Exception as e:
         logger.error(f"Failed to configure WhatsApp: {str(e)}")

@@ -230,6 +230,209 @@ def classify_and_draft_reply(
     return _fallback_classify_reply(prospect_name, reply_text)
 
 
+def generate_follow_up_email(
+    prospect_name: str,
+    company_name: str,
+    *,
+    step: int,
+    context: str | None = None,
+    prior_subject: str | None = None,
+) -> dict[str, str]:
+    """Draft a single follow-up email (proposal-only — never sends)."""
+    subject_hint = prior_subject or f"Re: Quick thought for {company_name}"
+    raw = _chat(
+        _SYSTEM_SDR,
+        (
+            f"Write follow-up #{step} for {prospect_name} at {company_name}. "
+            f"Prior subject: {subject_hint}. Context: {context or 'prior cold outreach sent'}\n\n"
+            "Return strict JSON: {\"subject\": \"...\", \"body\": \"...\", \"rationale\": \"...\"}"
+        ),
+        max_tokens=400,
+    )
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            subject = str(parsed.get("subject", "")).strip()
+            body = str(parsed.get("body", "")).strip()
+            rationale = str(parsed.get("rationale", "")).strip()
+            if subject and body:
+                return {"subject": subject[:500], "body": body, "rationale": rationale}
+        except Exception:
+            pass
+    return _fallback_follow_up_email(prospect_name, company_name, step=step, prior_subject=subject_hint)
+
+
+def _fallback_follow_up_email(
+    prospect_name: str,
+    company_name: str,
+    *,
+    step: int,
+    prior_subject: str,
+) -> dict[str, str]:
+    if step == 1:
+        body = (
+            f"Hi {prospect_name},\n\n"
+            f"Circling back on my note about {company_name} — still think there could be a fit.\n\n"
+            f"Open to a quick chat this week?\n\nBest"
+        )
+        rationale = "First bounded follow-up after initial outreach"
+    else:
+        body = (
+            f"Hi {prospect_name},\n\n"
+            f"Last quick bump in case my earlier note got buried — happy to reconnect whenever "
+            f"timing works for {company_name}.\n\nBest"
+        )
+        rationale = "Second bounded follow-up; cadence limit applies"
+    return {
+        "subject": prior_subject,
+        "body": body,
+        "rationale": rationale,
+    }
+
+
+_M3_REPLY_TYPES = {
+    "INTERESTED",
+    "NEEDS_INFO",
+    "OBJECTION",
+    "NOT_NOW",
+    "NOT_INTERESTED",
+    "OPT_OUT",
+    "MEETING_INTEREST",
+    "UNKNOWN",
+}
+
+
+def analyze_inbound_reply(
+    prospect_name: str,
+    company_name: str,
+    reply_text: str,
+    context: str | None = None,
+) -> dict:
+    """Classify an inbound reply into M3 types. Proposal-only — never mutates CRM."""
+    raw = _chat(
+        _SYSTEM_SDR + " Classify inbound replies. Do not invent facts.",
+        (
+            f"{prospect_name} at {company_name} replied. Context: {context or 'none'}\n\n"
+            f"Their reply:\n\"\"\"\n{reply_text}\n\"\"\"\n\n"
+            "Return strict JSON with keys: reply_type (one of INTERESTED, NEEDS_INFO, "
+            "OBJECTION, NOT_NOW, NOT_INTERESTED, OPT_OUT, MEETING_INTEREST, UNKNOWN), "
+            "confidence (0-1 float), summary, objection_category (PRICE/TIMING/AUTHORITY/"
+            "NEED/COMPETITOR/TRUST/IMPLEMENTATION/OTHER or null), meeting_interest (bool), "
+            "recommended_next_action, qualification_recommendation (QUALIFY or null)."
+        ),
+        max_tokens=400,
+    )
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            reply_type = str(parsed.get("reply_type", "")).strip().upper()
+            if reply_type in _M3_REPLY_TYPES:
+                try:
+                    confidence = float(parsed.get("confidence", 0.5))
+                except (TypeError, ValueError):
+                    confidence = 0.5
+                return {
+                    "ok": True,
+                    "reply_type": reply_type,
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "summary": str(parsed.get("summary") or "")[:1000],
+                    "objection_category": parsed.get("objection_category"),
+                    "meeting_interest": bool(parsed.get("meeting_interest")),
+                    "recommended_next_action": str(parsed.get("recommended_next_action") or ""),
+                    "qualification_recommendation": parsed.get("qualification_recommendation"),
+                }
+        except Exception:
+            pass
+    if not (reply_text or "").strip():
+        return {
+            "ok": False,
+            "reason": "Empty reply text",
+            "reply_type": "UNKNOWN",
+            "confidence": 0.0,
+        }
+    return _fallback_analyze_inbound_reply(reply_text)
+
+
+def _fallback_analyze_inbound_reply(reply_text: str) -> dict:
+    text = (reply_text or "").lower()
+    if any(k in text for k in ("unsubscribe", "remove me", "opt out", "opt-out", "stop emailing")):
+        reply_type = "OPT_OUT"
+        summary = "Explicit opt-out / suppression language"
+        confidence = 0.95
+        meeting = False
+        objection = None
+        rec = "SUPPRESS"
+        qual = None
+    elif "not interested" in text or "no thanks" in text or "no thank" in text:
+        reply_type = "NOT_INTERESTED"
+        summary = "Prospect declined"
+        confidence = 0.85
+        meeting = False
+        objection = None
+        rec = "DISQUALIFY"
+        qual = None
+    elif any(k in text for k in ("not now", "next quarter", "later this year", "revisit")):
+        reply_type = "NOT_NOW"
+        summary = "Timing is not right"
+        confidence = 0.75
+        meeting = False
+        objection = "TIMING"
+        rec = "PAUSE"
+        qual = None
+    elif any(k in text for k in ("too expensive", "budget", "pricing", "cost")):
+        reply_type = "OBJECTION"
+        summary = "Price / budget objection"
+        confidence = 0.75
+        meeting = False
+        objection = "PRICE"
+        rec = "HANDLE_OBJECTION"
+        qual = None
+    elif ("more info" in text or "more details" in text or "send info" in text) or (
+        "send" in text and "details" in text
+    ):
+        reply_type = "NEEDS_INFO"
+        summary = "Requested more information"
+        confidence = 0.8
+        meeting = False
+        objection = None
+        rec = "DRAFT_INFO_RESPONSE"
+        qual = None
+    elif any(k in text for k in ("meeting", "calendar", "book a", "schedule a call", "15 minutes")):
+        reply_type = "MEETING_INTEREST"
+        summary = "Expressed interest in a meeting"
+        confidence = 0.85
+        meeting = True
+        objection = None
+        rec = "BOOKING_ELIGIBLE"
+        qual = "QUALIFY"
+    elif "interested" in text or "sounds good" in text or "let's talk" in text:
+        reply_type = "INTERESTED"
+        summary = "Positive interest signal"
+        confidence = 0.8
+        meeting = False
+        objection = None
+        rec = "QUALIFY"
+        qual = "QUALIFY"
+    else:
+        reply_type = "UNKNOWN"
+        summary = "Could not classify with high confidence"
+        confidence = 0.3
+        meeting = False
+        objection = None
+        rec = "HUMAN_REVIEW"
+        qual = None
+    return {
+        "ok": True,
+        "reply_type": reply_type,
+        "confidence": confidence,
+        "summary": summary,
+        "objection_category": objection,
+        "meeting_interest": meeting,
+        "recommended_next_action": rec,
+        "qualification_recommendation": qual,
+    }
+
+
 def _fallback_classify_reply(prospect_name: str, reply_text: str) -> dict[str, str]:
     text = (reply_text or "").lower()
     if "not interested" in text or "no thanks" in text or "remove me" in text:

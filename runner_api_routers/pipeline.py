@@ -204,6 +204,8 @@ def run_pipeline(
         "Pipeline execution complete",
         extra={"week": week, "returncode": r.returncode},
     )
+    # Canonical status values for this legacy endpoint: "ok" | "failed".
+    # (Newer pipeline routes use boolean ``ok``; do not use "success" here.)
     return {
         "status": "ok" if r.returncode == 0 else "failed",
         "week": week,

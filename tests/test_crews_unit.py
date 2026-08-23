@@ -28,11 +28,11 @@ class TestBaseCrew:
         """BaseCrew loads YAML configs and LLM."""
         fake_config = {"test_agent": {"role": "Test", "goal": "Test", "backstory": "Test"}}
 
-        def fake_load_yaml(path):
+        def fake_load_yaml(self, path):
             return fake_config
 
-        monkeypatch.setattr("src.base_crew.load_yaml", fake_load_yaml)
-        monkeypatch.setattr("src.base_crew.BaseCrew._build_llm", lambda self: MagicMock())
+        monkeypatch.setattr(BaseCrew, "_load_yaml", fake_load_yaml)
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
         crew = QACrew(repo_root=tmp_path)
 
@@ -42,18 +42,28 @@ class TestBaseCrew:
         assert crew.agents_config == fake_config
         assert crew.tasks_config == fake_config
 
-    def test_base_crew_read_file(self, tmp_path: Path) -> None:
+    def test_base_crew_read_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """BaseCrew can read files relative to repo_root."""
         test_file = tmp_path / "test.md"
         test_file.write_text("test content")
+
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
         crew = QACrew(repo_root=tmp_path)
         content = crew.read_file("test.md")
 
         assert content == "test content"
 
-    def test_base_crew_save_file(self, tmp_path: Path) -> None:
+    def test_base_crew_save_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """BaseCrew can save files relative to repo_root."""
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
+
         crew = QACrew(repo_root=tmp_path)
         crew.save_file("output/test.md", "test content")
 
@@ -98,7 +108,10 @@ PASS
         self, monkeypatch: pytest.MonkeyPatch, patch_csv_reader, patch_runtime_config, patch_yaml_loader, tmp_path: Path
     ) -> None:
         """QACrew builds a single QA agent and task."""
-        monkeypatch.setattr("src.base_crew.BaseCrew._build_llm", lambda self: MagicMock())
+        # CrewAI Agent accepts str | BaseLLM; MagicMock fails pydantic validation.
+        monkeypatch.setattr(
+            "src.base_crew.BaseCrew._build_llm", lambda self: "openai/gpt-4o-mini"
+        )
 
         crew = QACrew(repo_root=tmp_path)
         agents, tasks = crew.build_agents_and_tasks()
@@ -131,7 +144,10 @@ class TestGenerationCrew:
         self, monkeypatch: pytest.MonkeyPatch, patch_csv_reader, patch_runtime_config, patch_yaml_loader, tmp_path: Path
     ) -> None:
         """GenerationCrew builds all four agents (Strategist, SEO, Researcher, Writer)."""
-        monkeypatch.setattr("src.base_crew.BaseCrew._build_llm", lambda self: MagicMock())
+        # CrewAI Agent accepts str | BaseLLM; MagicMock fails pydantic validation.
+        monkeypatch.setattr(
+            "src.base_crew.BaseCrew._build_llm", lambda self: "openai/gpt-4o-mini"
+        )
 
         crew = GenerationCrew(repo_root=tmp_path)
         crew.output_root = str(tmp_path / "output")

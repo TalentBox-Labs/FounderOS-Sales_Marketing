@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+
+{% block title %}Executive Cockpit — Founder OS{% endblock %}
+{% block topbar_title %}Executive Cockpit{% endblock %}
+{% block topbar_meta %}Visibility + control plane · read-model from authoritative APIs{% endblock %}
+
+{% block topbar_right %}
+  {% if operator.configured %}
+  <span class="pill green" data-testid="cockpit-operator">Operator: {{ operator.operator_name }}</span>
+  {% else %}
+  <span class="pill amber" data-testid="cockpit-operator-unconfigured">Human actions blocked — set FOUNDER_OS_OPERATOR_NAME</span>
+  {% endif %}
+  <span class="pill gray">{{ snapshot.generated_at }}</span>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .cockpit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+  .panel-state { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+  .attention-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--surface2); }
+  .flow-stage { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .flow-stage:last-child { border-bottom: none; }
+  .state-empty, .state-unavailable, .state-error, .state-blocked { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+  .action-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .src-tag { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:18px;border-left:3px solid var(--accent)">
+  <div class="card-title">Boundaries</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Read-model only composition. Mutations use frozen MC04.5 / A4.5 paths with server-trusted operator identity.
+    No CRM SPA · no new SoT · no autonomous actions.
+    <a href="/operator" data-testid="cockpit-operator-link">Open operator flow →</a>
+  </p>
+</div>
+
+<div class="cockpit-grid">
+
+  <!-- A. Attention / Decision Queue -->
+  <div class="card" data-testid="panel-attention">
+    <div class="card-title">
+      🔔 Attention / Decision Queue
+      <span class="panel-state pill gray">{{ snapshot.panels.attention.state }}</span>
+    </div>
+    {% if snapshot.panels.attention.state == 'unavailable' %}
+      <p class="state-unavailable" data-testid="attention-unavailable">{{ snapshot.panels.attention.message }}</p>
+    {% elif snapshot.panels.attention.state == 'empty' %}
+      <p class="state-empty" data-testid="attention-empty">{{ snapshot.panels.attention.message }}</p>
+    {% else %}
+      {% for item in snapshot.panels.attention.data['items'] %}
+      <div class="attention-item" data-testid="attention-item" data-kind="{{ item.kind }}">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="pill {% if item.priority == 'high' %}amber{% else %}blue{% endif %}">{{ item.priority }}</span>
+          <strong>{{ item.label }}</strong>
+          <span class="src-tag">{{ item.kind }}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">{{ item.detail }}</div>
+        {% if item.kind == 'qualified_demand' and operator.configured %}
+        <div class="action-row">
+          <button type="button" class="btn btn-primary btn-sm"
+            data-testid="accept-demand-btn"
+            onclick="acceptDemand('{{ item.meta.demand_id }}')">Accept intake</button>
+        </div>
+        {% elif item.kind == 'qualified_demand' %}
+        <div class="state-blocked" style="margin-top:6px;font-size:12px">Accept blocked — operator not configured</div>
+        {% elif item.meta.link is defined %}
+        <div class="action-row"><a href="{{ item.meta.link }}" class="btn btn-ghost btn-sm">Open →</a></div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <!-- B. Sales Snapshot -->
+  <div class="card" data-testid="panel-sales">
+    <div class="card-title">
+      🎯 Sales Snapshot
+      <span class="panel-state pill gray">{{ snapshot.panels.sales.state }}</span>
+    </div>
+    {% if snapshot.panels.sales.state == 'unavailable' %}
+      <p class="state-unavailable" data-testid="sales-unavailable">{{ snapshot.panels.sales.message }}</p>
+    {% else %}
+      {% set sales = snapshot.panels.sales.data %}
+      <div class="stats-row" style="margin-bottom:12px">
+        <div class="stat-card">
+          <div class="stat-label">Contacts</div>
+          <div class="stat-val">{{ sales.contact_total }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Deals</div>
+          <div class="stat-val">{{ sales.deal_total }}</div>
+        </div>
+      </div>
+      {% if sales.contacts_by_status %}
+      <div style="font-size:12px;margin-bottom:10px">
+        <strong>By status:</strong>
+        {% for k, v in sales.contacts_by_status.items() %}
+          <span class="pill gray" style="margin:2px">{{ k }}: {{ v }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if sales.high_score_review %}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">High-score contacts (recommendation only — human decides status):</div>
+      {% for c in sales.high_score_review %}
+      <div class="attention-item" data-testid="contact-review-item">
+        <div>{{ c.name or c.email }} · score {{ c.lead_score }} · {{ c.status }}</div>
+        {% if operator.configured %}
+        <div class="action-row">
+          <select id="status-{{ c.id }}" style="font-size:12px">
+            <option value="prospect">prospect</option>
+            <option value="qualified">qualified</option>
+            <option value="lead">lead</option>
+          </select>
+          <button type="button" class="btn btn-primary btn-sm"
+            data-testid="contact-status-btn"
+            onclick="updateContactStatus('{{ c.id }}')">Update status</button>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% elif sales.contact_total == 0 %}
+      <p class="state-empty">No contacts in CRM SoT</p>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <!-- C. Marketing / SEO Snapshot -->
+  <div class="card" data-testid="panel-marketing-seo">
+    <div class="card-title">
+      📣 Marketing / SEO
+      <span class="panel-state pill gray">{{ snapshot.panels.marketing_seo.state }}</span>
+    </div>
+    {% if snapshot.panels.marketing_seo.state == 'error' %}
+      <p class="state-error" data-testid="seo-error">{{ snapshot.panels.marketing_seo.message }}</p>
+    {% else %}
+      {% set m = snapshot.panels.marketing_seo.data %}
+      <div style="font-size:13px;display:grid;gap:8px">
+        <div>SEO readiness: {{ m.readiness.ready_count if m.readiness is defined else '—' }} ready / {{ m.readiness.blocked_count if m.readiness is defined else '—' }} blocked
+          {% if m.readiness is defined %}<span class="pill amber">{{ m.readiness.production_seo_activation }}</span>{% endif %}</div>
+        <div>Technical SEO: score {{ m.technical.score if m.technical is defined and m.technical.score is not none else '—' }}
+          {% if m.technical is defined %}({{ m.technical.pass_count or 0 }} pass · {{ m.technical.warn_count or 0 }} warn){% endif %}</div>
+        <div>QualifiedDemand pending: {{ m.qualified_demand_pending if m.qualified_demand_pending is defined else '—' }}</div>
+        <div>Social: {% if m.social is defined %}<span class="pill red">{{ m.social.state | upper }}</span> — {{ m.social.message }}{% else %}<span class="pill gray">NO DATA</span>{% endif %}</div>
+        <a href="/seo" class="btn btn-ghost btn-sm">SEO Readiness →</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- D. Commercial Flow -->
+  <div class="card" data-testid="panel-commercial-flow">
+    <div class="card-title">🔗 Commercial Flow</div>
+    {% for stage in snapshot.panels.commercial_flow.data.stages %}
+    <div class="flow-stage" data-testid="flow-stage">
+      <span class="pill {% if stage.state == 'active' %}green{% elif stage.state == 'emerging' %}amber{% else %}gray{% endif %}">{{ stage.state }}</span>
+      <div>
+        <div style="font-weight:600">{{ stage.label }}</div>
+        <div style="font-size:12px;color:var(--text-muted)">{{ stage.detail }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- E. Governance / System Health -->
+  <div class="card" data-testid="panel-governance">
+    <div class="card-title">🛡️ Governance / System Health</div>
+    {% set g = snapshot.panels.governance.data %}
+    <div style="font-size:13px;display:grid;gap:6px">
+      <div>UI1.1 authority: <span class="pill green">{{ g.authority_remediation if g.authority_remediation is defined else '—' }}</span>
+        {% if g.ui1_1_bypasses_closed is defined %}({{ g.ui1_1_bypasses_closed }}){% endif %}</div>
+      <div>Heartbeat: {% if g.heartbeat is defined %}{% if g.heartbeat.enabled %}<span class="pill green">enabled</span>{% else %}<span class="pill gray">disabled</span>{% endif %}
+        · {{ g.heartbeat.jobs_registered }} jobs{% else %}<span class="pill gray">NO DATA</span>{% endif %}</div>
+      <div>CRM SPA: {% if g.integration_readiness is defined %}<span class="pill gray">{{ g.integration_readiness.crm_spa }}</span>{% else %}—{% endif %}</div>
+      <div>Production SEO: {% if g.integration_readiness is defined %}<span class="pill amber">{{ g.integration_readiness.production_seo }}</span>{% else %}—{% endif %}</div>
+      {% if g.frozen_baselines is defined %}
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px">Frozen: {{ g.frozen_baselines | join(', ') }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<pre id="cockpit-action-result" data-testid="cockpit-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function cockpitPost(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+
+function showActionResult(msg, ok) {
+  const el = document.getElementById('cockpit-action-result');
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.borderLeft = ok ? '3px solid var(--green)' : '3px solid var(--red)';
+  showToast(msg, ok);
+}
+
+async function acceptDemand(demandId) {
+  if (!confirm('Accept QualifiedDemand into Sales intake (MC04.5)?')) return;
+  const res = await cockpitPost('/api/v1/cockpit/actions/qualified-demand/accept', { demand_id: demandId });
+  if (res.ok) {
+    showActionResult('Accepted: ' + JSON.stringify(res.data), true);
+    setTimeout(() => location.reload(), 900);
+  } else {
+    showActionResult('Accept failed (' + res.status + '): ' + (res.data.detail || JSON.stringify(res.data)), false);
+  }
+}
+
+async function updateContactStatus(contactId) {
+  const sel = document.getElementById('status-' + contactId);
+  const status = sel ? sel.value : 'qualified';
+  if (!confirm('Update contact status to ' + status + ' (A4.5 human gate)?')) return;
+  const res = await cockpitPost('/api/v1/cockpit/actions/contact-status', {
+    contact_id: contactId,
+    status: status,
+  });
+  if (res.ok) {
+    showActionResult('Status updated: ' + JSON.stringify(res.data), true);
+    setTimeout(() => location.reload(), 900);
+  } else {
+    showActionResult('Status failed (' + res.status + '): ' + (res.data.detail || JSON.stringify(res.data)), false);
+  }
+}
+</script>
+{% endblock %}

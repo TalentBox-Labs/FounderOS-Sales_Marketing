@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}WorkCrew CMS OS{% endblock %}</title>
+  <title>{% block title %}Founder OS{% endblock %}</title>
   <style>
     /* ─── Design Tokens ──────────────────────────────────────────────────── */
     :root {
@@ -220,9 +220,33 @@
 
     /* ─── Responsive ─────────────────────────────────────────────────────── */
     @media (max-width: 720px) {
-      .sidebar { display: none; }
+      .sidebar { transform: translateX(-100%); transition: transform .2s; position: fixed; z-index: 100; }
+      .sidebar.open { transform: translateX(0); }
+      .mobile-nav-toggle { display: inline-flex !important; }
       .page { padding: 16px; }
     }
+    .mobile-nav-toggle { display: none; align-items: center; gap: 6px; }
+
+    /* ─── Founder UI (UI-D1) ───────────────────────────────────────────── */
+    .founder-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+    .founder-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; }
+    .founder-card-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .founder-list-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--surface2); font-size: 13px; }
+    .founder-list-item:last-child { margin-bottom: 0; }
+    .founder-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .founder-empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+    .founder-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .founder-stat { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; }
+    .founder-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); }
+    .founder-stat-val { font-size: 22px; font-weight: 700; margin-top: 2px; }
+    .workflow-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .workflow-step { font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
+    .workflow-step.done { background: var(--green-soft); color: var(--green); border-color: transparent; }
+    .workflow-step.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .workflow-step.pending { color: var(--text-dim); }
+    .org-badge { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+    details.nav-collapsed summary { cursor: pointer; font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); padding: 0 8px 6px; list-style: none; }
+    details.nav-collapsed summary::-webkit-details-marker { display: none; }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
@@ -231,36 +255,62 @@
 <!-- ░ Sidebar ─────────────────────────────────────────────────────────────── -->
 <aside class="sidebar">
   <div class="sidebar-logo">
-    <div class="logo-icon">W</div>
+    <div class="logo-icon">F</div>
     <div>
-      <div class="logo-text">WorkCrew</div>
-      <div class="logo-sub">CMS OS</div>
+      <div class="logo-text">Founder OS</div>
+      <div class="logo-sub">Executive Platform</div>
     </div>
   </div>
 
   <div class="nav-section">
-    <div class="nav-section-label">Overview</div>
-    <a href="/" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
-      <span class="icon">⬛</span> Dashboard
+    <div class="nav-section-label">Founder</div>
+    <a href="/command" class="nav-item {% if active_page == 'command' %}active{% endif %}" aria-label="Home, Command Center">
+      <span class="icon">🎛️</span> Command Center
     </a>
-    <a href="/analytics" class="nav-item {% if active_page == 'analytics' %}active{% endif %}">
-      <span class="icon">📊</span> Analytics
+    <a href="/demand" class="nav-item {% if active_page == 'demand' %}active{% endif %}" aria-label="People">
+      <span class="icon">📥</span> Demand &amp; Contacts
     </a>
-    <a href="/weeks" class="nav-item {% if active_page == 'weeks' %}active{% endif %}">
-      <span class="icon">📅</span> Content Calendar
+    <a href="/pending-approvals" class="nav-item {% if active_page == 'approvals' %}active{% endif %}">
+      <span class="icon">✅</span> Approvals
+    </a>
+    <a href="/activity" class="nav-item {% if active_page == 'activity' %}active{% endif %}">
+      <span class="icon">📜</span> Activity
+    </a>
+    <a href="/operator" class="nav-item {% if active_page == 'operator' %}active{% endif %}">
+      <span class="icon">🧭</span> Revenue Workflow
     </a>
   </div>
 
   <div class="nav-section">
-    <div class="nav-section-label">Pipeline</div>
+    <details class="nav-collapsed">
+      <summary>Content Ops</summary>
+      <div style="padding-top:4px">
+    <a href="/" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+      <span class="icon">⬛</span> Dashboard
+    </a>
+    <a href="/cockpit" class="nav-item {% if active_page == 'cockpit' %}active{% endif %}">
+      <span class="icon">📊</span> Executive Cockpit (legacy)
+    </a>
+    <a href="/analytics" class="nav-item {% if active_page == 'analytics' %}active{% endif %}">
+      <span class="icon">📈</span> Analytics
+    </a>
+    <a href="/weeks" class="nav-item {% if active_page == 'weeks' %}active{% endif %}">
+      <span class="icon">📅</span> Content Calendar
+    </a>
+    <a href="/content-studio" class="nav-item {% if active_page == 'content_studio' %}active{% endif %}">
+      <span class="icon">🗂️</span> Content Studio
+    </a>
+    <a href="/editorial" class="nav-item {% if active_page == 'editorial' %}active{% endif %}">
+      <span class="icon">✍️</span> Editorial
+    </a>
+    <a href="/publishing" class="nav-item {% if active_page == 'publishing' %}active{% endif %}">
+      <span class="icon">📤</span> Publishing
+    </a>
+    <a href="/seo" class="nav-item {% if active_page == 'seo' %}active{% endif %}">
+      <span class="icon">🔎</span> SEO
+    </a>
     <a href="/pipeline" class="nav-item {% if active_page == 'pipeline' %}active{% endif %}">
       <span class="icon">⚡</span> Run Pipeline
-    </a>
-    <a href="/qa" class="nav-item {% if active_page == 'qa' %}active{% endif %}">
-      <span class="icon">✅</span> QA Reports
-    </a>
-    <a href="/publish" class="nav-item {% if active_page == 'publish' %}active{% endif %}">
-      <span class="icon">🚀</span> Go-Live
     </a>
     <a href="/marketing" class="nav-item {% if active_page == 'marketing' %}active{% endif %}">
       <span class="icon">📣</span> Marketing
@@ -268,23 +318,23 @@
     <a href="/sales" class="nav-item {% if active_page == 'sales' %}active{% endif %}">
       <span class="icon">🎯</span> Sales
     </a>
-  </div>
-
-  <div class="nav-section">
-    <div class="nav-section-label">System</div>
     <a href="/mcp" class="nav-item {% if active_page == 'mcp' %}active{% endif %}">
       <span class="icon">🧠</span> MCP Hub
     </a>
-    <a href="/settings" class="nav-item {% if active_page == 'settings' %}active{% endif %}">
-      <span class="icon">⚙️</span> Settings
-    </a>
-    <a href="/health" class="nav-item">
-      <span class="icon">💓</span> Health
-    </a>
+      </div>
+    </details>
   </div>
 
   <div class="sidebar-footer">
+    {% if tenant is defined and tenant and tenant.organization_name %}
+    <div class="org-badge" data-testid="founder-org-name">Workspace: <strong>{{ tenant.organization_name }}</strong></div>
+    {% endif %}
     Active week: <strong>{{ active_week or "—" }}</strong>
+    {% if identity is defined and identity and identity.is_human %}
+    <form method="post" action="/logout" style="margin-top:10px">
+      <button type="submit" class="btn btn-ghost btn-sm" data-testid="s1-logout">Sign out</button>
+    </form>
+    {% endif %}
   </div>
 </aside>
 
@@ -293,10 +343,11 @@
   {% block topbar %}
   <div class="topbar">
     <div>
-      <div class="topbar-title">{% block topbar_title %}WorkCrew CMS OS{% endblock %}</div>
-      <div class="topbar-meta">{% block topbar_meta %}Content Management & Publishing System{% endblock %}</div>
+      <div class="topbar-title">{% block topbar_title %}Founder OS{% endblock %}</div>
+      <div class="topbar-meta">{% block topbar_meta %}Unified founder visibility &amp; control{% endblock %}</div>
     </div>
     <div class="topbar-right">
+      <button type="button" class="btn btn-ghost btn-sm mobile-nav-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Menu">☰</button>
       {% block topbar_right %}{% endblock %}
     </div>
   </div>

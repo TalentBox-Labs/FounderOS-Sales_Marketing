@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}{{ content_id }} — Content Studio — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Content Studio · {{ content_id }}{% endblock %}
+{% block topbar_meta %}Read-only detail via Content Studio API{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+  <a href="/content-studio" class="btn btn-ghost btn-sm">← Inventory</a>
+{% endblock %}
+
+{% block content %}
+
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap" data-testid="cs-week-nav">
+  {% if prev_id %}
+    <a href="/content-studio/{{ prev_id }}" class="btn btn-ghost btn-sm" data-testid="cs-prev-week">← {{ prev_id }}</a>
+  {% else %}
+    <span class="btn btn-ghost btn-sm" style="opacity:.4;pointer-events:none">← Prev</span>
+  {% endif %}
+  <span class="pill gray" style="align-self:center">{{ content_id }}</span>
+  {% if next_id %}
+    <a href="/content-studio/{{ next_id }}" class="btn btn-ghost btn-sm" data-testid="cs-next-week">{{ next_id }} →</a>
+  {% else %}
+    <span class="btn btn-ghost btn-sm" style="opacity:.4;pointer-events:none">Next →</span>
+  {% endif %}
+  <select id="cs-week-jump" data-testid="cs-week-jump" style="margin-left:auto;padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+    <option value="">Jump to week…</option>
+  </select>
+</div>
+
+{% if api_error %}
+<div class="card" data-testid="cs-detail-api-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif not_found %}
+<div class="card" data-testid="cs-not-found" style="border-left:3px solid var(--amber)">
+  <div class="card-title">Content not found</div>
+  <p style="color:var(--text-muted);font-size:13px">
+    No Content Studio item for <code>{{ content_id }}</code>.
+  </p>
+  <p style="margin-top:12px">
+    <a href="/content-studio" class="btn btn-primary btn-sm">Back to inventory</a>
+  </p>
+</div>
+{% elif item %}
+
+<div class="card" data-testid="cs-detail">
+  <div class="card-title">Metadata</div>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><th style="width:180px">content_id</th><td style="font-family:monospace">{{ item.content_id }}</td></tr>
+        <tr><th>title</th><td>{{ item.title or "—" }}</td></tr>
+        <tr><th>status</th><td><span class="pill blue">{{ item.status or "—" }}</span></td></tr>
+        <tr><th>qa_status</th><td>{{ item.qa_status or "—" }}</td></tr>
+        <tr><th>current_step</th><td>{{ item.current_step or "—" }}</td></tr>
+        <tr><th>next_step</th><td>{{ item.next_step or "—" }}</td></tr>
+        <tr><th>draft_path</th><td style="font-family:monospace;font-size:12px">{{ item.draft_path or "—" }}</td></tr>
+        <tr><th>final_output_path</th><td style="font-family:monospace;font-size:12px">{{ item.final_output_path or "—" }}</td></tr>
+        <tr><th>qa_output_path</th><td style="font-family:monospace;font-size:12px">{{ item.qa_output_path or "—" }}</td></tr>
+        <tr><th>artifact_folder</th><td style="font-family:monospace">{{ item.artifact_folder or "—" }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" data-testid="cs-artifacts">
+  <div class="card-title">Artifacts</div>
+  {% if available_files %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Key</th><th>File</th><th>Preview</th></tr>
+      </thead>
+      <tbody>
+        {% for key, filename in available_files %}
+        <tr>
+          <td style="font-family:monospace">{{ key }}</td>
+          <td style="font-family:monospace;font-size:12px">{{ filename }}</td>
+          <td>
+            <a
+              href="/weeks/{{ item.content_id }}/file/{{ filename }}"
+              class="btn btn-ghost btn-sm"
+              data-testid="cs-file-preview"
+            >View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:11px;color:var(--text-dim);margin-top:10px">
+    File preview uses the existing Founder week file viewer (GET only).
+  </p>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px" data-testid="cs-no-artifacts">
+    No available artifacts reported by the Content Studio API.
+  </p>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="card" data-testid="cs-detail-empty">
+  <p style="color:var(--text-muted);font-size:13px">No detail payload available.</p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const jump = document.getElementById('cs-week-jump');
+  if (!jump) return;
+  fetch('/api/v1/content-studio/content', { method: 'GET' })
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(data => {
+      if (!data || data.ok !== true || !Array.isArray(data.items)) {
+        throw new Error('malformed');
+      }
+      const current = {{ content_id | tojson }};
+      data.items.forEach(item => {
+        const id = item.content_id;
+        if (!id) return;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id + (item.title ? ' — ' + item.title : '');
+        if (id === current) opt.selected = true;
+        jump.appendChild(opt);
+      });
+    })
+    .catch(() => {
+      /* keep jump empty; prev/next SSR links remain */
+    });
+  jump.addEventListener('change', () => {
+    if (jump.value) window.location.href = '/content-studio/' + encodeURIComponent(jump.value);
+  });
+})();
+</script>
+{% endblock %}

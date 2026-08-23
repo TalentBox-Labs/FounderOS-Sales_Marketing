@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Callable
 
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,50 @@ class StructuredLoggingMiddleware(BaseHTTPMiddleware):
             )
 
             return response
+
+        except ValueError as e:
+            # Production auth (_verify_api_key) raises HTTPException(401).
+            # Some callers/overrides still raise ValueError for bad credentials;
+            # map only those explicit messages to 401. Do NOT substring-match
+            # generic words like "key" (would misclassify validation errors).
+            duration_ms = (time.time() - start_time) * 1000
+            msg = str(e).strip()
+            auth_messages = {
+                "invalid key",
+                "unauthorized",
+                "invalid api key",
+                "invalid credentials",
+            }
+            if msg.lower() in auth_messages:
+                logger.warning(
+                    f"{method} {path} auth/credential error",
+                    extra={
+                        "method": method,
+                        "path": path,
+                        "duration_ms": round(duration_ms, 2),
+                        "error": msg,
+                        "error_type": type(e).__name__,
+                        "status_code": 401,
+                    },
+                )
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": msg or "Unauthorized"},
+                )
+            # Non-auth ValueError: re-raise so ExceptionMiddleware / callers
+            # handle it (avoid guessing 401/400 from free-form text).
+            logger.error(
+                f"{method} {path} raised exception",
+                extra={
+                    "method": method,
+                    "path": path,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": msg,
+                    "error_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
+            raise
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000

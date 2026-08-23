@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Activity — Founder OS{% endblock %}
+{% block topbar_title %}Activity{% endblock %}
+{% block topbar_meta %}What happened — commercial history for this workspace{% endblock %}
+
+{% block content %}
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="activity-unavailable">{{ snapshot.message }}</p>
+{% elif snapshot.state == 'empty' %}
+<p class="founder-empty" data-testid="activity-empty">{{ snapshot.message }}</p>
+{% else %}
+
+<div class="founder-card" data-testid="activity-timeline">
+  <div class="founder-card-title">Recent events</div>
+  {% for e in snapshot.events %}
+  <div class="founder-list-item" data-testid="activity-event">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <strong>{{ e.label }}</strong>
+      {% if e.status %}<span class="pill gray">{{ e.status }}</span>{% endif %}
+    </div>
+    <div class="founder-meta">
+      {{ e.created_at or '—' }}
+      {% if e.action_type %} · <span data-testid="activity-event-type">{{ e.action_type }}</span>{% endif %}
+      {% if e.source %} · {{ e.source }}{% endif %}
+      {% if e.actor %} · {{ e.actor }}{% endif %}
+      {% if e.authority_class == 'SYSTEM_RECOMMENDED' %} · system recommended{% endif %}
+      {% if e.authority_class == 'HUMAN_DECIDED' %} · human decided{% endif %}
+      {% if e.demand_source_label %} · {{ e.demand_source_label }}{% endif %}
+      {% if e.target_type and e.target_id %}
+      · {{ e.target_type }}
+      {% if e.target_type == 'contact' %}
+      <a href="/contacts/{{ e.target_id }}">{{ e.target_id[:8] }}…</a>
+      {% else %}
+      {{ e.target_id[:12] }}…
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

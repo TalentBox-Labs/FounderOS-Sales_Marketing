@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}SEO {{ slug }} — Founder OS{% endblock %}
+{% block topbar_title %}SEO · {{ slug }}{% endblock %}
+{% block topbar_meta %}Read-only detail · no fix / publish / index actions{% endblock %}
+
+{% block topbar_right %}
+  <a href="/seo" class="btn btn-ghost btn-sm">← All pages</a>
+{% endblock %}
+
+{% block content %}
+
+{% if api_error %}
+<div class="card" style="border-left:3px solid var(--red)">
+  <div class="card-title">Scan failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif not_found %}
+<div class="card" data-testid="seo-not-found">
+  <div class="card-title">Not found</div>
+  <p style="color:var(--text-muted);font-size:13px">No artifact for slug <code>{{ slug }}</code>.</p>
+</div>
+{% elif page %}
+
+<div class="card" style="margin-bottom:14px" data-testid="seo-page-summary">
+  <div class="card-title">{{ page.status }} · score {{ page.score }}</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0 0 8px">
+    {{ page.title or "(no title)" }}
+  </p>
+  <p style="color:var(--text-muted);font-size:12px;margin:0">
+    Canonical: {{ page.canonical_url or "—" }}
+    · Origin: {{ page.configured_origin }}
+  </p>
+</div>
+
+{% if page.domain_blockers %}
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)" data-testid="seo-blockers">
+  <div class="card-title">What prevents SEO-ready? (DOMAIN BLOCKERS)</div>
+  <ul style="margin:0;padding-left:18px;font-size:13px">
+    {% for b in page.domain_blockers %}
+    <li><strong>{{ b.id }}</strong> — {{ b.message }}
+      {% if b.recommendation %}<br><span style="color:var(--text-muted)">→ {{ b.recommendation }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if page.errors %}
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--red)" data-testid="seo-errors">
+  <div class="card-title">Errors</div>
+  <ul style="margin:0;padding-left:18px;font-size:13px">
+    {% for e in page.errors %}
+    <li><strong>{{ e.id }}</strong> — {{ e.message }}
+      {% if e.recommendation %}<br><span style="color:var(--text-muted)">→ {{ e.recommendation }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if page.warnings %}
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)" data-testid="seo-warnings">
+  <div class="card-title">Warnings</div>
+  <ul style="margin:0;padding-left:18px;font-size:13px">
+    {% for w in page.warnings %}
+    <li><strong>{{ w.id }}</strong> — {{ w.message }}
+      {% if w.recommendation %}<br><span style="color:var(--text-muted)">→ {{ w.recommendation }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card" data-testid="seo-checks">
+  <div class="card-title">All checks</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Status</th><th>Message</th></tr></thead>
+      <tbody>
+        {% for cid, c in page.checks.items() %}
+        <tr>
+          <td><code>{{ c.id }}</code></td>
+          <td>{{ c.status }}</td>
+          <td>{{ c.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

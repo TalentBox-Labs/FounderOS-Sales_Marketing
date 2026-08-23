@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Publishing Queue — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Publishing Engine{% endblock %}
+{% block topbar_meta %}Orchestration only · Architecture v2.1 · no website/social impl{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+  <div class="card-title">Boundaries</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Publishing Engine owns jobs, queue, channel routing, and audit.
+    Website Engine / Social Engine / Campaign Engine are not implemented here.
+  </p>
+</div>
+
+{% if api_error %}
+<div class="card" data-testid="publishing-queue-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% else %}
+
+<div class="card" data-testid="publishing-create" style="margin-bottom:14px">
+  <div class="card-title">Create publish job</div>
+  <div style="display:grid;gap:10px;max-width:520px">
+    <label style="font-size:12px">Bundle (content_id)
+      <input id="pub-bundle" data-testid="pub-bundle" type="text" placeholder="W99"
+             style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)" />
+    </label>
+    <label style="font-size:12px">Channel
+      <select id="pub-channel" data-testid="pub-channel"
+              style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+        {% for ch in channels %}
+        <option value="{{ ch.channel }}">{{ ch.channel }} ({{ ch.owner_engine }} · {{ ch.adapter }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="font-size:12px">Requested by (human)
+      <input id="pub-requester" data-testid="pub-requester" type="text" placeholder="Human name"
+             style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)" />
+    </label>
+    <label style="font-size:12px">Notes
+      <textarea id="pub-notes" data-testid="pub-notes" rows="2"
+                style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)"></textarea>
+    </label>
+    <button type="button" class="btn btn-primary btn-sm" data-testid="pub-create" id="pub-create">Create job</button>
+    <pre id="pub-create-result" data-testid="pub-create-result" style="display:none;font-size:12px;white-space:pre-wrap;background:var(--surface2);padding:10px;border-radius:var(--radius-sm)"></pre>
+  </div>
+</div>
+
+<div class="card" data-testid="publishing-queue">
+  <div class="card-title">Publish queue ({{ items|length }})</div>
+  {% if items %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>Bundle</th>
+          <th>Channel</th>
+          <th>Status</th>
+          <th>Retries</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr data-testid="publishing-queue-row">
+          <td style="font-family:monospace;font-size:12px">{{ item.job_id }}</td>
+          <td style="font-family:monospace">{{ item.bundle_id }}</td>
+          <td>{{ item.channel }}</td>
+          <td><span class="pill blue">{{ item.state }}</span></td>
+          <td>{{ item.retry_count or 0 }}</td>
+          <td><a class="btn btn-ghost btn-sm" href="/publishing/{{ item.job_id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px" data-testid="publishing-queue-empty">
+    No publish jobs yet. Create one for an editorially approved bundle.
+  </p>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const resultEl = document.getElementById("pub-create-result");
+  document.getElementById("pub-create").addEventListener("click", async function () {
+    const body = {
+      content_id: (document.getElementById("pub-bundle").value || "").trim(),
+      channel: (document.getElementById("pub-channel").value || "").trim(),
+      requested_by: (document.getElementById("pub-requester").value || "").trim(),
+      notes: (document.getElementById("pub-notes").value || "").trim(),
+    };
+    resultEl.style.display = "block";
+    resultEl.textContent = "Creating…";
+    try {
+      const res = await fetch("/api/v1/publishing/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        resultEl.textContent = "Error " + res.status + ": " + (data.detail || JSON.stringify(data));
+        return;
+      }
+      window.location.href = "/publishing/" + data.job_id;
+    } catch (err) {
+      resultEl.textContent = String(err);
+    }
+  });
+})();
+</script>
+
+{% endif %}
+
+{% endblock %}

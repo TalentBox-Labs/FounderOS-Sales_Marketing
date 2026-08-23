@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}People — Founder OS{% endblock %}
+{% block topbar_title %}People{% endblock %}
+{% block topbar_meta %}Demand intake and people in this workspace{% endblock %}
+
+{% block topbar_right %}
+  <a href="/operator/demand/register" class="btn btn-primary btn-sm" data-testid="register-demand-link">Register demand</a>
+{% endblock %}
+
+{% block content %}
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="demand-unavailable">{{ snapshot.message }}</p>
+{% endif %}
+
+<p class="founder-meta" data-testid="people-spine-intro" style="margin-bottom:16px">
+  New demand waits for an intake decision. Accepted people open a workspace for research, outreach, replies, and meetings.
+</p>
+
+<div class="founder-card" style="margin-bottom:18px" data-testid="demand-pending">
+  <div class="founder-card-title">Pending demand</div>
+  {% if not snapshot.pending_demands %}
+    <p class="founder-empty">No demand awaiting intake decision</p>
+  {% else %}
+    {% for d in snapshot.pending_demands %}
+    <div class="founder-list-item" data-testid="demand-pending-item" data-demand-id="{{ d.demand_id }}">
+      <strong>{{ d.name or d.email or d.demand_id }}</strong>
+      <div class="founder-meta">
+        {{ d.email }}
+        · {{ d.source_label or d.source or 'Source not stored' }}
+        · {{ d.registered_at or '—' }}
+        {% if d.company_hint_name %} · {{ d.company_hint_name }}{% endif %}
+      </div>
+      <div class="founder-meta">
+        <span class="pill amber" data-testid="demand-decision-state">{{ d.human_decision_label or 'Needs your decision' }}</span>
+        <span class="pill gray">{{ d.qualification_state_label or 'System recommended' }}</span>
+      </div>
+      <div class="founder-meta" data-testid="demand-why-it-matters"><strong>Why it matters:</strong> {{ d.why_it_matters }}</div>
+      {% if d.signals %}
+      <div class="founder-meta" data-testid="demand-signals">Signals: {{ d.signals | join(' · ') }}</div>
+      {% elif d.qualification_reason_missing %}
+      <div class="founder-meta" data-testid="demand-signals">No extra stored signals</div>
+      {% endif %}
+      <div class="founder-meta" data-testid="demand-what-happens-next"><strong>What happens next:</strong> {{ d.what_happens_next }}</div>
+      {% if d.workspace_context %}
+      <div class="founder-meta">Workspace: {{ d.workspace_context }}</div>
+      {% endif %}
+      <div style="margin-top:8px">
+        <a href="/operator#stage-demand" class="btn btn-primary btn-sm">Review intake →</a>
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="founder-card" data-testid="contacts-list">
+  <div class="founder-card-title">People</div>
+  {% if not snapshot.contacts %}
+    <p class="founder-empty">No people yet — accept demand or register new demand</p>
+  {% else %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Person</th><th>Company</th><th>State</th><th>Score</th><th>Why it matters</th><th>Next</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for c in snapshot.contacts %}
+          <tr data-testid="contact-row" data-contact-id="{{ c.id }}">
+            <td>{{ c.name or '—' }}<div class="founder-meta">{{ c.email or '—' }}</div></td>
+            <td>{{ c.company_name or '—' }}</td>
+            <td><span class="pill gray">{{ c.status }}</span></td>
+            <td>{{ c.lead_score }}</td>
+            <td>{{ c.attention_reason or '—' }}</td>
+            <td>{{ c.next_action_label or 'Open workspace' }}</td>
+            <td><a href="/contacts/{{ c.id }}" class="btn btn-ghost btn-sm">Open workspace →</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

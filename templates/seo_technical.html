@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Technical SEO — Founder OS{% endblock %}
+{% block topbar_title %}Technical SEO Engine{% endblock %}
+{% block topbar_meta %}S2 Phase 1 · read-only · Production SEO BLOCKED{% endblock %}
+
+{% block topbar_right %}
+  <a href="/seo" class="btn btn-ghost btn-sm">Readiness</a>
+  <span class="pill amber">Activation blocked</span>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber)">
+  <div class="card-title">Boundaries</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Technical SEO inspects Website Engine artifacts only.
+    No fix, rewrite, publish, index, submit, or internet crawl.
+    S1 readiness contract remains frozen and unchanged.
+  </p>
+</div>
+
+{% if api_error %}
+<div class="card" style="border-left:3px solid var(--red)">
+  <div class="card-title">Scan failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif report %}
+
+<div class="card" style="margin-bottom:14px" data-testid="tech-seo-summary">
+  <div class="card-title">Site status: {{ report.status }} · score {{ report.score }}</div>
+  <p style="color:var(--text-muted);font-size:13px;margin:0">
+    Pages: {{ report.page_count }} · Origin: {{ report.configured_origin }}
+    · Site findings: {{ report.site_findings|length }}
+  </p>
+</div>
+
+{% if report.site_findings %}
+<div class="card" style="margin-bottom:14px" data-testid="tech-seo-site-findings">
+  <div class="card-title">Site-wide findings</div>
+  <ul style="margin:0;padding-left:18px;font-size:13px">
+    {% for f in report.site_findings %}
+    {% if f.severity not in ['PASS', 'NOT_APPLICABLE'] %}
+    <li><strong>{{ f.severity }}</strong> · {{ f.category }} · <code>{{ f.id }}</code> — {{ f.message }}</li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card" data-testid="tech-seo-pages">
+  <div class="card-title">Pages</div>
+  {% if report.pages %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Status</th>
+          <th>Score</th>
+          <th>Crawlable</th>
+          <th>Blockers</th>
+          <th>Critical</th>
+          <th>Errors</th>
+          <th>Warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in report.pages %}
+        <tr>
+          <td>{{ p.slug }}</td>
+          <td>{{ p.status }}</td>
+          <td>{{ p.score }}</td>
+          <td>{{ p.crawlable }}</td>
+          <td>{{ p.domain_blockers|length }}</td>
+          <td>{{ p.critical|length }}</td>
+          <td>{{ p.errors|length }}</td>
+          <td>{{ p.warnings|length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px">No page artifacts found.</p>
+  {% endif %}
+</div>
+
+{% endif %}
+
+{% endblock %}
