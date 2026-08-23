@@ -290,7 +290,7 @@ def test_mc04_5_accept_still_required(
     assert not any(log.action_type == "qualified_demand_accepted" for log in db.logs)
 
 
-def test_jinja_shell_not_react(client: TestClient) -> None:
+def test_jinja_shell_not_react(client: TestClient, operator_env: None) -> None:
     r = client.get("/operator/demand/register")
     assert r.status_code == 200
     assert "Founder OS" in r.text

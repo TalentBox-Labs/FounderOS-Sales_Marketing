@@ -217,8 +217,12 @@ def test_founder_routes_load(client: TestClient, monkeypatch: pytest.MonkeyPatch
         assert r.status_code == 200, path
 
 
-def test_command_center_page(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("runner_api_routers.ui.founder_login_redirect", lambda _r: None)
+def test_command_center_page(
+    client: TestClient, tenant_db: sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = _seed_tenants(tenant_db)
+    monkeypatch.setenv("FOUNDER_OS_REQUIRE_LOGIN", "0")
+    _login(client, "owner-a@example.com", "pass-a", ids["org_a"])
     r = client.get("/command")
     assert "Command Center" in r.text
     assert 'data-testid="command-approvals"' in r.text
