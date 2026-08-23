@@ -48,7 +48,7 @@ class TaskResponse(BaseModel):
     title: str
     description: Optional[str] = None
     assigned_to: Optional[uuid.UUID] = None
-    created_by: uuid.UUID
+    created_by: Optional[uuid.UUID] = None
     assignee_name: Optional[str] = None
     creator_name: Optional[str] = None
     priority: TaskPriority

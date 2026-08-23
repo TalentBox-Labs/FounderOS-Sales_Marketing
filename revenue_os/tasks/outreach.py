@@ -138,7 +138,7 @@ def process_outreach_sequences(self):
     """Beat task: runs every 30 min, advances sequences based on engagement."""
     from sqlalchemy.orm import Session
     from revenue_os.database import SessionLocal
-    from revenue_os.models.activity import SequenceStep, OutreachSequence
+    from revenue_os.models.activity import OutreachSequence
     from revenue_os.models.sequence_enrollment import SequenceEnrollment
     from revenue_os.services.email_composer import compose as compose_email
     from revenue_os.services.enrichment_service import build_prospect_profile
@@ -155,72 +155,59 @@ def process_outreach_sequences(self):
 
         processed = 0
         switch_to_linkedin = 0
-        for seq in sequences:
-            steps = (
-                db.query(SequenceStep)
-                .filter(SequenceStep.sequence_id == seq.id)
-                .order_by(SequenceStep.step_order)
-                .all()
+
+        from revenue_os.models.activity import Activity as ActModel
+
+        pending = (
+            db.query(ActModel)
+            .filter(
+                ActModel.activity_type == ActivityType.EMAIL,
+                ActModel.status == "pending",
             )
-            if not steps:
+            .filter(ActModel.scheduled_at <= now)
+            .all()
+        )
+
+        for activity in pending:
+            if not activity.contact_id:
+                continue
+            profile = build_prospect_profile(db, str(activity.contact_id))
+            if "error" in profile:
+                continue
+            composed = compose_email(profile)
+            contact_email = profile.get("contact", {}).get("email")
+            if not contact_email:
                 continue
 
+            body_text = f"{composed.get('hook', '')}\n\n{composed.get('body', '')}"
+            body_html = body_text.replace("\n", "<br>\n")
+            domain = settings.TRACKING_DOMAIN.rstrip("/")
+
+            from revenue_os.services.gmail_client import inject_tracking
+
+            body_html = inject_tracking(body_html, str(activity.id), domain)
             try:
-                conditions = json.loads(steps[0].conditions or "{}")
-            except (json.JSONDecodeError, TypeError):
-                conditions = {}
-
-            from revenue_os.models.activity import Activity as ActModel
-
-            pending = (
-                db.query(ActModel)
-                .filter(
-                    ActModel.activity_type == ActivityType.EMAIL,
-                    ActModel.status == "pending",
+                from revenue_os.services.gmail_client import send_email
+                result = send_email(
+                    to=contact_email,
+                    subject=composed.get("subject", ""),
+                    body_text=body_text,
+                    body_html=body_html,
                 )
-                .filter(ActModel.scheduled_at <= now)
-                .all()
-            )
+                activity.status = "sent"
 
-            for activity in pending:
-                if not activity.contact_id:
-                    continue
-                profile = build_prospect_profile(db, str(activity.contact_id))
-                if "error" in profile:
-                    continue
-                composed = compose_email(profile)
-                contact_email = profile.get("contact", {}).get("email")
-                if not contact_email:
-                    continue
+                email_activity = EmailActivity(
+                    activity_id=activity.id,
+                    message_id=result.get("message_id"),
+                    from_address=result.get("from_address", ""),
+                    to_addresses=contact_email,
+                )
+                db.add(email_activity)
+                processed += 1
+            except Exception:
+                activity.status = "failed"
 
-                body_text = f"{composed.get('hook', '')}\n\n{composed.get('body', '')}"
-                body_html = body_text.replace("\n", "<br>\n")
-                domain = settings.TRACKING_DOMAIN.rstrip("/")
-
-                from revenue_os.services.gmail_client import inject_tracking
-
-                body_html = inject_tracking(body_html, str(activity.id), domain)
-                try:
-                    from revenue_os.services.gmail_client import send_email
-                    result = send_email(
-                        to=contact_email,
-                        subject=composed.get("subject", ""),
-                        body_text=body_text,
-                        body_html=body_html,
-                    )
-                    activity.status = "sent"
-
-                    email_activity = EmailActivity(
-                        activity_id=activity.id,
-                        message_id=result.get("message_id"),
-                        from_address=contact_email,
-                        to_addresses=contact_email,
-                    )
-                    db.add(email_activity)
-                    processed += 1
-                except Exception:
-                    activity.status = "failed"
-
+        for seq in sequences:
             # ── LinkedIn channel-switching ──
             # Check enrollments with low engagement after 3 email steps
             enrollments = (

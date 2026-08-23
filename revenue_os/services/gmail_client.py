@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -41,6 +42,16 @@ def _get_credentials():
                 raise FileNotFoundError(
                     f"Gmail credentials not found at {creds_path}. "
                     "Set GMAIL_CREDENTIALS_PATH in .env"
+                )
+            if not sys.stdin.isatty():
+                raise RuntimeError(
+                    f"No valid Gmail token at {token_path} and this process is "
+                    "non-interactive (worker/beat), so the browser OAuth flow "
+                    "can't run here. Generate the token once from an interactive "
+                    "shell (e.g. `python -c \"from revenue_os.services.gmail_client "
+                    "import _get_credentials; _get_credentials()\"`) and make sure "
+                    f"the resulting {os.path.basename(token_path)} is available at "
+                    "that path in this environment."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -112,10 +123,13 @@ def send_email(
         .execute()
     )
 
+    profile = service.users().getProfile(userId="me").execute()
+
     return {
         "message_id": sent.get("id"),
         "thread_id": sent.get("threadId"),
         "label_ids": sent.get("labelIds", []),
+        "from_address": profile.get("emailAddress", ""),
     }
 
 

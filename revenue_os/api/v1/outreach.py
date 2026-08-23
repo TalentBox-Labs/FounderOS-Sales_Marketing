@@ -185,7 +185,7 @@ def send_personalized_email(
     email_activity = EmailActivity(
         activity_id=activity.id,
         message_id=result.get("message_id"),
-        from_address=contact.get("email"),
+        from_address=result.get("from_address", ""),
         to_addresses=to_email,
     )
     db.add(email_activity)

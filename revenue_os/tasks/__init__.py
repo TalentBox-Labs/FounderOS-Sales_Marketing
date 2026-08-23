@@ -12,6 +12,7 @@ celery_app = Celery(
         "revenue_os.tasks.leads",
         "revenue_os.tasks.outreach",
         "revenue_os.tasks.agents",
+        "revenue_os.tasks.email_sync",
     ],
 )
 

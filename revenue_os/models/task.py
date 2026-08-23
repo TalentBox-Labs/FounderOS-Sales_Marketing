@@ -42,7 +42,7 @@ class Task(Base):
     description = Column(Text)
 
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
     priority = Column(Enum(TaskPriority), default=TaskPriority.NONE)
     status = Column(Enum(TaskStatus), default=TaskStatus.NOT_STARTED)

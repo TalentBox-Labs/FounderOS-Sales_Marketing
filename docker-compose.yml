@@ -45,7 +45,7 @@ services:
 
   worker:
     build: .
-    command: celery -A revenue_os.tasks worker --loglevel=info
+    command: celery -A revenue_os.tasks:celery_app worker --loglevel=info
     environment:
       DATABASE_URL: postgresql://cyril.s.thomas:${POSTGRES_PASSWORD:-postgres}@db:5432/revenue_os
       REDIS_URL: redis://redis:6379/0
@@ -57,7 +57,7 @@ services:
 
   beat:
     build: .
-    command: celery -A revenue_os.tasks beat --loglevel=info
+    command: celery -A revenue_os.tasks:celery_app beat --loglevel=info
     environment:
       DATABASE_URL: postgresql://cyril.s.thomas:${POSTGRES_PASSWORD:-postgres}@db:5432/revenue_os
       REDIS_URL: redis://redis:6379/0

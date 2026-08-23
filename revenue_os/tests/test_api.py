@@ -80,6 +80,7 @@ class TestAuth:
         assert data["email"] == email
 
     def test_login(self, client):
+        _login(client)  # ensure test@example.com exists before logging in
         r = client.post("/api/v1/auth/login", json={
             "email": "test@example.com",
             "password": "testpass123",

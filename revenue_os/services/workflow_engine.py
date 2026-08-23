@@ -94,7 +94,7 @@ def execute_action(
             title=title,
             description=config.get("description", "").format(**context),
             assigned_to=uuid.UUID(assigned_to) if assigned_to and isinstance(assigned_to, str) else None,
-            created_by=current_user_id or uuid.uuid4(),
+            created_by=current_user_id,
             priority=priority,
             related_entity_type=config.get("related_type"),
             related_entity_id=context.get("entity_id"),
