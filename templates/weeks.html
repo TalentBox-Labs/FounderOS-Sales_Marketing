@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Content Calendar — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Content Calendar{% endblock %}
+{% block topbar_meta %}All content weeks and pipeline status{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-title">
+    📅 Content Weeks
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <select id="filter-status" onchange="filterTable()" style="padding:4px 8px;font-size:12px">
+        <option value="">All statuses</option>
+        <option value="QA Passed">QA Passed</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Publish Review">Publish Review</option>
+        <option value="Draft">Draft</option>
+        <option value="Not Started">Not Started</option>
+        <option value="published">published</option>
+        <option value="draft">draft</option>
+      </select>
+      <a href="/pipeline" class="btn btn-primary btn-sm">⚡ Run Pipeline</a>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="week-table">
+      <thead>
+        <tr>
+          <th>Week</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>QA</th>
+          <th>Pipeline Stage</th>
+          <th>Artifacts</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in weeks %}
+        <tr data-status="{{ row.status }}">
+          <td>
+            <a href="/weeks/{{ row.content_id }}" style="font-weight:600;font-family:monospace;font-size:13px">
+              {{ row.content_id }}
+            </a>
+          </td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ row.title or "—" }}
+          </td>
+          <td>
+            {% set s = row.status | lower %}
+            {% if "pass" in s or "complete" in s or "published" in s %}
+              <span class="pill green">{{ row.status }}</span>
+            {% elif "review" in s or "progress" in s %}
+              <span class="pill amber">{{ row.status }}</span>
+            {% elif "draft" in s %}
+              <span class="pill blue">{{ row.status }}</span>
+            {% else %}
+              <span class="pill gray">{{ row.status or "—" }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.qa_status == "PASS" %}
+              <span class="pill green">✓ PASS</span>
+            {% elif row.qa_status == "FAIL" %}
+              <span class="pill red">✗ FAIL</span>
+            {% else %}
+              <span class="pill gray">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="pipeline">
+              {% for step in row.pipeline_steps %}
+                <span class="pipe-step {{ step.state }}">{{ step.label }}</span>
+                {% if not loop.last %}<span class="pipe-sep">›</span>{% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            <div style="display:flex;gap:4px">
+              {% if row.has_draft %}<span title="Draft" style="font-size:13px">📝</span>{% endif %}
+              {% if row.has_final %}<span title="Final" style="font-size:13px">📄</span>{% endif %}
+              {% if row.has_qa %}<span title="QA Report" style="font-size:13px">✅</span>{% endif %}
+              {% if row.has_checklist %}<span title="Checklist" style="font-size:13px">☑️</span>{% endif %}
+            </div>
+          </td>
+          <td>
+            <div style="display:flex;gap:6px">
+              <a href="/weeks/{{ row.content_id }}" class="btn btn-ghost btn-sm">View</a>
+              <button class="btn btn-primary btn-sm"
+                onclick="runWeek('{{ row.content_id }}')">▶ Run</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterTable() {
+  const status = document.getElementById('filter-status').value.toLowerCase();
+  document.querySelectorAll('#week-table tbody tr').forEach(row => {
+    const rowStatus = (row.dataset.status || '').toLowerCase();
+    row.style.display = (!status || rowStatus.includes(status) || rowStatus === status) ? '' : 'none';
+  });
+}
+async function runWeek(weekId) {
+  if (!confirm('Run pipeline for ' + weekId + '?')) return;
+  try {
+    const r = await fetch('/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({week: weekId})
+    });
+    const data = await r.json();
+    alert(data.ok ? 'Pipeline started for ' + weekId : 'Failed: ' + (data.detail || 'unknown'));
+  } catch (e) {
+    alert('Request failed: ' + e);
+  }
+}
+</script>
+{% endblock %}

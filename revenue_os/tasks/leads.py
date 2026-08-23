@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from revenue_os.database import SessionLocal
-from revenue_os.models.contact import Contact, ContactStatus
+from revenue_os.models.contact import Contact
 from revenue_os.services.scoring_service import score_contact
 
 from . import celery_app
@@ -16,10 +16,6 @@ def enrich_lead(self, contact_id: str) -> dict:
             return {"error": "contact not found"}
 
         score = score_contact(db, contact.id)
-
-        if score >= 50 and contact.status == ContactStatus.LEAD:
-            contact.status = ContactStatus.QUALIFIED
-            db.commit()
 
         return {
             "contact_id": contact_id,

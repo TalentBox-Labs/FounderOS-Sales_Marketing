@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 
 from revenue_os.models.base import Base
 
@@ -30,6 +31,7 @@ class AgentActionLog(Base):
     target_id = Column(String(64), nullable=True)
     status = Column(String(32), nullable=False, default="completed")  # completed, failed, skipped
     detail = Column(JSON, nullable=True)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
     def to_dict(self) -> dict:

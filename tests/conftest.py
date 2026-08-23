@@ -57,16 +57,22 @@ def mock_crew_run(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def fake_active_content() -> dict[str, str]:
-    """Fake tracker row for testing."""
+def fake_active_content(tmp_path: Path) -> dict[str, str]:
+    """Fake tracker row; materializes a draft under tmp_path for crew unit tests."""
+    draft = tmp_path / "input" / "W99" / "04_Draft.md"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text("# Draft\n\nTest article body for crew unit tests.\n" * 5)
+
     return {
         "content_id": "W99",
         "title": "Test Content",
         "current_step": "Generation",
         "next_step": "QA",
         "draft_path": "input/W99/04_Draft.md",
+        "final_path": "input/W99/05_Final.md",
         "qa_output_path": "output/qa_reports/W99_QA.md",
         "week": "W99",
+        "artifact_folder": "W99",
     }
 
 
@@ -90,17 +96,29 @@ def fake_runtime_config() -> dict[str, str]:
 
 @pytest.fixture
 def fake_yaml_config() -> dict[str, dict]:
-    """Fake YAML agent/task configuration."""
+    """Fake YAML agent/task configuration (covers QA + generation key names)."""
+    agent = {
+        "role": "Test Agent",
+        "goal": "Test goal",
+        "backstory": "Test backstory",
+    }
+    task = {
+        "description": "Test task description",
+        "expected_output": "Test expected output",
+    }
     return {
-        "test_agent": {
-            "role": "Test Agent",
-            "goal": "Test goal",
-            "backstory": "Test backstory",
-        },
-        "test_task": {
-            "description": "Test task description",
-            "expected_output": "Test expected output",
-        },
+        "test_agent": agent,
+        "test_task": task,
+        "qa_agent": agent,
+        "qa_review_task": task,
+        "strategist_agent": agent,
+        "seo_agent": agent,
+        "research_agent": agent,
+        "writer_agent": agent,
+        "strategist_task": task,
+        "seo_task": task,
+        "research_task": task,
+        "writer_task": task,
     }
 
 
@@ -109,32 +127,61 @@ def fake_yaml_config() -> dict[str, dict]:
 
 @pytest.fixture
 def patch_csv_reader(monkeypatch: pytest.MonkeyPatch, fake_active_content):
-    """Patch CSV reader to return fake content."""
+    """Patch CSV reader to return fake content (including import-bound names)."""
+    import importlib
+
     def fake_get_active_content(content_id: str | None = None):
         return fake_active_content
 
     from src.tools import csv_reader
+
     monkeypatch.setattr(csv_reader, "get_active_content", fake_get_active_content)
+    # Crews bind ``from src.tools.csv_reader import get_active_content`` at import time.
+    for mod_name in (
+        "src.qa_crew",
+        "src.generation_crew",
+        "src.editor_crew",
+        "src.artifact_crew",
+        "src.distribution_crew",
+    ):
+        mod = importlib.import_module(mod_name)
+        if hasattr(mod, "get_active_content"):
+            monkeypatch.setattr(mod, "get_active_content", fake_get_active_content)
 
 
 @pytest.fixture
 def patch_runtime_config(monkeypatch: pytest.MonkeyPatch, fake_runtime_config):
-    """Patch runtime config loader."""
+    """Patch runtime config loader (including import-bound names)."""
+    import importlib
+
     def fake_load_runtime_config():
         return fake_runtime_config
 
-    from src.tools import runtime_paths
+    from src.tools import runtime_paths, csv_reader
+
     monkeypatch.setattr(runtime_paths, "load_runtime_config", fake_load_runtime_config)
+    monkeypatch.setattr(csv_reader, "load_runtime_config", fake_load_runtime_config)
+    for mod_name in (
+        "src.qa_crew",
+        "src.generation_crew",
+        "src.editor_crew",
+        "src.tools.runtime_paths",
+    ):
+        mod = importlib.import_module(mod_name)
+        if hasattr(mod, "load_runtime_config"):
+            monkeypatch.setattr(mod, "load_runtime_config", fake_load_runtime_config)
 
 
 @pytest.fixture
 def patch_yaml_loader(monkeypatch: pytest.MonkeyPatch, fake_yaml_config):
-    """Patch YAML loader."""
-    def fake_load_yaml(path: str):
+    """Patch BaseCrew YAML loader (instance method ``_load_yaml``)."""
+
+    def fake_load_yaml(self, path: str):
         return fake_yaml_config
 
-    from src import base_crew
-    monkeypatch.setattr(base_crew, "load_yaml", fake_load_yaml)
+    from src.base_crew import BaseCrew
+
+    monkeypatch.setattr(BaseCrew, "_load_yaml", fake_load_yaml)
 
 
 # ── Temporary Directory Utilities ────────────────────────────────────────────

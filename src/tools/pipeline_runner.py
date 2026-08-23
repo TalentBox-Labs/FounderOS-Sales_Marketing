@@ -94,6 +94,15 @@ def run_pipeline() -> None:
     print(f"\n{week} is ready for human publish review (tracker updated).")
 
 
+def run_qa_agent(output_path: str | None = None) -> str:
+    """Run optional CrewAI QA via BaseCrew ``QACrew`` (production entrypoint).
+
+    ``src.crew.run_qa_agent`` is the legacy procedural path; pipeline uses this
+    wrapper so callers and tests share one module-level hook.
+    """
+    return QACrew().run_qa_agent(output_path=output_path)
+
+
 def _maybe_run_crewai_qa() -> None:
     """
     Optional Phase 2 QA artifact generation (soft-fail, non-blocking).
@@ -109,8 +118,7 @@ def _maybe_run_crewai_qa() -> None:
     out_path = f"{qa_dir.rstrip('/')}/{week}_CrewAI_QA.md"
 
     try:
-        crew = QACrew()
-        crew.run_qa_agent(output_path=out_path)
+        run_qa_agent(output_path=out_path)
     except Exception as e:  # soft-fail by design
         print(
             f"WARNING: CrewAI QA failed (soft continue): {e}",

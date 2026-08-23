@@ -211,7 +211,8 @@
               </td>
               {% endfor %}
               <td>
-                <a href="/marketing/run/{{ run.slug }}" class="btn btn-ghost btn-sm">View</a>
+                {# R1C: no /marketing/run/{slug} HTML route — do not invent a detail page #}
+                <span style="font-size:11px;color:var(--text-muted)">{{ run.slug }}</span>
               </td>
             </tr>
             {% endfor %}

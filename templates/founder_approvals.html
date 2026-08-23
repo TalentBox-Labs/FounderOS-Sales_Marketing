@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Approvals — Founder OS{% endblock %}
+{% block topbar_title %}Approval Inbox{% endblock %}
+{% block topbar_meta %}Governed actions requiring your decision{% endblock %}
+
+{% block content %}
+{% if snapshot.state == 'unavailable' %}
+<p class="founder-empty" data-testid="approvals-unavailable">{{ snapshot.message }}</p>
+{% else %}
+
+<div class="founder-card" style="margin-bottom:18px" data-testid="approvals-pending">
+  <div class="founder-card-title">Pending ({{ snapshot.pending_count }})</div>
+  {% if not snapshot.pending %}
+    <p class="founder-empty">No pending approvals</p>
+  {% else %}
+    {% for item in snapshot.pending %}
+    <div class="founder-list-item" data-approval-id="{{ item.id }}" data-testid="approval-item">
+      {% if item.action_type == 'book_meeting' %}
+      <span class="pill blue">Meeting booking</span>
+      {% endif %}
+      <strong>{{ item.title or 'Approval request' }}</strong>
+      <div class="founder-meta">{{ item.action_label or item.action_type or 'unknown' }}{% if item.description %} · {{ item.description[:120] }}{% endif %}</div>
+      {% if item.action_type == 'book_meeting' and item.booking_display %}
+      {% set bd = item.booking_display %}
+      <div class="founder-meta" data-testid="approval-booking-slot">
+        Suggested: {{ bd.slot_start_display }} · {{ bd.duration_minutes or 30 }} min · {{ bd.timezone }}
+      </div>
+      {% if bd.purpose %}<div class="founder-meta">{{ bd.purpose[:160] }}</div>{% endif %}
+      <div class="founder-meta"><span class="pill gray">{{ bd.proposal_source or bd.requested_by_label or item.proposal_source_label or 'Proposal' }}</span> · Your decision is required</div>
+      {% elif item.requires_human_decision %}
+      <div class="founder-meta">Your decision is required. AI cannot complete this on its own.</div>
+      {% endif %}
+      {% if item.target_id %}
+      <div class="founder-meta"><a href="/contacts/{{ item.target_id }}">Open person workspace →</a></div>
+      {% endif %}
+      {% if operator.configured %}
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button type="button" class="btn btn-primary btn-sm" data-testid="approve-btn"
+          onclick="decideApproval('{{ item.id }}', true)">{% if item.action_type == 'book_meeting' %}Approve booking{% else %}Approve{% endif %}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-testid="reject-btn"
+          onclick="decideApproval('{{ item.id }}', false)">{% if item.action_type == 'book_meeting' %}Reject booking{% else %}Reject{% endif %}</button>
+      </div>
+      {% else %}
+      <p class="founder-meta">Sign in as a human operator to approve or reject</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="founder-card" data-testid="approvals-recent">
+  <div class="founder-card-title">Recent decisions</div>
+  {% if not snapshot.recent %}
+    <p class="founder-empty">No recent decisions</p>
+  {% else %}
+    {% for item in snapshot.recent[:15] %}
+    {% if item.status != 'pending' %}
+    <div class="founder-list-item">
+      <span class="pill {% if item.status == 'approved' %}green{% elif item.status == 'rejected' %}red{% else %}gray{% endif %}">{{ item.status }}</span>
+      <strong>{{ item.title or item.id }}</strong>
+      <div class="founder-meta">{{ item.decided_at or item.created_at or '—' }}</div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="founder-card" style="margin-top:18px;border-left:3px solid var(--accent)">
+  <div class="founder-card-title">Workflow</div>
+  <p class="founder-meta">Research → AI draft → <strong>Your approval</strong> → Send → Follow-up → Reply → Booking. No outbound action without approval.</p>
+</div>
+
+<pre id="approval-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function decideApproval(id, approve) {
+  if (!confirm(approve ? 'Approve this action?' : 'Reject this action?')) return;
+  const path = `/api/v1/approvals/${id}/${approve ? 'approve' : 'reject'}`;
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({}),
+  });
+  const data = await r.json().catch(() => ({}));
+  const el = document.getElementById('approval-action-result');
+  el.style.display = 'block';
+  const msg = r.ok ? (approve ? 'Approved' : 'Rejected') : ('Failed: ' + (data.detail || r.status));
+  el.textContent = msg;
+  if (typeof showToast === 'function') showToast(msg, r.ok);
+  if (r.ok) setTimeout(() => location.reload(), 800);
+}
+</script>
+{% endblock %}

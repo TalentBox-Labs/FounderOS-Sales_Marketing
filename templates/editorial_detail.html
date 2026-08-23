@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}{{ content_id }} — Editorial Approval — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Editorial Approval · {{ content_id }}{% endblock %}
+{% block topbar_meta %}Human decision · phase-scoped promote · not publish{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+  <a href="/editorial" class="btn btn-ghost btn-sm">← Pending queue</a>
+{% endblock %}
+
+{% block content %}
+
+{% if api_error %}
+<div class="card" data-testid="editorial-detail-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+</div>
+{% elif not_found %}
+<div class="card" data-testid="editorial-not-found" style="border-left:3px solid var(--amber)">
+  <div class="card-title">Content not found</div>
+  <p style="color:var(--text-muted);font-size:13px">
+    No editorial item for <code>{{ content_id }}</code>.
+  </p>
+  <p style="margin-top:12px">
+    <a href="/editorial" class="btn btn-primary btn-sm">Back to pending</a>
+  </p>
+</div>
+{% elif item %}
+
+<div class="card" data-testid="editorial-detail">
+  <div class="card-title">Bundle</div>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><th style="width:180px">content_id</th><td style="font-family:monospace">{{ item.content_id }}</td></tr>
+        <tr><th>title</th><td>{{ item.title or "—" }}</td></tr>
+        <tr><th>editorial_state</th><td><span class="pill blue">{{ item.editorial_state }}</span></td></tr>
+        <tr><th>phase</th><td style="font-family:monospace">{{ item.phase }}</td></tr>
+        <tr><th>bundle</th><td style="font-family:monospace;font-size:12px">{{ item.bundle }}</td></tr>
+        <tr><th>staging</th><td>{{ item.staging_root or "—" }}</td></tr>
+        <tr><th>authorizes_publish</th><td>false (FDR-003)</td></tr>
+        <tr><th>Content Studio</th><td><a href="{{ item.content_studio_path }}">{{ item.content_studio_path }}</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" data-testid="editorial-artifacts">
+  <div class="card-title">Existing artifacts (read-only)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px">
+    {% for key, present in item.artifacts.items() %}
+      <span class="pill {% if present %}blue{% else %}gray{% endif %}">{{ key }}: {{ "yes" if present else "no" }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+{% if item.readiness %}
+<div class="card" data-testid="editorial-readiness">
+  <div class="card-title">Readiness (observational)</div>
+  <p style="font-size:13px;color:var(--text-muted)">
+    summary: <code>{{ item.readiness.readiness_summary or "—" }}</code>
+    · validation_passed: <code>{{ item.readiness.validation_passed }}</code>
+  </p>
+</div>
+{% endif %}
+
+<div class="card" data-testid="editorial-decision">
+  <div class="card-title">Decision</div>
+  <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+    Approver must be a human name. Approve runs phase-scoped promote only — never publish.
+  </p>
+  <div style="display:grid;gap:10px;max-width:520px">
+    <label style="font-size:12px">
+      Approver
+      <input id="ea-approver" data-testid="ea-approver" type="text" placeholder="Human name"
+             style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)" />
+    </label>
+    <label style="font-size:12px">
+      Notes
+      <textarea id="ea-notes" data-testid="ea-notes" rows="3" placeholder="Approval notes"
+                style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)"></textarea>
+    </label>
+    <label style="font-size:12px">
+      Phase (optional override)
+      <select id="ea-phase" data-testid="ea-phase"
+              style="display:block;width:100%;margin-top:4px;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+        <option value="">Suggested: {{ item.phase }}</option>
+        <option value="2a">2a</option>
+        <option value="2b">2b</option>
+        <option value="3">3</option>
+      </select>
+    </label>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+      <button type="button" class="btn btn-primary btn-sm" data-testid="ea-approve"
+              data-action="approve" {% if not item.can_approve %}disabled{% endif %}>Approve</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-testid="ea-reject"
+              data-action="reject">Reject</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-testid="ea-request-changes"
+              data-action="request-changes">Request changes</button>
+    </div>
+    <pre id="ea-result" data-testid="ea-result" style="display:none;font-size:12px;white-space:pre-wrap;background:var(--surface2);padding:10px;border-radius:var(--radius-sm)"></pre>
+  </div>
+</div>
+
+<div class="card" data-testid="editorial-audit">
+  <div class="card-title">Audit trail</div>
+  {% if item.audit %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Decision</th>
+          <th>Approver</th>
+          <th>Phase</th>
+          <th>Bundle</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in item.audit|reverse %}
+        <tr>
+          <td style="font-family:monospace;font-size:12px">{{ row.utc_timestamp }}</td>
+          <td>{{ row.decision }}</td>
+          <td>{{ row.approver }}</td>
+          <td style="font-family:monospace">{{ row.phase }}</td>
+          <td style="font-family:monospace;font-size:11px">{{ row.bundle }}</td>
+          <td style="font-size:12px">{{ row.notes or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-muted);font-size:13px">No decisions recorded yet.</p>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const contentId = {{ content_id|tojson }};
+  const resultEl = document.getElementById("ea-result");
+  async function submit(action) {
+    const approver = (document.getElementById("ea-approver").value || "").trim();
+    const notes = (document.getElementById("ea-notes").value || "").trim();
+    const phase = (document.getElementById("ea-phase").value || "").trim();
+    const body = { approver, notes };
+    if (phase) body.phase = phase;
+    resultEl.style.display = "block";
+    resultEl.textContent = "Submitting…";
+    try {
+      const res = await fetch("/api/v1/editorial/" + contentId + "/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        resultEl.textContent = "Error " + res.status + ": " + (data.detail || JSON.stringify(data));
+        return;
+      }
+      resultEl.textContent = JSON.stringify(data, null, 2);
+      window.setTimeout(function () { window.location.reload(); }, 600);
+    } catch (err) {
+      resultEl.textContent = String(err);
+    }
+  }
+  document.querySelectorAll("[data-action]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      submit(btn.getAttribute("data-action"));
+    });
+  });
+})();
+</script>
+
+{% endif %}
+
+{% endblock %}

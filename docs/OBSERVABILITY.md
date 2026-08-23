@@ -28,7 +28,7 @@ The observability system provides complete visibility into system behavior:
 │ Metrics Export                                              │
 │ - JSON API: /api/v1/metrics                                 │
 │ - Prometheus: /api/v1/metrics/prometheus                    │
-│ - Health: /api/v1/health                                    │
+│ - Health: /api/v1/system/health                             │
 │ - Summary: /api/v1/status/summary                           │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -297,12 +297,12 @@ HealthChecker.set_status(
 
 ### Health Endpoints
 
-#### GET /api/v1/health
+#### GET /api/v1/system/health
 
-Get overall system health:
+Get overall observability / component health (canonical API liveness is `GET /api/v1/health`):
 
 ```bash
-curl https://api.workcrew.ai/api/v1/health
+curl https://api.workcrew.ai/api/v1/system/health
 ```
 
 Response:
@@ -335,13 +335,13 @@ Response:
 }
 ```
 
-#### GET /api/v1/health/{component}
+#### GET /api/v1/system/health/{component}
 
 Get specific component health:
 
 ```bash
 curl -H "Authorization: Bearer API_KEY" \
-  https://api.workcrew.ai/api/v1/health/llm_service
+  https://api.workcrew.ai/api/v1/system/health/llm_service
 ```
 
 ### Health Status Values
@@ -552,7 +552,7 @@ curl -H "Authorization: Bearer API_KEY" \
 Check component status:
 ```bash
 curl -H "Authorization: Bearer API_KEY" \
-  https://api.workcrew.ai/api/v1/health/llm_service
+  https://api.workcrew.ai/api/v1/system/health/llm_service
 ```
 
 ## Performance Tuning

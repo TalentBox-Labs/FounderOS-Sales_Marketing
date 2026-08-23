@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from fastapi import APIRouter
+
 logger = logging.getLogger(__name__)
+
+# Expected by revenue_os.main (include_router). CMS webhook HTTP routes live in
+# runner_api_routers/integrations.py; this export unblocks revenue_os.main:app.
+router = APIRouter(prefix="/api/v1/integrations/webhooks", tags=["webhooks"])
 
 
 class WebhookEventType(Enum):

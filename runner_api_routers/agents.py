@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from revenue_os.database import SessionLocal
 from revenue_os.agents.execution import (
     AgentType,
@@ -26,6 +26,7 @@ from revenue_os.agents.safeguards import (
 )
 
 from runner_api_routers.utils import _verify_api_key
+from revenue_os.services.tenant_resolution import require_tenant_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -486,58 +487,68 @@ def agents_system_health(
 @router.post("/sales/{contact_id}/research", tags=["agents"])
 def sales_research_contact(
     contact_id: str,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """ICP Research Agent — buying signals from real LinkedIn data in one pass."""
     from revenue_os.services.sales_agents import research_contact
 
+    tenant = require_tenant_context(http_request)
     AgentCoordinator.touch_agent("icp_research_agent")
-    return research_contact(contact_id)
+    return research_contact(contact_id, organization_id=tenant.organization_id)
 
 
 @router.post("/sales/{contact_id}/cold-email", tags=["agents"])
 def sales_draft_cold_email(
     contact_id: str,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """Cold Email Agent — first-touch email from real contact context."""
     from revenue_os.services.sales_agents import draft_cold_email
 
+    tenant = require_tenant_context(http_request)
     AgentCoordinator.touch_agent("cold_email_agent")
-    return draft_cold_email(contact_id)
+    return draft_cold_email(contact_id, organization_id=tenant.organization_id)
 
 
 @router.post("/sales/{contact_id}/linkedin-opener", tags=["agents"])
 def sales_draft_linkedin_opener(
     contact_id: str,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """LinkedIn Opener Agent — connection note + follow-up DM."""
     from revenue_os.services.sales_agents import draft_linkedin_opener
 
+    tenant = require_tenant_context(http_request)
     AgentCoordinator.touch_agent("linkedin_opener_agent")
-    return draft_linkedin_opener(contact_id)
+    return draft_linkedin_opener(contact_id, organization_id=tenant.organization_id)
 
 
 @router.post("/sales/{contact_id}/sequence", tags=["agents"])
 def sales_build_sequence(
     contact_id: str,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """Follow-Up Sequence Agent — 5-7 touch email + LinkedIn nurture flow."""
     from revenue_os.services.sales_agents import build_followup_sequence
 
+    tenant = require_tenant_context(http_request)
     AgentCoordinator.touch_agent("followup_sequence_agent")
-    return build_followup_sequence(contact_id)
+    return build_followup_sequence(contact_id, organization_id=tenant.organization_id)
 
 
 @router.post("/sales/{contact_id}/handle-reply", tags=["agents"])
 def sales_handle_reply(
     contact_id: str,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Objection Handler Agent — classifies the latest inbound reply and drafts a response."""
+    """Objection Handler Agent — classifies inbound reply and drafts response."""
     from revenue_os.services.sales_agents import handle_latest_reply
 
+    tenant = require_tenant_context(http_request)
     AgentCoordinator.touch_agent("objection_handler_agent")
-    return handle_latest_reply(contact_id)
+    return handle_latest_reply(contact_id, organization_id=tenant.organization_id)

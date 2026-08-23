@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Content Studio — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Content Studio{% endblock %}
+{% block topbar_meta %}Read-only inventory via Content Studio API{% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+  <a href="/content-studio/kanban" class="btn btn-ghost btn-sm" id="cs-kanban-link">Kanban</a>
+  <a href="/api/v1/content-studio/content" class="btn btn-ghost btn-sm" id="cs-api-link">API</a>
+{% endblock %}
+
+{% block content %}
+
+{% if api_error %}
+<div class="card" id="cs-api-error" data-testid="cs-api-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">
+    No fallback inventory is shown. Retry after the Content Studio API recovers.
+  </p>
+</div>
+{% else %}
+
+<div class="card">
+  <div class="card-title">
+    Content inventory
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input
+        id="cs-search"
+        type="search"
+        placeholder="Search id, title, status…"
+        data-testid="cs-search"
+        style="padding:4px 8px;font-size:12px;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)"
+      />
+      <select id="cs-filter-status" data-testid="cs-filter-status" style="padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+        <option value="">All statuses</option>
+        {% for s in statuses %}
+        <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      </select>
+      <select id="cs-filter-week" data-testid="cs-filter-week" style="padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+        <option value="">All weeks</option>
+        {% for w in week_ids %}
+        <option value="{{ w }}">{{ w }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="btn btn-ghost btn-sm" id="cs-refresh" data-testid="cs-refresh">Refresh</button>
+    </div>
+  </div>
+
+  <div id="cs-empty" data-testid="cs-empty" style="display:{% if items %}none{% else %}block{% endif %};padding:24px;color:var(--text-muted);font-size:13px">
+    No content items returned by the Content Studio API.
+  </div>
+
+  <div class="table-wrap" id="cs-table-wrap" style="display:{% if items %}block{% else %}none{% endif %}">
+    <table id="cs-table" data-testid="cs-table">
+      <thead>
+        <tr>
+          <th>Week / ID</th>
+          <th>Title</th>
+          <th>Status</th>
+          <th>QA</th>
+          <th>Current step</th>
+          <th>Artifacts</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="cs-tbody">
+        {% for item in items %}
+        <tr
+          data-content-id="{{ item.content_id }}"
+          data-title="{{ item.title }}"
+          data-status="{{ item.status }}"
+          data-qa="{{ item.qa_status }}"
+          data-step="{{ item.current_step }}"
+        >
+          <td>
+            <a href="/content-studio/{{ item.content_id }}" style="font-weight:600;font-family:monospace;font-size:13px">
+              {{ item.content_id }}
+            </a>
+          </td>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ item.title or "—" }}
+          </td>
+          <td><span class="pill blue">{{ item.status or "—" }}</span></td>
+          <td>
+            {% if item.qa_status == "PASS" %}
+              <span class="pill green">PASS</span>
+            {% elif item.qa_status == "FAIL" %}
+              <span class="pill red">FAIL</span>
+            {% else %}
+              <span class="pill gray">{{ item.qa_status or "—" }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px;color:var(--text-muted)">{{ item.current_step or "—" }}</td>
+          <td style="font-size:11px;color:var(--text-muted);font-family:monospace">
+            {% set arts = item.artifacts or {} %}
+            {% set ns = namespace(shown=false) %}
+            {% for key, present in arts.items() %}
+              {% if present %}
+                <span title="{{ key }}">{% if ns.shown %}, {% endif %}{{ key }}</span>
+                {% set ns.shown = true %}
+              {% endif %}
+            {% endfor %}
+            {% if not ns.shown %}—{% endif %}
+          </td>
+          <td>
+            <a href="/content-studio/{{ item.content_id }}" class="btn btn-ghost btn-sm">Open</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p id="cs-visible-count" style="font-size:11px;color:var(--text-dim);padding:10px 0 0">
+    Showing <span id="cs-count">{{ items|length }}</span> of {{ items|length }}
+  </p>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const searchEl = document.getElementById('cs-search');
+  const statusEl = document.getElementById('cs-filter-status');
+  const weekEl = document.getElementById('cs-filter-week');
+  const tbody = document.getElementById('cs-tbody');
+  const emptyEl = document.getElementById('cs-empty');
+  const tableWrap = document.getElementById('cs-table-wrap');
+  const countEl = document.getElementById('cs-count');
+  const refreshBtn = document.getElementById('cs-refresh');
+  if (!tbody) return;
+
+  function applyFilters() {
+    const q = (searchEl && searchEl.value || '').trim().toLowerCase();
+    const status = (statusEl && statusEl.value || '').toLowerCase();
+    const week = (weekEl && weekEl.value || '');
+    let visible = 0;
+    tbody.querySelectorAll('tr').forEach(row => {
+      const hay = [
+        row.dataset.contentId || '',
+        row.dataset.title || '',
+        row.dataset.status || '',
+        row.dataset.qa || '',
+        row.dataset.step || '',
+      ].join(' ').toLowerCase();
+      const statusOk = !status || (row.dataset.status || '').toLowerCase() === status;
+      const weekOk = !week || (row.dataset.contentId || '') === week;
+      const searchOk = !q || hay.includes(q);
+      const show = statusOk && weekOk && searchOk;
+      row.style.display = show ? '' : 'none';
+      if (show) visible += 1;
+    });
+    if (countEl) countEl.textContent = String(visible);
+    const anyRows = tbody.querySelectorAll('tr').length > 0;
+    if (emptyEl && tableWrap) {
+      const showEmpty = anyRows && visible === 0;
+      emptyEl.style.display = showEmpty ? 'block' : 'none';
+      if (showEmpty) {
+        emptyEl.textContent = 'No content matches the current search/filters.';
+      }
+      tableWrap.style.display = visible > 0 ? 'block' : (anyRows ? 'none' : tableWrap.style.display);
+    }
+  }
+
+  if (searchEl) searchEl.addEventListener('input', applyFilters);
+  if (statusEl) statusEl.addEventListener('change', applyFilters);
+  if (weekEl) weekEl.addEventListener('change', applyFilters);
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/api/v1/content-studio/content', { method: 'GET' });
+        if (!r.ok) {
+          showToast('Content Studio API error: HTTP ' + r.status, false);
+          return;
+        }
+        const data = await r.json();
+        if (!data || data.ok !== true || !Array.isArray(data.items)) {
+          showToast('Malformed Content Studio API response', false);
+          return;
+        }
+        // Reload page so SSR stays aligned with API (GET only).
+        window.location.reload();
+      } catch (e) {
+        showToast('Content Studio API request failed', false);
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

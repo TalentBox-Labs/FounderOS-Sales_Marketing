@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in — Founder OS{% endblock %}
+{% block topbar_title %}Sign in{% endblock %}
+{% block topbar_meta %}Human identity for Founder OS{% endblock %}
+
+{% block extra_head %}
+<style>
+  .login-card { max-width: 420px; }
+  .login-form { display: grid; gap: 12px; margin-top: 12px; }
+  .login-form label { display: grid; gap: 4px; font-size: 13px; color: var(--text-muted); }
+  .login-form input[type=email], .login-form input[type=password] {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-sm);
+    padding: 7px 12px; font-size: 13px; font-family: inherit;
+  }
+  .login-error { color: var(--red); font-size: 13px; margin-top: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card login-card" data-testid="s1-login-card">
+  <div class="card-title">Founder OS sign in</div>
+  <p style="color:var(--text-muted);font-size:13px">
+    Human credentials only. API keys are not a login. Public signup is not available.
+  </p>
+  {% if error %}
+  <p class="login-error" data-testid="s1-login-error">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/login" class="login-form" data-testid="s1-login-form">
+    <input type="hidden" name="next" value="{{ next_path }}" />
+    <label>
+      Email
+      <input type="email" name="email" autocomplete="username" required data-testid="s1-login-email" />
+    </label>
+    <label>
+      Password
+      <input type="password" name="password" autocomplete="current-password" required data-testid="s1-login-password" />
+    </label>
+    <button type="submit" class="btn btn-primary" data-testid="s1-login-submit">Sign in</button>
+  </form>
+</div>
+{% endblock %}

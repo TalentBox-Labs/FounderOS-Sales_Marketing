@@ -1,10 +1,8 @@
 """Encrypted credentials vault for third-party connector configs.
 
-Values are encrypted with a key derived from SECRET_KEY before they ever
-reach the database — this protects a DB dump/backup from casually exposing
-an SMTP password or API token. It is NOT protection against someone who
-already has SECRET_KEY and DB access (they could derive the same key) —
-that's an already-fully-trusted position in this app's threat model.
+S4: credentials resolve under Organization ownership when organization_id is supplied.
+Legacy rows with organization_id=NULL are GLOBAL_BY_DESIGN and must not satisfy
+tenant-owned requests unless explicitly allowed via allow_global_fallback.
 """
 
 from __future__ import annotations
@@ -12,12 +10,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import uuid as uuid_lib
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Static, versioned salt — not a secret on its own. The actual key material
-# is SECRET_KEY, which is required to be a strong random value (see config.py).
 _VAULT_SALT = b"revenue-os-connector-vault-v1"
 _fernet = None
 
@@ -40,13 +37,44 @@ def _get_fernet():
 def _vault_db():
     try:
         from revenue_os.database import SessionLocal
+
         return SessionLocal()
     except Exception:
         return None
 
 
-def save_credentials(connector_name: str, category: str, config: dict[str, Any]) -> None:
-    """Encrypt and persist a connector's config."""
+def _normalize_org_id(organization_id: str | None) -> str | None:
+    if organization_id is None:
+        return None
+    value = str(organization_id).strip()
+    if not value:
+        return None
+    try:
+        return str(uuid_lib.UUID(value))
+    except ValueError:
+        return None
+
+
+def _find_credential_row(db, connector_name: str, organization_id: str | None):  # noqa: ANN001
+    from revenue_os.models.integrations import ConnectorCredentialRecord
+
+    org = _normalize_org_id(organization_id)
+    query = db.query(ConnectorCredentialRecord).filter(
+        ConnectorCredentialRecord.connector_name == connector_name
+    )
+    if org is None:
+        return query.filter(ConnectorCredentialRecord.organization_id.is_(None)).first()
+    return query.filter(ConnectorCredentialRecord.organization_id == org).first()
+
+
+def save_credentials(
+    connector_name: str,
+    category: str,
+    config: dict[str, Any],
+    *,
+    organization_id: str | None = None,
+) -> None:
+    """Encrypt and persist a connector's config under organization scope."""
     ciphertext = _get_fernet().encrypt(json.dumps(config).encode()).decode()
     db = _vault_db()
     if db is None:
@@ -54,9 +82,12 @@ def save_credentials(connector_name: str, category: str, config: dict[str, Any])
     try:
         from revenue_os.models.integrations import ConnectorCredentialRecord
 
-        row = db.get(ConnectorCredentialRecord, connector_name)
+        row = _find_credential_row(db, connector_name, organization_id)
         if row is None:
-            row = ConnectorCredentialRecord(connector_name=connector_name)
+            row = ConnectorCredentialRecord(
+                connector_name=connector_name,
+                organization_id=_normalize_org_id(organization_id),
+            )
             db.add(row)
         row.category = category
         row.encrypted_config = ciphertext
@@ -65,34 +96,41 @@ def save_credentials(connector_name: str, category: str, config: dict[str, Any])
         db.close()
 
 
-def load_credentials(connector_name: str) -> dict[str, Any] | None:
-    """Decrypt and return a connector's config, or None if never configured."""
+def load_credentials(
+    connector_name: str,
+    *,
+    organization_id: str | None = None,
+    allow_global_fallback: bool = False,
+) -> dict[str, Any] | None:
+    """Decrypt connector config for org scope. No cross-org or unsafe global fallback by default."""
     db = _vault_db()
     if db is None:
         return None
     try:
-        from revenue_os.models.integrations import ConnectorCredentialRecord
-
-        row = db.get(ConnectorCredentialRecord, connector_name)
+        row = _find_credential_row(db, connector_name, organization_id)
+        if row is None and organization_id is not None and allow_global_fallback:
+            row = _find_credential_row(db, connector_name, None)
         if row is None:
             return None
         plaintext = _get_fernet().decrypt(row.encrypted_config.encode())
         return json.loads(plaintext)
     except Exception as e:
-        logger.warning(f"Could not decrypt credentials for {connector_name}: {e}")
+        logger.warning("Could not decrypt credentials for %s: %s", connector_name, e)
         return None
     finally:
         db.close()
 
 
-def delete_credentials(connector_name: str) -> bool:
+def delete_credentials(
+    connector_name: str,
+    *,
+    organization_id: str | None = None,
+) -> bool:
     db = _vault_db()
     if db is None:
         return False
     try:
-        from revenue_os.models.integrations import ConnectorCredentialRecord
-
-        row = db.get(ConnectorCredentialRecord, connector_name)
+        row = _find_credential_row(db, connector_name, organization_id)
         if row is None:
             return False
         db.delete(row)
@@ -134,7 +172,8 @@ def _hydrate_outlook_calendar(config: dict[str, Any]) -> None:
     from revenue_os.integrations.calendar import OutlookCalendarClient
 
     OutlookCalendarClient.configure(
-        tenant_id=config.get("tenant_id", ""), access_token=config.get("access_token", ""),
+        tenant_id=config.get("tenant_id", ""),
+        access_token=config.get("access_token", ""),
     )
 
 
@@ -148,40 +187,40 @@ _HYDRATORS = {
 
 
 def hydrate_all_connectors() -> None:
-    """Restore every vaulted connector's in-memory config after a restart.
-
-    Without this, a founder would have to re-enter SMTP passwords, Slack
-    webhooks, etc. after every deploy — the vault would just be a slower
-    way to lose the same state the old in-memory-only classes already lost.
-    """
+    """Restore GLOBAL_BY_DESIGN legacy in-memory config after restart."""
     for name, hydrate in _HYDRATORS.items():
-        config = load_credentials(name)
+        config = load_credentials(name, organization_id=None)
         if not config:
             continue
         try:
             hydrate(config)
-            logger.info(f"Connector hydrated from vault: {name}")
+            logger.info("Connector hydrated from vault: %s", name)
         except Exception as e:
-            logger.warning(f"Connector hydration failed ({name}): {e}")
+            logger.warning("Connector hydration failed (%s): %s", name, e)
 
 
-def list_configured_connectors() -> dict[str, dict[str, Any]]:
-    """Map of connector_name -> {category, updated_at} for every vaulted connector.
-
-    Status/listing only — never returns decrypted values.
-    """
+def list_configured_connectors(*, organization_id: str | None = None) -> dict[str, dict[str, Any]]:
+    """Map connector_name -> metadata; never returns decrypted values."""
     db = _vault_db()
     if db is None:
         return {}
     try:
         from revenue_os.models.integrations import ConnectorCredentialRecord
 
+        query = db.query(ConnectorCredentialRecord)
+        org = _normalize_org_id(organization_id)
+        if org is not None:
+            query = query.filter(ConnectorCredentialRecord.organization_id == org)
+        else:
+            query = query.filter(ConnectorCredentialRecord.organization_id.is_(None))
+
         return {
             row.connector_name: {
                 "category": row.category,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                "organization_id": row.organization_id,
             }
-            for row in db.query(ConnectorCredentialRecord).all()
+            for row in query.all()
         }
     finally:
         db.close()

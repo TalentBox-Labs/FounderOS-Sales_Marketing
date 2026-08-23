@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Content Studio Kanban — WorkCrew CMS OS{% endblock %}
+{% block topbar_title %}Content Studio · Kanban{% endblock %}
+{% block topbar_meta %}Read-only board · columns = API status values (no lifecycle rewrite){% endblock %}
+
+{% block topbar_right %}
+  <span class="pill blue">Active: {{ active_week }}</span>
+  <a href="/content-studio" class="btn btn-ghost btn-sm">List</a>
+  <a href="/api/v1/content-studio/content" class="btn btn-ghost btn-sm">API</a>
+{% endblock %}
+
+{% block content %}
+
+<style>
+  .kb-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  .kb-board {
+    display:flex; gap:12px; align-items:flex-start; overflow-x:auto; padding-bottom:12px;
+  }
+  .kb-col {
+    min-width:240px; width:240px; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--radius);
+    display:flex; flex-direction:column; max-height:70vh;
+  }
+  .kb-col-head {
+    padding:10px 12px; border-bottom:1px solid var(--border);
+    font-size:12px; font-weight:600; display:flex; justify-content:space-between; gap:8px;
+  }
+  .kb-col-body { padding:10px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+  .kb-card {
+    display:block; background:var(--surface2); border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:10px; color:var(--text); text-decoration:none;
+  }
+  .kb-card:hover { border-color:var(--accent); text-decoration:none; }
+  .kb-card-id { font-family:monospace; font-size:12px; font-weight:600; }
+  .kb-card-title { font-size:12px; color:var(--text-muted); margin-top:4px; }
+  .kb-card-meta { font-size:11px; color:var(--text-dim); margin-top:6px; }
+  .kb-empty {
+    font-size:12px; color:var(--text-dim); padding:8px; border:1px dashed var(--border);
+    border-radius:var(--radius-sm); text-align:center;
+  }
+</style>
+
+{% if api_error %}
+<div class="card" data-testid="kb-api-error" style="border-left:3px solid var(--red)">
+  <div class="card-title">API failure</div>
+  <p style="color:var(--red);font-size:13px">{{ api_error }}</p>
+  <p style="color:var(--text-muted);font-size:12px;margin-top:8px">
+    No fallback board is shown.
+  </p>
+</div>
+{% else %}
+
+<div class="kb-toolbar" data-testid="kb-toolbar">
+  <input
+    id="kb-search"
+    type="search"
+    placeholder="Search id, title, status…"
+    data-testid="kb-search"
+    style="padding:4px 8px;font-size:12px;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)"
+  />
+  <select id="kb-filter-status" data-testid="kb-filter-status" style="padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+    <option value="">All statuses</option>
+    {% for s in statuses %}
+    <option value="{{ s }}">{{ s }}</option>
+    {% endfor %}
+  </select>
+  <select id="kb-filter-week" data-testid="kb-filter-week" style="padding:4px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text)">
+    <option value="">All weeks</option>
+    {% for w in week_ids %}
+    <option value="{{ w }}">{{ w }}</option>
+    {% endfor %}
+  </select>
+  <span style="font-size:11px;color:var(--text-dim);margin-left:auto" data-testid="kb-column-count">
+    {{ columns|length }} column{% if columns|length != 1 %}s{% endif %} · {{ items|length }} card{% if items|length != 1 %}s{% endif %}
+  </span>
+</div>
+
+{% if not items %}
+<div class="card" data-testid="kb-empty-board">
+  <p style="color:var(--text-muted);font-size:13px">No content items returned by the Content Studio API.</p>
+</div>
+{% else %}
+
+<div class="kb-board" data-testid="kb-board">
+  {% for status in columns %}
+  {% set cards = columns_map.get(status, []) %}
+  <section class="kb-col" data-testid="kb-column" data-status="{{ status }}">
+    <div class="kb-col-head">
+      <span data-testid="kb-column-title">{% if status %}{{ status }}{% else %}—{% endif %}</span>
+      <span class="pill gray" data-testid="kb-column-size">{{ cards|length }}</span>
+    </div>
+    <div class="kb-col-body">
+      {% for item in cards %}
+      <a
+        class="kb-card"
+        href="/content-studio/{{ item.content_id }}"
+        data-testid="kb-card"
+        data-content-id="{{ item.content_id }}"
+        data-title="{{ item.title }}"
+        data-status="{{ item.status }}"
+        data-step="{{ item.current_step }}"
+      >
+        <div class="kb-card-id">{{ item.content_id }}</div>
+        <div class="kb-card-title">{{ item.title or "—" }}</div>
+        <div class="kb-card-meta">{{ item.current_step or "—" }} · QA {{ item.qa_status or "—" }}</div>
+      </a>
+      {% endfor %}
+      <div
+        class="kb-empty"
+        data-testid="kb-empty-column"
+        style="display:{% if cards %}none{% else %}block{% endif %}"
+      >No items</div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+
+{% endif %}
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+{% if not api_error and items %}
+<script>
+(function () {
+  const searchEl = document.getElementById('kb-search');
+  const statusEl = document.getElementById('kb-filter-status');
+  const weekEl = document.getElementById('kb-filter-week');
+  const board = document.querySelector('[data-testid="kb-board"]');
+  if (!board) return;
+
+  function applyFilters() {
+    const q = (searchEl && searchEl.value || '').trim().toLowerCase();
+    const status = (statusEl && statusEl.value || '');
+    const week = (weekEl && weekEl.value || '');
+    board.querySelectorAll('[data-testid="kb-column"]').forEach(col => {
+      const colStatus = col.dataset.status || '';
+      const statusOk = !status || colStatus === status;
+      let visibleCards = 0;
+      col.querySelectorAll('[data-testid="kb-card"]').forEach(card => {
+        const hay = [
+          card.dataset.contentId || '',
+          card.dataset.title || '',
+          card.dataset.status || '',
+          card.dataset.step || '',
+        ].join(' ').toLowerCase();
+        const weekOk = !week || (card.dataset.contentId || '') === week;
+        const searchOk = !q || hay.includes(q);
+        const show = statusOk && weekOk && searchOk;
+        card.style.display = show ? '' : 'none';
+        if (show) visibleCards += 1;
+      });
+      // Hide entire column when status filter excludes it; otherwise keep for empty state.
+      if (status && !statusOk) {
+        col.style.display = 'none';
+      } else {
+        col.style.display = '';
+        const empty = col.querySelector('[data-testid="kb-empty-column"]');
+        if (empty) empty.style.display = visibleCards === 0 ? 'block' : 'none';
+      }
+    });
+  }
+
+  if (searchEl) searchEl.addEventListener('input', applyFilters);
+  if (statusEl) statusEl.addEventListener('change', applyFilters);
+  if (weekEl) weekEl.addEventListener('change', applyFilters);
+})();
+</script>
+{% endif %}
+{% endblock %}

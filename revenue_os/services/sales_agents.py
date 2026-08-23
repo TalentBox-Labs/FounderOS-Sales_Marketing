@@ -31,8 +31,19 @@ AGENT_FOLLOWUP_SEQUENCE = "followup_sequence_agent"
 AGENT_OBJECTION_HANDLER = "objection_handler_agent"
 
 
-def _load_contact(db: Session, contact_id: str):
+def _load_contact(db: Session, contact_id: str, *, organization_id: str | None = None):
+    """Load contact; when organization_id supplied, enforce tenant scope."""
     from revenue_os.models.contact import Contact
+    from revenue_os.services.tenant_scoped_access import (
+        TenantAccessError,
+        get_contact_for_tenant,
+    )
+
+    if organization_id:
+        try:
+            return get_contact_for_tenant(db, organization_id, contact_id)
+        except TenantAccessError:
+            return None
 
     try:
         cid = uuid_lib.UUID(contact_id)
@@ -121,7 +132,7 @@ def _recent_job_change(experiences: list[dict]) -> dict[str, Any] | None:
     return {"title": current.get("title"), "company": current.get("company"), "days_ago": days_ago}
 
 
-def research_contact(contact_id: str) -> dict[str, Any]:
+def research_contact(contact_id: str, *, organization_id: str) -> dict[str, Any]:
     """Agent 1 — pull buying signals from real LinkedIn data in one pass:
     funding rounds and company fit from the company profile, a recent job
     change from the person profile. Tech stack isn't reported: no provider
@@ -131,7 +142,7 @@ def research_contact(contact_id: str) -> dict[str, Any]:
 
     db = SessionLocal()
     try:
-        contact = _load_contact(db, contact_id)
+        contact = _load_contact(db, contact_id, organization_id=organization_id)
         if contact is None:
             return {"ok": False, "reason": "Contact not found"}
         if not contact.linkedin_url:
@@ -190,7 +201,7 @@ def research_contact(contact_id: str) -> dict[str, Any]:
 # ── Agent 2: Cold Email ──────────────────────────────────────────────────────
 
 
-def draft_cold_email(contact_id: str) -> dict[str, Any]:
+def draft_cold_email(contact_id: str, *, organization_id: str) -> dict[str, Any]:
     """Agent 2 — drafts a first-touch email from real contact context and
     files it for approval. Never sends on its own."""
     from revenue_os.database import SessionLocal
@@ -199,7 +210,7 @@ def draft_cold_email(contact_id: str) -> dict[str, Any]:
 
     db = SessionLocal()
     try:
-        contact = _load_contact(db, contact_id)
+        contact = _load_contact(db, contact_id, organization_id=organization_id)
         if contact is None:
             return {"ok": False, "reason": "Contact not found"}
         if not contact.email:
@@ -218,7 +229,9 @@ def draft_cold_email(contact_id: str) -> dict[str, Any]:
             description=f"AI-drafted first-touch email using real CRM context: {summary}",
             target_type="contact", target_id=str(contact.id),
             payload={"contact_id": str(contact.id), "email": contact.email, "name": ctx["name"],
-                     "template": "ai_cold_email", "context": {"body": body}},
+                     "template": "ai_cold_email", "context": {"body": body},
+                     "organization_id": organization_id},
+            organization_id=organization_id,
         )
         return {"ok": True, "approval_id": approval["id"], "body": body, "context_used": summary}
     finally:
@@ -228,7 +241,7 @@ def draft_cold_email(contact_id: str) -> dict[str, Any]:
 # ── Agent 3: LinkedIn Opener ─────────────────────────────────────────────────
 
 
-def draft_linkedin_opener(contact_id: str) -> dict[str, Any]:
+def draft_linkedin_opener(contact_id: str, *, organization_id: str) -> dict[str, Any]:
     """Agent 3 — drafts a connection note and follow-up DM. Filed for
     approval; LinkedIn has no compliant auto-send, so approval marks it
     ready to send by hand rather than pretending to automate delivery."""
@@ -238,7 +251,7 @@ def draft_linkedin_opener(contact_id: str) -> dict[str, Any]:
 
     db = SessionLocal()
     try:
-        contact = _load_contact(db, contact_id)
+        contact = _load_contact(db, contact_id, organization_id=organization_id)
         if contact is None:
             return {"ok": False, "reason": "Contact not found"}
         if not contact.linkedin_url:
@@ -258,7 +271,8 @@ def draft_linkedin_opener(contact_id: str) -> dict[str, Any]:
             description=f"AI-drafted connection note + follow-up DM: {summary}",
             target_type="contact", target_id=str(contact.id),
             payload={"contact_id": str(contact.id), "linkedin_url": contact.linkedin_url, "name": ctx["name"],
-                     **opener},
+                     "organization_id": organization_id, **opener},
+            organization_id=organization_id,
         )
         return {"ok": True, "approval_id": approval["id"], **opener, "context_used": summary}
     finally:
@@ -268,7 +282,7 @@ def draft_linkedin_opener(contact_id: str) -> dict[str, Any]:
 # ── Agent 4: Follow-Up Sequence ──────────────────────────────────────────────
 
 
-def build_followup_sequence(contact_id: str) -> dict[str, Any]:
+def build_followup_sequence(contact_id: str, *, organization_id: str) -> dict[str, Any]:
     """Agent 4 — builds a 5-7 touch email/LinkedIn sequence as a real
     OutreachSequence, reusing the same models/UI as manually-built
     sequences. Each step after the first carries an advisory reply
@@ -280,7 +294,7 @@ def build_followup_sequence(contact_id: str) -> dict[str, Any]:
 
     db = SessionLocal()
     try:
-        contact = _load_contact(db, contact_id)
+        contact = _load_contact(db, contact_id, organization_id=organization_id)
         if contact is None:
             return {"ok": False, "reason": "Contact not found"}
 
@@ -310,7 +324,7 @@ def build_followup_sequence(contact_id: str) -> dict[str, Any]:
 # ── Agent 5: Objection Handler ───────────────────────────────────────────────
 
 
-def handle_latest_reply(contact_id: str) -> dict[str, Any]:
+def handle_latest_reply(contact_id: str, *, organization_id: str) -> dict[str, Any]:
     """Agent 5 — classifies the most recent inbound reply and drafts a
     matching response. Filed for approval, same as every other draft here:
     it responds in your voice, at your pace, not the moment a reply lands."""
@@ -321,7 +335,7 @@ def handle_latest_reply(contact_id: str) -> dict[str, Any]:
 
     db = SessionLocal()
     try:
-        contact = _load_contact(db, contact_id)
+        contact = _load_contact(db, contact_id, organization_id=organization_id)
         if contact is None:
             return {"ok": False, "reason": "Contact not found"}
 
@@ -351,7 +365,9 @@ def handle_latest_reply(contact_id: str) -> dict[str, Any]:
                 description=f"Classified inbound reply as '{result['category']}'. Drafted response for approval.",
                 target_type="contact", target_id=str(contact.id),
                 payload={"contact_id": str(contact.id), "email": contact.email, "name": ctx["name"],
-                         "template": "objection_reply", "context": {"body": result["draft_reply"]}},
+                         "template": "objection_reply", "context": {"body": result["draft_reply"]},
+                         "organization_id": organization_id},
+                organization_id=organization_id,
             )
         return {"ok": True, "category": result["category"], "draft_reply": result["draft_reply"],
                 "approval_id": approval["id"] if approval else None, "original_reply": reply.body}
