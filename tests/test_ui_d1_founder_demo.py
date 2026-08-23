@@ -310,4 +310,7 @@ def test_meeting_interest_display_only(client: TestClient, monkeypatch: pytest.M
         r = client.get(f"/contacts/{_CONTACT_A}")
     assert r.status_code == 200
     assert "Booking eligible" in r.text
-    assert "booking workflow pending" in r.text.lower()
+    # No workspace.booking data seeded -> UI-D2's real booking panel falls
+    # back to its "not eligible" governance state; no actionable UI shown.
+    assert 'data-testid="booking-not-eligible"' in r.text
+    assert "Not eligible for booking yet" in r.text
