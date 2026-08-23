@@ -7,10 +7,24 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+import revenue_os.models  # noqa: F401 — register tables
+import revenue_os.services.tenant_resolution as tenant_resolution_mod
+import runner_api_routers.identity as identity_mod
 import runner_api_routers.operator_flow as of_router
+from revenue_os.auth import hash_password
+from revenue_os.models.base import Base
 from revenue_os.models.contact import ContactSource, ContactStatus
 from revenue_os.models.deal import DealStage
+from revenue_os.models.organization import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
+from revenue_os.models.user import User
 from revenue_os.services.commercial_outcome_service import (
     ACTION_ACCEPTED as CO_ACCEPTED,
 )
@@ -28,6 +42,8 @@ from revenue_os.services.qualified_demand_service import (
 from runner_api import app
 
 _OPERATOR = "Krishna Founder"
+_OPERATOR_EMAIL = "of1-operator@example.com"
+_OPERATOR_PASSWORD = "correct-horse-battery"
 _DEMAND_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 _CONTACT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 _DEAL_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
@@ -45,6 +61,7 @@ class _FakeContact:
         self.source = ContactSource.MANUAL
         self.phone = None
         self.notes = None
+        self.organization_id = None
 
 
 class _FakeDeal:
@@ -170,7 +187,56 @@ def operator_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
 
 
-def _seed_handoff(db: _FakeDB) -> None:
+@pytest.fixture
+def human_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> str:
+    """SaaS S2+: mutations resolve tenant from a real logged-in session with an
+    active OrganizationMembership — FOUNDER_OS_OPERATOR_NAME alone is legacy
+    fallback only and no longer satisfies require_tenant_mutation()."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'of1_identity.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(identity_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(tenant_resolution_mod, "SessionLocal", session_factory)
+
+    db = session_factory()
+    try:
+        user = User(
+            email=_OPERATOR_EMAIL,
+            hashed_password=hash_password(_OPERATOR_PASSWORD),
+            full_name=_OPERATOR,
+            role="owner",
+            is_active=1,
+        )
+        db.add(user)
+        db.flush()
+        org = Organization(name="OF1 Org", slug="of1-org", status=OrganizationStatus.ACTIVE)
+        db.add(org)
+        db.flush()
+        db.add(
+            OrganizationMembership(
+                user_id=user.id,
+                organization_id=org.id,
+                role="owner",
+                status=MembershipStatus.ACTIVE,
+            )
+        )
+        db.commit()
+        org_id = str(org.id)
+    finally:
+        db.close()
+
+    r = client.post(
+        "/login",
+        data={"email": _OPERATOR_EMAIL, "password": _OPERATOR_PASSWORD, "next": "/cockpit"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    return org_id
+
+
+def _seed_handoff(db: _FakeDB, *, organization_id: str | None = None) -> None:
     register_marketing_handoff(
         db,
         QualifiedDemandPayload(
@@ -180,6 +246,7 @@ def _seed_handoff(db: _FakeDB) -> None:
             person={"email": "op@example.com", "name": "Op Lead"},
         ),
         _OPERATOR,
+        organization_id=organization_id,
     )
 
 
@@ -213,10 +280,10 @@ def test_ai_mutation_rejected(client: TestClient, monkeypatch: pytest.MonkeyPatc
 
 
 def test_spoofed_human_identity_ignored(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
     db = _FakeDB()
-    _seed_handoff(db)
+    _seed_handoff(db, organization_id=human_session)
     monkeypatch.setattr(of_router, "SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/operator/actions/qualified-demand/accept",
@@ -228,10 +295,10 @@ def test_spoofed_human_identity_ignored(
 
 
 def test_path_a_qualified_demand_accept(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
     db = _FakeDB()
-    _seed_handoff(db)
+    _seed_handoff(db, organization_id=human_session)
     monkeypatch.setattr(of_router, "SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/operator/actions/qualified-demand/accept",
@@ -243,10 +310,10 @@ def test_path_a_qualified_demand_accept(
 
 
 def test_path_a_qualified_demand_reject(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
     db = _FakeDB()
-    _seed_handoff(db)
+    _seed_handoff(db, organization_id=human_session)
     monkeypatch.setattr(of_router, "SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/operator/actions/qualified-demand/reject",
@@ -438,10 +505,10 @@ def test_cockpit_still_has_only_two_mutations() -> None:
 
 
 def test_audit_trail_on_accept(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
     db = _FakeDB()
-    _seed_handoff(db)
+    _seed_handoff(db, organization_id=human_session)
     monkeypatch.setattr(of_router, "SessionLocal", lambda: db)
     client.post(
         "/api/v1/operator/actions/qualified-demand/accept",

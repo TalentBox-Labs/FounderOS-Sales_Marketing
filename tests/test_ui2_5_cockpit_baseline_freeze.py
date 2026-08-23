@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 import runner_api_routers.cockpit as cockpit_mod
 import runner_api_routers.ui as ui_mod
 from revenue_os.services.cockpit_read_model import build_cockpit_snapshot
+from tests.test_ui2_executive_cockpit import _FakeAgentLog, _FakeDB, human_session
 
 FROZEN_PANELS = frozenset(
     {"attention", "sales", "marketing_seo", "commercial_flow", "governance"}
@@ -134,17 +135,25 @@ def test_freeze_degraded_db_unavailable_truthful(monkeypatch: pytest.MonkeyPatch
 
 
 def test_freeze_qualified_demand_accept_uses_trusted_operator(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", "Krishna Founder")
     captured: list[str] = []
 
-    def _accept(db, did, rb, notes=""):  # noqa: ANN001
+    def _accept(db, did, rb, notes="", organization_id=None):  # noqa: ANN001
         captured.append(rb)
         return {"ok": True, "idempotent": True, "demand_id": did}
 
     monkeypatch.setattr(cockpit_mod, "accept_qualified_demand", _accept)
-    monkeypatch.setattr(cockpit_mod, "SessionLocal", lambda: type("DB", (), {"close": lambda s: None})())
+    db = _FakeDB()
+    db.logs.append(
+        _FakeAgentLog(
+            "qualified_demand_handoff",
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            organization_id=human_session,
+        )
+    )
+    monkeypatch.setattr(cockpit_mod, "SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/cockpit/actions/qualified-demand/accept",
         json={"demand_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "requested_by": "agent:spoof"},
