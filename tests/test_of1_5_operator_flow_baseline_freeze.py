@@ -17,6 +17,7 @@ import tests.test_a4_runner_contact_status as a4
 import tests.test_mc04_qualified_demand as mc04
 import tests.test_mc06_5_commercial_outcome_baseline_freeze as mc06_5
 import tests.test_of1_operator_flow as of1
+from tests.test_of1_operator_flow import human_session
 import tests.test_sales_api_runner as a1
 import tests.test_ui2_5_cockpit_baseline_freeze as ui25
 from revenue_os.services import operator_flow_read_model as of_read
@@ -121,9 +122,9 @@ def test_freeze_bounded_workflow_topology() -> None:
 
 
 def test_freeze_qualified_demand_to_contact(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
-    of1.test_path_a_qualified_demand_accept(client, monkeypatch, operator_env)
+    of1.test_path_a_qualified_demand_accept(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_contact_to_deal(
@@ -185,9 +186,9 @@ def test_freeze_ai_mutation_blocked(
 
 
 def test_freeze_spoofed_human_metadata_blocked(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
-    of1.test_spoofed_human_identity_ignored(client, monkeypatch, operator_env)
+    of1.test_spoofed_human_identity_ignored(client, monkeypatch, operator_env, human_session)
     assert "requested_by" not in _operator_html()
 
 
@@ -217,9 +218,9 @@ def test_freeze_invalid_transitions_rejected(
 
 
 def test_freeze_audit_integrity(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, operator_env: None, human_session: str
 ) -> None:
-    of1.test_audit_trail_on_accept(client, monkeypatch, operator_env)
+    of1.test_audit_trail_on_accept(client, monkeypatch, operator_env, human_session)
 
 
 def test_freeze_idempotency_preserved(

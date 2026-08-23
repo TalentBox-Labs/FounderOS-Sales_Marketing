@@ -7,10 +7,27 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+import revenue_os.models  # noqa: F401 — register tables
+import revenue_os.services.tenant_resolution as tenant_resolution_mod
+import runner_api_routers.identity as identity_mod
+from revenue_os.auth import hash_password
+from revenue_os.models.base import Base
 from revenue_os.models.contact import ContactSource, ContactStatus
+from revenue_os.models.organization import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
+from revenue_os.models.user import User
 from revenue_os.services.cockpit_read_model import build_cockpit_snapshot
 from runner_api import app
+
+_OPERATOR_EMAIL = "ui2-operator@example.com"
+_OPERATOR_PASSWORD = "correct-horse-battery"
 
 _DEMAND_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 _CONTACT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -31,13 +48,21 @@ class _FakeContact:
         self.source = ContactSource.WEB_FORM
         self.created_at = datetime.now(timezone.utc)
         self.company = None
+        self.organization_id = None
 
 
 class _FakeAgentLog:
-    def __init__(self, action_type: str, target_id: str, detail: dict | None = None) -> None:
+    def __init__(
+        self,
+        action_type: str,
+        target_id: str,
+        detail: dict | None = None,
+        organization_id: str | None = None,
+    ) -> None:
         self.action_type = action_type
         self.target_id = target_id
         self.detail = detail or {}
+        self.organization_id = organization_id
         self.created_at = datetime.now(timezone.utc)
 
 
@@ -53,6 +78,12 @@ class _FakeDB:
     def get(self, _model, _id):  # noqa: ANN001
         if str(_id) == _CONTACT_ID:
             return self.contacts[0]
+        return None
+
+    def add(self, _obj) -> None:  # noqa: ANN001
+        return None
+
+    def commit(self) -> None:
         return None
 
     def close(self) -> None:
@@ -96,6 +127,55 @@ class _FakeQuery:
 @pytest.fixture
 def client(cms_client: TestClient) -> TestClient:
     return cms_client
+
+
+@pytest.fixture
+def human_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> str:
+    """SaaS S2+: mutations resolve tenant from a real logged-in session with an
+    active OrganizationMembership — FOUNDER_OS_OPERATOR_NAME alone is legacy
+    fallback only and no longer satisfies require_tenant_mutation()."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'ui2_identity.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(identity_mod, "SessionLocal", session_factory)
+    monkeypatch.setattr(tenant_resolution_mod, "SessionLocal", session_factory)
+
+    db = session_factory()
+    try:
+        user = User(
+            email=_OPERATOR_EMAIL,
+            hashed_password=hash_password(_OPERATOR_PASSWORD),
+            full_name=_OPERATOR,
+            role="owner",
+            is_active=1,
+        )
+        db.add(user)
+        db.flush()
+        org = Organization(name="UI2 Org", slug="ui2-org", status=OrganizationStatus.ACTIVE)
+        db.add(org)
+        db.flush()
+        db.add(
+            OrganizationMembership(
+                user_id=user.id,
+                organization_id=org.id,
+                role="owner",
+                status=MembershipStatus.ACTIVE,
+            )
+        )
+        db.commit()
+        org_id = str(org.id)
+    finally:
+        db.close()
+
+    r = client.post(
+        "/login",
+        data={"email": _OPERATOR_EMAIL, "password": _OPERATOR_PASSWORD, "next": "/cockpit"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    return org_id
 
 
 def test_cockpit_route_loads(client: TestClient) -> None:
@@ -280,12 +360,12 @@ def test_api_failure_not_fake_zero(client: TestClient, monkeypatch: pytest.Monke
 
 
 def test_qualified_demand_accept_valid_human(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
     monkeypatch.setattr(
         "runner_api_routers.cockpit.accept_qualified_demand",
-        lambda db, did, rb, notes="": {
+        lambda db, did, rb, notes="", organization_id=None: {
             "ok": True,
             "idempotent": False,
             "demand_id": did,
@@ -294,7 +374,9 @@ def test_qualified_demand_accept_valid_human(
             "deal_created": False,
         },
     )
-    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: _FakeDB())
+    db = _FakeDB()
+    db.logs.append(_FakeAgentLog("qualified_demand_handoff", _DEMAND_ID, organization_id=human_session))
+    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/cockpit/actions/qualified-demand/accept",
         json={"demand_id": _DEMAND_ID},
@@ -326,19 +408,21 @@ def test_qualified_demand_accept_agent_operator_blocked(
 
 
 def test_qualified_demand_accept_idempotent(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
     monkeypatch.setattr(
         "runner_api_routers.cockpit.accept_qualified_demand",
-        lambda db, did, rb, notes="": {
+        lambda db, did, rb, notes="", organization_id=None: {
             "ok": True,
             "idempotent": True,
             "demand_id": did,
             "contact_id": _CONTACT_ID,
         },
     )
-    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: _FakeDB())
+    db = _FakeDB()
+    db.logs.append(_FakeAgentLog("qualified_demand_handoff", _DEMAND_ID, organization_id=human_session))
+    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/cockpit/actions/qualified-demand/accept",
         json={"demand_id": _DEMAND_ID},
@@ -400,17 +484,19 @@ def test_contact_status_invalid_status(client: TestClient, monkeypatch: pytest.M
 
 
 def test_spoofed_requested_by_ignored(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
     captured: list[str] = []
 
-    def _accept(db, did, rb, notes=""):  # noqa: ANN001
+    def _accept(db, did, rb, notes="", organization_id=None):  # noqa: ANN001
         captured.append(rb)
         return {"ok": True, "idempotent": True, "demand_id": did}
 
     monkeypatch.setattr("runner_api_routers.cockpit.accept_qualified_demand", _accept)
-    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: _FakeDB())
+    db = _FakeDB()
+    db.logs.append(_FakeAgentLog("qualified_demand_handoff", _DEMAND_ID, organization_id=human_session))
+    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/cockpit/actions/qualified-demand/accept",
         json={"demand_id": _DEMAND_ID, "requested_by": "agent:spoof"},
@@ -468,18 +554,20 @@ def test_high_score_display_does_not_mutate(
 
 
 def test_accept_no_deal_create(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
     monkeypatch.setenv("FOUNDER_OS_OPERATOR_NAME", _OPERATOR)
     monkeypatch.setattr(
         "runner_api_routers.cockpit.accept_qualified_demand",
-        lambda db, did, rb, notes="": {
+        lambda db, did, rb, notes="", organization_id=None: {
             "ok": True,
             "deal_created": False,
             "commercial_outcome_emitted": False,
         },
     )
-    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: _FakeDB())
+    db = _FakeDB()
+    db.logs.append(_FakeAgentLog("qualified_demand_handoff", _DEMAND_ID, organization_id=human_session))
+    monkeypatch.setattr("runner_api_routers.cockpit.SessionLocal", lambda: db)
     r = client.post(
         "/api/v1/cockpit/actions/qualified-demand/accept",
         json={"demand_id": _DEMAND_ID},
