@@ -86,8 +86,8 @@ def register_manual_demand(
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
     """Trusted-human manual registration → MC04.5 handoff (no Contact/Deal yet)."""
-    tenant = require_tenant_mutation()
     operator = _trusted_cockpit_operator()
+    tenant = require_tenant_mutation()
 
     if body.demand_id:
         try:
