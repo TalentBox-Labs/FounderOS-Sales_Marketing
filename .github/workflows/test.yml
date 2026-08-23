@@ -2,9 +2,9 @@ name: Tests & Fixture Verification
 
 on:
   push:
-    branches: [main, develop]
+    branches: [Main]
   pull_request:
-    branches: [main, develop]
+    branches: [Main]
 
 jobs:
   test:
