@@ -518,7 +518,7 @@ def test_m2_5_approved_send_after_current_validation(
         assert r.status_code == 200
         mock_n8n.assert_called_once()
         assert mock_n8n.call_args[0][0] == "send-email"
-        assert "rev-orch-m2:" in mock_n8n.call_args[0][1]["idempotency_key"]
+        assert mock_n8n.call_args[0][1]["idempotency_key"].startswith("approval_effect:")
 
 
 def test_m2_5_duplicate_scheduler_scan_does_not_duplicate_proposal(

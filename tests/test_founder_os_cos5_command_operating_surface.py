@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect as sa_inspect
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.operator_flow as of_router
 import runner_api_routers.qualified_demand as qd_router
@@ -197,15 +198,12 @@ def _add_approval(
     db = db_factory()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=request_id,
-                requested_by="system",
-                action_type="send_outreach",
+                action_type="send_outreach_email",
                 title="Outreach proposal",
                 description="Draft ready",
-                target_type="contact",
                 target_id=contact_id,
-                status="pending",
                 payload={"organization_id": str(org_id), "contact_id": contact_id},
             )
         )

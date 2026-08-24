@@ -16,6 +16,7 @@ from revenue_os.models.activity import Activity, ActivityType
 from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.automation_state import AgentActionLog
 from revenue_os.models.contact import Contact
+from revenue_os.services.approval_request_identity import FAMILY_BOOK_MEETING
 from revenue_os.services.follow_up_eligibility import contact_has_stop_tags
 
 STATE_NOT_ELIGIBLE = "BOOKING_NOT_ELIGIBLE"
@@ -58,12 +59,15 @@ def _has_booking_eligible_assessment(detail: dict[str, Any]) -> bool:
     return reply_type == "MEETING_INTEREST" or bool(assessment.get("meeting_interest"))
 
 
-def _pending_booking_approval(db: Session, contact_id: uuid.UUID) -> ApprovalRequest | None:
+def _pending_booking_approval(
+    db: Session, organization_id: str, contact_id: uuid.UUID
+) -> ApprovalRequest | None:
     return (
         db.query(ApprovalRequest)
         .filter(
             ApprovalRequest.status == "pending",
-            ApprovalRequest.action_type == "book_meeting",
+            ApprovalRequest.organization_id == str(organization_id),
+            ApprovalRequest.approval_family == FAMILY_BOOK_MEETING,
             ApprovalRequest.target_id == str(contact_id),
         )
         .first()
@@ -135,7 +139,7 @@ def evaluate_booking_eligibility(
             },
         }
 
-    pending = _pending_booking_approval(db, contact_id)
+    pending = _pending_booking_approval(db, org_id, contact_id)
     if pending is not None:
         return {
             "eligible": False,

@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.revenue_orchestration as rev_orch_mod
 import runner_api_routers.ui as ui_mod
@@ -137,15 +138,18 @@ def _seed(db_factory: sessionmaker) -> None:
             direction="outbound",
             status="completed",
         ))
-        db.add(ApprovalRequest(
+        db.add(build_test_approval_request(
             requested_by="booking_worker",
             action_type="book_meeting",
             title="Book meeting with Alice A",
             description="M4 booking proposal",
-            target_type="contact",
             target_id=str(_CONTACT_A),
-            payload={"organization_id": str(_ORG_A), "contact_id": str(_CONTACT_A)},
-            status="pending",
+            payload={
+                "organization_id": str(_ORG_A),
+                "contact_id": str(_CONTACT_A),
+                "selected_slot_start": "2026-01-15T10:00:00+00:00",
+                "selected_slot_end": "2026-01-15T10:30:00+00:00",
+            },
         ))
         db.commit()
     finally:
@@ -178,9 +182,9 @@ def test_int_d2_book_meeting_approval_renders_generically(client: TestClient, te
     r = client.get("/pending-approvals")
     assert r.status_code == 200
     assert "Book meeting with Alice A" in r.text
-    assert "book_meeting" in r.text
+    assert "Meeting booking" in r.text or "Approve booking" in r.text
     assert 'data-testid="approve-btn"' in r.text
-    assert "send-email" not in r.text.lower() or "book_meeting" in r.text
+    assert "send-email" not in r.text.lower() or "approve booking" in r.text.lower()
 
 
 def test_int_d2_booking_eligible_visible_without_booking_ui(client: TestClient, tenant_db: sessionmaker) -> None:
@@ -190,9 +194,13 @@ def test_int_d2_booking_eligible_visible_without_booking_ui(client: TestClient, 
     assert r.status_code == 200
     assert "Meeting interest" in r.text
     assert "Booking eligible" in r.text
-    assert "booking workflow pending" in r.text.lower()
+    assert (
+        "approval required" in r.text.lower()
+        or 'data-testid="booking-approval-pending"' in r.text
+    )
     assert "Propose booking" not in r.text
-    assert "/booking/propose" not in r.text
+    assert 'data-testid="booking-eligible-panel"' not in r.text
+    assert 'data-testid="booking-submit-proposal"' not in r.text
     assert "contactAction('booking')" not in r.text
 
 

@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.operator_flow as of_router
 import runner_api_routers.ui as ui_mod
@@ -232,17 +233,14 @@ def test_founder_required_attention_visible_with_pending_approval(tenant_db):
     _seed(tenant_db)
     db = tenant_db()
     try:
+        cid = str(uuid.uuid4())
         db.add(
-            ApprovalRequest(
-                id=str(uuid.uuid4()),
+            build_test_approval_request(
                 requested_by="followup_worker",
                 action_type="send_outreach_email",
                 title="Follow-up #1 to Ada",
-                description="test",
-                target_type="contact",
-                target_id=str(uuid.uuid4()),
-                status="pending",
-                payload={"organization_id": str(_ORG_A), "contact_id": str(uuid.uuid4())},
+                target_id=cid,
+                payload={"organization_id": str(_ORG_A), "contact_id": cid},
             )
         )
         db.commit()
@@ -299,21 +297,19 @@ def test_approved_follow_up_uses_existing_executor_once(monkeypatch, tenant_db):
 
     monkeypatch.setitem(appr_mod.EXECUTORS, "send_outreach_email", _fake)
     rid = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
     db = tenant_db()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
                 requested_by="followup_worker",
                 action_type="send_outreach_email",
                 title="Follow-up #1",
-                description="d",
-                target_type="contact",
-                target_id=str(uuid.uuid4()),
-                status="pending",
+                target_id=cid,
                 payload={
                     "organization_id": str(_ORG_A),
-                    "contact_id": str(uuid.uuid4()),
+                    "contact_id": cid,
                     "email": "ada@a.example",
                 },
             )
@@ -339,19 +335,17 @@ def test_rejected_follow_up_produces_no_outbound_effect(monkeypatch, tenant_db):
 
     monkeypatch.setitem(appr_mod.EXECUTORS, "send_outreach_email", _fake)
     rid = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
     db = tenant_db()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
                 requested_by="followup_worker",
                 action_type="send_outreach_email",
                 title="Follow-up #1",
-                description="d",
-                target_type="contact",
-                target_id=str(uuid.uuid4()),
-                status="pending",
-                payload={"organization_id": str(_ORG_A), "contact_id": str(uuid.uuid4())},
+                target_id=cid,
+                payload={"organization_id": str(_ORG_A), "contact_id": cid},
             )
         )
         db.commit()
@@ -368,19 +362,17 @@ def test_cross_tenant_approval_decide_fails_closed(monkeypatch, tenant_db):
 
     monkeypatch.setattr(appr_mod, "SessionLocal", tenant_db)
     rid = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
     db = tenant_db()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
                 requested_by="followup_worker",
                 action_type="send_outreach_email",
                 title="t",
-                description="d",
-                target_type="contact",
-                target_id=str(uuid.uuid4()),
-                status="pending",
-                payload={"organization_id": str(_ORG_A), "contact_id": str(uuid.uuid4())},
+                target_id=cid,
+                payload={"organization_id": str(_ORG_A), "contact_id": cid},
             )
         )
         db.commit()
@@ -401,19 +393,17 @@ def test_command_refresh_after_approval_decision(monkeypatch, tenant_db):
         lambda db, payload: {"handed_to_n8n": True},
     )
     rid = str(uuid.uuid4())
+    cid = str(uuid.uuid4())
     db = tenant_db()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
                 requested_by="followup_worker",
                 action_type="send_outreach_email",
                 title="Follow-up #1",
-                description="d",
-                target_type="contact",
-                target_id=str(uuid.uuid4()),
-                status="pending",
-                payload={"organization_id": str(_ORG_A), "contact_id": str(uuid.uuid4())},
+                target_id=cid,
+                payload={"organization_id": str(_ORG_A), "contact_id": cid},
             )
         )
         db.commit()

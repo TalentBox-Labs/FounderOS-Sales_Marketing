@@ -360,15 +360,16 @@ def handle_latest_reply(contact_id: str, *, organization_id: str) -> dict[str, A
         approval = None
         if contact.email:
             approval = request_approval(
-                requested_by=AGENT_OBJECTION_HANDLER, action_type="send_reply_email",
-                title=f"Reply to {ctx['name']} ({result['category'].replace('_', ' ')})",
-                description=f"Classified inbound reply as '{result['category']}'. Drafted response for approval.",
-                target_type="contact", target_id=str(contact.id),
-                payload={"contact_id": str(contact.id), "email": contact.email, "name": ctx["name"],
-                         "template": "objection_reply", "context": {"body": result["draft_reply"]},
-                         "organization_id": organization_id},
-                organization_id=organization_id,
-            )
+            requested_by=AGENT_OBJECTION_HANDLER, action_type="send_reply_email",
+            title=f"Reply to {ctx['name']} ({result['category'].replace('_', ' ')})",
+            description=f"Classified inbound reply as '{result['category']}'. Drafted response for approval.",
+            target_type="contact", target_id=str(contact.id),
+            payload={"contact_id": str(contact.id), "email": contact.email, "name": ctx["name"],
+                     "template": "objection_reply", "context": {"body": result["draft_reply"]},
+                     "organization_id": organization_id,
+                     "source_activity_id": str(reply.id)},
+            organization_id=organization_id,
+        )
         return {"ok": True, "category": result["category"], "draft_reply": result["draft_reply"],
                 "approval_id": approval["id"] if approval else None, "original_reply": reply.body}
     finally:

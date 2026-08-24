@@ -238,7 +238,7 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
                     executor=_exec,
                     target_type="contact",
                     target_id=item["contact_id"],
-                    logical_key=str(item.get("cadence_step") or "step"),
+                    logical_key=f"contact:{item['contact_id']}",
                 )
                 if work.state in (WorkState.SUCCEEDED, WorkState.WAITING_HUMAN):
                     proposed += 1
@@ -340,7 +340,7 @@ def job_scan_research_outreach_eligibility() -> dict[str, Any]:
                     executor=_exec,
                     target_type="contact",
                     target_id=item["contact_id"],
-                    logical_key=str(item.get("idempotency_key") or "research-outreach"),
+                    logical_key=f"contact:{item['contact_id']}",
                 )
                 if work.state in (WorkState.SUCCEEDED, WorkState.WAITING_HUMAN):
                     proposed += 1

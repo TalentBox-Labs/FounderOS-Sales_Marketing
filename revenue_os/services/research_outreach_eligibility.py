@@ -15,6 +15,11 @@ from revenue_os.models.activity import Activity, ActivityType
 from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.contact import Contact
 from revenue_os.services.acp1_autonomous_boundary import assert_contact_org
+from revenue_os.services.approval_request_identity import (
+    FAMILY_PROACTIVE_EMAIL,
+    proactive_email_logical_key,
+)
+from revenue_os.services.approvals import find_pending_approval
 from revenue_os.services.follow_up_eligibility import contact_has_stop_tags
 
 STATE_ELIGIBLE = "RESEARCH_OUTREACH_ELIGIBLE"
@@ -28,19 +33,18 @@ STATE_TENANT = "RESEARCH_OUTREACH_TENANT_INVALID"
 
 
 def research_outreach_idempotency_key(organization_id: str, contact_id: str) -> str:
-    """Stable proposal identity for claim/logical_key (not the per-run send key)."""
-    return f"rev-orch-m1:propose:{organization_id}:{contact_id}"
+    """Stable proposal identity for ACP-4 claim (aligned with proactive_email logical_key)."""
+    return proactive_email_logical_key(contact_id)
 
 
-def _pending_outreach_approval(db: Session, contact_id: str) -> ApprovalRequest | None:
-    return (
-        db.query(ApprovalRequest)
-        .filter(
-            ApprovalRequest.status == "pending",
-            ApprovalRequest.action_type == "send_outreach_email",
-            ApprovalRequest.target_id == contact_id,
-        )
-        .first()
+def _pending_outreach_approval(
+    db: Session, organization_id: str, contact_id: str
+) -> ApprovalRequest | None:
+    return find_pending_approval(
+        db,
+        organization_id=organization_id,
+        approval_family=FAMILY_PROACTIVE_EMAIL,
+        logical_key=proactive_email_logical_key(contact_id),
     )
 
 
@@ -112,7 +116,7 @@ def evaluate_research_outreach_eligibility(
             "contact_id": contact_id,
         }
 
-    pending = _pending_outreach_approval(db, contact_id)
+    pending = _pending_outreach_approval(db, org_id, contact_id)
     if pending is not None:
         return {
             "eligible": False,

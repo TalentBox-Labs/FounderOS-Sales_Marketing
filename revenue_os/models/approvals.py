@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, String, Text
+from sqlalchemy import JSON, Column, DateTime, Index, String, Text, text
 
 from revenue_os.models.base import Base
 
@@ -21,31 +21,49 @@ def _now() -> datetime:
 class ApprovalRequest(Base):
     """A proposed action waiting for a human decision.
 
-    Lifecycle: pending -> approved (then executed) | rejected
-    The proposed action only runs after approval; rejection archives it.
+    Lifecycle: pending -> approved | rejected | superseded
+    The proposed action only runs after approval; rejection/supersede archives it.
     """
 
     __tablename__ = "approval_requests"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    requested_by = Column(String(64), nullable=False)  # hermes, workflow, api, ...
-    action_type = Column(String(64), nullable=False)   # key into the approval executor registry
+    organization_id = Column(String(36), nullable=False, index=True)
+    approval_family = Column(String(64), nullable=False)
+    logical_key = Column(String(255), nullable=False)
+    requested_by = Column(String(64), nullable=False)
+    action_type = Column(String(64), nullable=False)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False, default="")
     target_type = Column(String(64), nullable=True)
     target_id = Column(String(64), nullable=True)
-    payload = Column(JSON, nullable=True)              # everything the executor needs
+    payload = Column(JSON, nullable=True)
     status = Column(String(32), nullable=False, default="pending", index=True)
-    # pending | approved | rejected
     decided_by = Column(String(128), nullable=True)
     decided_at = Column(DateTime(timezone=True), nullable=True)
     decision_note = Column(Text, nullable=True)
     execution_result = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
+    __table_args__ = (
+        Index(
+            "uq_approval_requests_pending_identity",
+            "organization_id",
+            "approval_family",
+            "logical_key",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
+        Index("ix_approval_requests_org_status", "organization_id", "status"),
+    )
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
+            "organization_id": self.organization_id,
+            "approval_family": self.approval_family,
+            "logical_key": self.logical_key,
             "requested_by": self.requested_by,
             "action_type": self.action_type,
             "title": self.title,

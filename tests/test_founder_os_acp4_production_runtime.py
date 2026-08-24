@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 from revenue_os.models.base import Base
 from revenue_os.models.contact import Contact, ContactSource, ContactStatus
 from revenue_os.models.organization import Organization, OrganizationStatus
@@ -456,13 +457,10 @@ def test_human_required_with_approval_passes_current_check(tenant_db):
     try:
         from revenue_os.models.approvals import ApprovalRequest
 
-        appr = ApprovalRequest(
+        appr = build_test_approval_request(
             id=str(uuid.uuid4()),
-            requested_by="test",
             action_type="send_outreach_email",
             title="Send outreach",
-            description="test",
-            target_type="contact",
             target_id=str(_CONTACT_A),
             status="approved",
             payload={"organization_id": str(_ORG_A), "contact_id": str(_CONTACT_A)},
@@ -892,15 +890,11 @@ def test_concurrent_approval_single_effect(tenant_db, monkeypatch):
     try:
         rid = str(uuid.uuid4())
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
-                requested_by="test",
                 action_type="send_outreach_email",
                 title="t",
-                description="d",
-                target_type="contact",
                 target_id=str(_CONTACT_A),
-                status="pending",
                 payload={
                     "organization_id": str(_ORG_A),
                     "contact_id": str(_CONTACT_A),
@@ -974,15 +968,11 @@ def test_approval_cross_tenant_blocked(tenant_db, monkeypatch):
     try:
         rid = str(uuid.uuid4())
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=rid,
-                requested_by="test",
                 action_type="send_outreach_email",
                 title="t",
-                description="d",
-                target_type="contact",
                 target_id=str(_CONTACT_A),
-                status="pending",
                 payload={
                     "organization_id": str(_ORG_A),
                     "contact_id": str(_CONTACT_A),
@@ -1022,16 +1012,13 @@ def test_approval_fence_rejects_foreign_org_approval(tenant_db):
     try:
         from revenue_os.models.approvals import ApprovalRequest
 
-        appr = ApprovalRequest(
+        appr = build_test_approval_request(
             id=str(uuid.uuid4()),
-            requested_by="test",
             action_type="send_outreach_email",
             title="t",
-            description="d",
-            target_type="contact",
             target_id=str(_CONTACT_B),
             status="approved",
-            payload={"organization_id": str(_ORG_B)},
+            payload={"organization_id": str(_ORG_B), "contact_id": str(_CONTACT_B)},
         )
         db.add(appr)
         db.commit()

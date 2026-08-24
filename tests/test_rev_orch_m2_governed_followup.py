@@ -334,7 +334,7 @@ def test_m2_approved_send_pass(
         r = client.post(f"/api/v1/approvals/{body['approval_id']}/approve", json={})
         assert r.status_code == 200
         mock_n8n.assert_called_once()
-        assert "rev-orch-m2:" in mock_n8n.call_args[0][1]["idempotency_key"]
+        assert mock_n8n.call_args[0][1]["idempotency_key"].startswith("approval_effect:")
 
 
 def test_m2_cross_tenant_propose_blocked(

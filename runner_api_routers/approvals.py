@@ -8,12 +8,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from revenue_os.services.approval_request_identity import classify_approval_family
 from revenue_os.services.approvals import (
     EXECUTORS,
     decide,
+    get_or_create_pending_approval,
     list_requests,
     pending_count,
-    request_approval,
 )
 from revenue_os.services.mutation_authority import HumanAuthorityError
 from revenue_os.services.tenant_resolution import (
@@ -41,15 +42,13 @@ class DecisionRequest(BaseModel):
 
 
 def _tenant_for_approval(request: Request):
-    """Prefer session tenant; fall back to legacy API-key path."""
-    tenant = resolve_tenant_context(request)
-    return tenant
+    return resolve_tenant_context(request)
 
 
 @router.get("")
 def list_approvals(
     request: Request,
-    status: str | None = Query(None, description="pending | approved | rejected"),
+    status: str | None = Query(None, description="pending | approved | rejected | superseded"),
     limit: int = Query(100, ge=1, le=500),
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
@@ -67,17 +66,41 @@ def list_approvals(
 @router.post("")
 def create_approval(
     req: ApprovalCreateRequest,
+    http_request: Request,
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """File an approval request manually (agents normally do this themselves)."""
-    result = request_approval(
+    """File an approval via canonical service — tenant and identity server-bound."""
+    tenant = require_tenant_context(http_request)
+    if req.action_type not in EXECUTORS:
+        raise HTTPException(status_code=422, detail=f"Unknown action_type: {req.action_type}")
+    try:
+        classify_approval_family(req.action_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if req.target_id is None and req.action_type != "create_deal":
+        raise HTTPException(status_code=422, detail="target_id required for this action_type")
+
+    payload = dict(req.payload or {})
+    payload.pop("organization_id", None)
+    payload.pop("approval_family", None)
+    payload.pop("logical_key", None)
+    payload.pop("effect_key", None)
+
+    if req.action_type == "send_reply_email" and not payload.get("source_activity_id"):
+        raise HTTPException(
+            status_code=422,
+            detail="source_activity_id required for send_reply_email",
+        )
+
+    result = get_or_create_pending_approval(
         requested_by="api",
         action_type=req.action_type,
         title=req.title,
         description=req.description,
         target_type=req.target_type,
         target_id=req.target_id,
-        payload=req.payload,
+        payload=payload,
+        organization_id=tenant.organization_id,
     )
     return {"ok": True, "request": result}
 
@@ -89,7 +112,6 @@ def approve_request(
     req: DecisionRequest = DecisionRequest(),
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Approve — the proposed action executes immediately."""
     tenant = require_tenant_context(http_request)
     try:
         result = decide(
@@ -112,7 +134,6 @@ def reject_request(
     req: DecisionRequest = DecisionRequest(),
     _: str | None = Depends(_verify_api_key),
 ) -> dict[str, Any]:
-    """Reject — the proposed action is archived and never runs."""
     tenant = require_tenant_context(http_request)
     try:
         result = decide(

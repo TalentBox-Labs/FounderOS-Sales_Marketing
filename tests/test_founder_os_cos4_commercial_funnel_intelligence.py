@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, inspect as sa_inspect
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.operator_flow as of_router
 import runner_api_routers.qualified_demand as qd_router
@@ -271,13 +272,11 @@ def test_tenant_a_excludes_tenant_b_pending_approval(tenant_db: sessionmaker) ->
     db = tenant_db()
     try:
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 requested_by=_OPERATOR,
-                action_type="send_outreach",
+                action_type="send_outreach_email",
                 title="Outreach approval B",
-                target_type="contact",
                 target_id=str(_CONTACT_B),
-                status="pending",
                 payload={"organization_id": str(_ORG_B), "contact_id": str(_CONTACT_B)},
             )
         )

@@ -219,3 +219,55 @@ def repo_with_artifacts(tmp_path: Path) -> Path:
     (repo / "output" / "qa_reports").mkdir(parents=True, exist_ok=True)
 
     return repo
+
+
+def build_test_approval_request(**overrides):
+    """Construct ApprovalRequest rows for tests with canonical identity fields."""
+    from revenue_os.models.approvals import ApprovalRequest
+    from revenue_os.services.approval_request_identity import (
+        FAMILY_PROACTIVE_EMAIL,
+        build_logical_key,
+        classify_approval_family,
+        proactive_email_logical_key,
+    )
+
+    payload = dict(overrides.pop("payload", {}) or {})
+    action_type = overrides.pop("action_type", "send_outreach_email")
+    target_id = overrides.pop("target_id", None)
+    org_id = str(
+        overrides.pop(
+            "organization_id",
+            payload.get("organization_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        )
+    )
+    payload.setdefault("organization_id", org_id)
+    if target_id:
+        payload.setdefault("contact_id", str(target_id))
+    try:
+        family = classify_approval_family(action_type)
+        logical_key = build_logical_key(
+            approval_family=family,
+            organization_id=org_id,
+            target_id=str(target_id) if target_id else None,
+            payload=payload,
+        )
+    except ValueError:
+        family = FAMILY_PROACTIVE_EMAIL
+        logical_key = proactive_email_logical_key(str(target_id or payload.get("contact_id", "x")))
+
+    defaults = {
+        "organization_id": org_id,
+        "approval_family": family,
+        "logical_key": logical_key,
+        "requested_by": "test",
+        "action_type": action_type,
+        "title": "test approval",
+        "description": "test",
+        "status": "pending",
+    }
+    if target_id is not None:
+        defaults["target_type"] = "contact"
+        defaults["target_id"] = str(target_id)
+    defaults.update(overrides)
+    defaults["payload"] = payload
+    return ApprovalRequest(**defaults)

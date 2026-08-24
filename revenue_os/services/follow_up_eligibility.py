@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session
 from revenue_os.models.activity import Activity, ActivityType
 from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.contact import Contact
+from revenue_os.services.approval_request_identity import (
+    FAMILY_PROACTIVE_EMAIL,
+    proactive_email_logical_key,
+)
+from revenue_os.services.approvals import find_pending_approval
 
 # Bounded M2 cadence: initial outreach → wait → follow-up 1 → wait → follow-up 2
 MAX_FOLLOW_UP_STEPS = 2
@@ -128,33 +133,15 @@ def _has_inbound_reply_after(
 
 def _pending_follow_up_approval(
     db: Session,
+    organization_id: str,
     contact_id: str,
-    *,
-    cadence_step: int,
-    source_activity_id: str,
-    idempotency_key: str,
 ) -> ApprovalRequest | None:
-    pending = (
-        db.query(ApprovalRequest)
-        .filter(
-            ApprovalRequest.status == "pending",
-            ApprovalRequest.action_type == "send_outreach_email",
-            ApprovalRequest.target_id == contact_id,
-        )
-        .all()
+    return find_pending_approval(
+        db,
+        organization_id=organization_id,
+        approval_family=FAMILY_PROACTIVE_EMAIL,
+        logical_key=proactive_email_logical_key(contact_id),
     )
-    for row in pending:
-        payload = row.payload or {}
-        if payload.get("workflow_kind") != "rev_orch_m2_follow_up":
-            continue
-        if (
-            payload.get("follow_up_step") == cadence_step
-            and str(payload.get("source_activity_id")) == source_activity_id
-        ):
-            return row
-        if payload.get("idempotency_key") == idempotency_key:
-            return row
-    return None
 
 
 def follow_up_idempotency_key(
@@ -258,13 +245,8 @@ def evaluate_follow_up_eligibility(
         }
 
     idem = follow_up_idempotency_key(contact_id, next_step, str(source.id))
-    pending = _pending_follow_up_approval(
-        db,
-        contact_id,
-        cadence_step=next_step,
-        source_activity_id=str(source.id),
-        idempotency_key=idem,
-    )
+    org_id = str(contact.organization_id)
+    pending = _pending_follow_up_approval(db, org_id, contact_id)
     if pending is not None:
         return {
             "eligible": False,

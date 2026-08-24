@@ -1,0 +1,240 @@
+"""Canonical ApprovalRequest identity — family, logical_key, material consent."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from typing import Any
+
+FAMILY_PROACTIVE_EMAIL = "proactive_email"
+FAMILY_REPLY_EMAIL = "reply_email"
+FAMILY_BOOK_MEETING = "book_meeting"
+FAMILY_LINKEDIN_MESSAGE = "linkedin_message"
+FAMILY_CREATE_DEAL = "create_deal"
+
+STATUS_PENDING = "pending"
+STATUS_APPROVED = "approved"
+STATUS_REJECTED = "rejected"
+STATUS_SUPERSEDED = "superseded"
+
+TERMINAL_STATUSES = frozenset(
+    {STATUS_APPROVED, STATUS_REJECTED, STATUS_SUPERSEDED}
+)
+
+
+def classify_approval_family(action_type: str) -> str:
+    match action_type:
+        case "send_outreach_email":
+            return FAMILY_PROACTIVE_EMAIL
+        case "send_reply_email":
+            return FAMILY_REPLY_EMAIL
+        case "book_meeting":
+            return FAMILY_BOOK_MEETING
+        case "send_linkedin_message":
+            return FAMILY_LINKEDIN_MESSAGE
+        case "create_deal":
+            return FAMILY_CREATE_DEAL
+        case _:
+            raise ValueError(f"Unknown approval action_type: {action_type}")
+
+
+def normalize_slot_timestamp(raw: str) -> str:
+    """Deterministic ISO UTC normalization for booking slot identity."""
+    dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat()
+
+
+def build_logical_key(
+    *,
+    approval_family: str,
+    organization_id: str,
+    target_id: str | None,
+    payload: dict[str, Any],
+) -> str:
+    contact_id = str(payload.get("contact_id") or target_id or "").strip()
+    if not contact_id:
+        raise ValueError("Approval logical identity requires contact_id or target_id")
+
+    match approval_family:
+        case family if family == FAMILY_PROACTIVE_EMAIL:
+            return f"contact:{contact_id}"
+        case family if family == FAMILY_REPLY_EMAIL:
+            source_activity_id = str(payload.get("source_activity_id") or "").strip()
+            if not source_activity_id:
+                raise ValueError(
+                    "Reply approval requires repository-grounded source_activity_id"
+                )
+            return f"contact:{contact_id}:source_activity:{source_activity_id}"
+        case family if family == FAMILY_BOOK_MEETING:
+            start = payload.get("selected_slot_start")
+            end = payload.get("selected_slot_end")
+            if not start or not end:
+                raise ValueError("Booking approval requires selected_slot_start/end")
+            ns = normalize_slot_timestamp(str(start))
+            ne = normalize_slot_timestamp(str(end))
+            return f"contact:{contact_id}:slot:{ns}:{ne}"
+        case family if family == FAMILY_LINKEDIN_MESSAGE:
+            return f"contact:{contact_id}"
+        case family if family == FAMILY_CREATE_DEAL:
+            return f"contact:{contact_id}"
+        case _:
+            raise ValueError(f"Unsupported approval_family: {approval_family}")
+
+
+def resolve_approval_identity(
+    *,
+    action_type: str,
+    organization_id: str,
+    target_id: str | None,
+    payload: dict[str, Any],
+) -> tuple[str, str, str]:
+    org_id = str(organization_id or payload.get("organization_id") or "").strip()
+    if not org_id:
+        raise ValueError("Approval requires organization_id")
+    family = classify_approval_family(action_type)
+    logical_key = build_logical_key(
+        approval_family=family,
+        organization_id=org_id,
+        target_id=target_id,
+        payload=payload,
+    )
+    return org_id, family, logical_key
+
+
+def effect_key_for_approval(approval_id: str, action_type: str) -> str:
+    return f"approval_effect:{approval_id}:{action_type}"
+
+
+def _material_proactive(payload: dict[str, Any]) -> dict[str, Any]:
+    ctx = payload.get("context") or {}
+    return {
+        "email": payload.get("email"),
+        "template": payload.get("template"),
+        "body": ctx.get("body") if isinstance(ctx, dict) else None,
+    }
+
+
+def _material_reply(payload: dict[str, Any]) -> dict[str, Any]:
+    ctx = payload.get("context") or {}
+    return {
+        "email": payload.get("email"),
+        "source_activity_id": payload.get("source_activity_id"),
+        "body": ctx.get("body") if isinstance(ctx, dict) else None,
+    }
+
+
+def _material_booking(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "selected_slot_start": payload.get("selected_slot_start"),
+        "selected_slot_end": payload.get("selected_slot_end"),
+        "meeting_title": payload.get("meeting_title"),
+    }
+
+
+def _material_linkedin(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "connection_note": payload.get("connection_note"),
+        "follow_up_dm": payload.get("follow_up_dm"),
+    }
+
+
+def _material_create_deal(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"value": payload.get("value")}
+
+
+def material_consent_fingerprint(
+    approval_family: str, payload: dict[str, Any]
+) -> str:
+    match approval_family:
+        case family if family == FAMILY_PROACTIVE_EMAIL:
+            material = _material_proactive(payload)
+        case family if family == FAMILY_REPLY_EMAIL:
+            material = _material_reply(payload)
+        case family if family == FAMILY_BOOK_MEETING:
+            material = _material_booking(payload)
+        case family if family == FAMILY_LINKEDIN_MESSAGE:
+            material = _material_linkedin(payload)
+        case family if family == FAMILY_CREATE_DEAL:
+            material = _material_create_deal(payload)
+        case _:
+            material = {}
+    encoded = json.dumps(material, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def proactive_email_logical_key(contact_id: str) -> str:
+    return f"contact:{contact_id}"
+
+
+def reply_email_logical_key(contact_id: str, source_activity_id: str) -> str:
+    return f"contact:{contact_id}:source_activity:{source_activity_id}"
+
+
+def booking_logical_key(contact_id: str, slot_start: str, slot_end: str) -> str:
+    ns = normalize_slot_timestamp(slot_start)
+    ne = normalize_slot_timestamp(slot_end)
+    return f"contact:{contact_id}:slot:{ns}:{ne}"
+
+
+def backfill_identity_from_row(
+    action_type: str,
+    target_id: str | None,
+    payload: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Best-effort identity for migration backfill."""
+    payload = dict(payload or {})
+    org_id = payload.get("organization_id")
+    if not org_id or not action_type:
+        return None, None, None
+    try:
+        family = classify_approval_family(action_type)
+        logical_key = build_logical_key(
+            approval_family=family,
+            organization_id=str(org_id),
+            target_id=target_id,
+            payload=payload,
+        )
+        return str(org_id), family, logical_key
+    except ValueError:
+        if action_type == "send_outreach_email" and target_id:
+            return str(org_id), FAMILY_PROACTIVE_EMAIL, proactive_email_logical_key(
+                str(target_id)
+            )
+        if action_type == "send_reply_email" and target_id:
+            sid = payload.get("source_activity_id")
+            if sid:
+                return (
+                    str(org_id),
+                    FAMILY_REPLY_EMAIL,
+                    reply_email_logical_key(str(target_id), str(sid)),
+                )
+        if action_type == "book_meeting" and target_id:
+            start = payload.get("selected_slot_start")
+            end = payload.get("selected_slot_end")
+            if start and end:
+                try:
+                    return (
+                        str(org_id),
+                        FAMILY_BOOK_MEETING,
+                        booking_logical_key(str(target_id), str(start), str(end)),
+                    )
+                except ValueError:
+                    pass
+        if action_type == "send_linkedin_message" and target_id:
+            return (
+                str(org_id),
+                FAMILY_LINKEDIN_MESSAGE,
+                proactive_email_logical_key(str(target_id)),
+            )
+        if action_type == "create_deal" and target_id:
+            return (
+                str(org_id),
+                FAMILY_CREATE_DEAL,
+                proactive_email_logical_key(str(target_id)),
+            )
+        return str(org_id), None, None

@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import revenue_os.models  # noqa: F401
+from tests.conftest import build_test_approval_request
 import runner_api_routers.identity as identity_mod
 import runner_api_routers.ui as ui_mod
 from revenue_os.auth import hash_password
@@ -212,16 +213,14 @@ def _seed_tenants(db_factory: sessionmaker) -> dict[str, str]:
             )
         )
         db.add(
-            ApprovalRequest(
+            build_test_approval_request(
                 id=_APPROVAL_A,
                 requested_by="workflow",
                 action_type="send_outreach_email",
                 title="Tenant A outreach draft",
                 description="Private to org A",
-                target_type="contact",
                 target_id=str(_CONTACT_A),
                 payload={"organization_id": str(_ORG_A), "contact_id": str(_CONTACT_A)},
-                status="pending",
             )
         )
         db.commit()
