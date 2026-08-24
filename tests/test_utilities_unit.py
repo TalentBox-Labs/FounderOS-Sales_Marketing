@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from src.base_crew import BaseCrew
+from src.qa_crew import QACrew
 from src.tools.csv_reader import get_active_content
 from src.tools.runtime_paths import load_runtime_config
 from runner_api_routers.utils import _validate_week_id
@@ -157,43 +160,60 @@ class TestPathResolution:
 class TestFileOperations:
     """Test file reading and writing utilities."""
 
-    def test_read_file_returns_content(self, tmp_path: Path) -> None:
-        """File reading returns correct content."""
-        from src.base_crew import BaseCrew
+    # BaseCrew is abstract and requires agents_yaml_path/tasks_yaml_path —
+    # these use the concrete QACrew via the same monkeypatch pattern as
+    # tests/test_crews_unit.py::TestBaseCrew, which exercises the same
+    # read_file/save_file methods without needing real YAML/LLM setup.
 
+    def test_read_file_returns_content(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """File reading returns correct content."""
         test_file = tmp_path / "test.md"
         test_file.write_text("Test content\n")
 
-        crew = BaseCrew("test", repo_root=tmp_path)
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
+
+        crew = QACrew(repo_root=tmp_path)
         content = crew.read_file("test.md")
 
         assert content == "Test content\n"
 
-    def test_read_file_raises_on_missing_file(self, tmp_path: Path) -> None:
+    def test_read_file_raises_on_missing_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """File reading raises error for missing files."""
-        from src.base_crew import BaseCrew
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
-        crew = BaseCrew("test", repo_root=tmp_path)
+        crew = QACrew(repo_root=tmp_path)
 
         with pytest.raises(FileNotFoundError):
             crew.read_file("nonexistent.md")
 
-    def test_save_file_creates_directories(self, tmp_path: Path) -> None:
+    def test_save_file_creates_directories(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """File saving creates parent directories."""
-        from src.base_crew import BaseCrew
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
-        crew = BaseCrew("test", repo_root=tmp_path)
+        crew = QACrew(repo_root=tmp_path)
         crew.save_file("deep/nested/output.md", "content")
 
         saved_file = tmp_path / "deep" / "nested" / "output.md"
         assert saved_file.is_file()
         assert saved_file.read_text() == "content"
 
-    def test_save_file_overwrites_existing(self, tmp_path: Path) -> None:
+    def test_save_file_overwrites_existing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """File saving overwrites existing files."""
-        from src.base_crew import BaseCrew
+        monkeypatch.setattr(BaseCrew, "_load_yaml", lambda self, path: {})
+        monkeypatch.setattr(BaseCrew, "_build_llm", lambda self: MagicMock())
 
-        crew = BaseCrew("test", repo_root=tmp_path)
+        crew = QACrew(repo_root=tmp_path)
 
         output_file = tmp_path / "output.md"
         output_file.write_text("old content")
@@ -325,8 +345,13 @@ class TestDataValidation:
 
         crew = EditorCrew()
 
-        # Valid with frontmatter
-        valid = "---\ntitle: Test\n---\n# Content"
+        # Valid with frontmatter (validate_output() rejects anything under
+        # 100 chars as "too short", so padded with real body text here).
+        valid = (
+            "---\ntitle: Test\n---\n# Content\n\n"
+            "This paragraph has enough body text to clear the minimum length "
+            "the editor's output-quality check requires."
+        )
         is_valid, _ = crew.validate_output(valid)
         assert is_valid
 
