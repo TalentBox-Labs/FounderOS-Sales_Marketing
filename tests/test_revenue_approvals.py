@@ -159,3 +159,20 @@ class TestExecutors:
         assert result["delivery"] == "manual"
         assert result["connection_note"] == "hi"
 
+    def test_send_whatsapp_campaign_with_no_contacts(self) -> None:
+        from revenue_os.integrations.whatsapp import WhatsAppClient
+        from revenue_os.services.approvals import _execute_send_whatsapp_campaign
+
+        result = _execute_send_whatsapp_campaign(None, {"tag": "nonexistent-tag-xyz", "message": "hi"})
+        assert result == {"sent": 0, "failed": 0, "total": 0}
+
+    def test_publish_linkedin_post_and_social_post_are_manual(self) -> None:
+        from revenue_os.services.approvals import _execute_publish_linkedin_post, _execute_publish_social_post
+
+        li = _execute_publish_linkedin_post(None, {"body": "draft post"})
+        assert li["delivery"] == "manual"
+        assert li["body"] == "draft post"
+
+        social = _execute_publish_social_post(None, {"variants": {"linkedin": "a", "x": "b"}})
+        assert social["delivery"] == "manual"
+        assert social["variants"] == {"linkedin": "a", "x": "b"}

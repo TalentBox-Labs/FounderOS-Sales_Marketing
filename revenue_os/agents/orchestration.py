@@ -101,7 +101,7 @@ def seed_platform_agents() -> None:
     """
     AgentCoordinator.register_agent(
         "heartbeat", "operations",
-        capabilities=["score_new_leads", "check_deals_at_risk", "snapshot_pipeline_metrics", "hermes_goal_check", "sync_gmail_inbox"],
+        capabilities=["score_new_leads", "check_deals_at_risk", "snapshot_pipeline_metrics", "hermes_goal_check", "sync_gmail_inbox", "run_marketing_cycle"],
         description="Autonomous scheduler — runs the platform's background jobs on a fixed interval.",
     )
     AgentCoordinator.register_agent(
@@ -148,6 +148,111 @@ def seed_platform_agents() -> None:
         "objection_handler_agent", "sdr",
         capabilities=["handle_latest_reply"],
         description="Classifies inbound replies (not interested / send more info / wrong person) and drafts a matching response for approval.",
+    )
+    AgentCoordinator.register_agent(
+        "marketing_orchestrator", "marketing_manager",
+        capabilities=["run_marketing_cycle"],
+        description="The AI CMO — runs the full research -> persona -> strategy -> content -> campaign -> analytics pipeline and coordinates the marketing agent crew.",
+    )
+    AgentCoordinator.register_agent(
+        "market_research_agent", "marketing",
+        capabilities=["run_market_research"],
+        description="Tracks competitors, industry trends, and buyer pain points via real Reddit/Hacker News signals and competitor LinkedIn data.",
+    )
+    AgentCoordinator.register_agent(
+        "customer_persona_agent", "marketing",
+        capabilities=["update_customer_persona"],
+        description="Builds and continuously refreshes buyer personas from real CRM data.",
+    )
+    AgentCoordinator.register_agent(
+        "content_strategy_agent", "marketing",
+        capabilities=["build_content_strategy"],
+        description="Plans a content calendar grounded in tracked SEO keywords and active goals.",
+    )
+    AgentCoordinator.register_agent(
+        "seo_strategy_agent", "marketing",
+        capabilities=["build_seo_strategy"],
+        description="Finds keyword gaps, topic clusters, and internal-linking opportunities from real tracked keywords.",
+    )
+    AgentCoordinator.register_agent(
+        "geo_agent", "marketing",
+        capabilities=["analyze_geo_readiness"],
+        description="Optimizes content for AI answer engines (ChatGPT/Claude/Gemini/Perplexity) — entity coverage, FAQs, citations.",
+    )
+    AgentCoordinator.register_agent(
+        "content_writer_agent", "marketing",
+        capabilities=["write_content"],
+        description="Writes blogs, landing pages, and case studies, publishing them as real Knowledge Base articles.",
+    )
+    AgentCoordinator.register_agent(
+        "linkedin_content_agent", "marketing",
+        capabilities=["draft_linkedin_content"],
+        description="Drafts founder-led LinkedIn posts and announcements, filed for approval before posting.",
+    )
+    AgentCoordinator.register_agent(
+        "social_media_agent", "marketing",
+        capabilities=["draft_social_posts"],
+        description="Drafts platform-specific variants for LinkedIn, X, Instagram, and more, filed for approval.",
+    )
+    AgentCoordinator.register_agent(
+        "video_strategy_agent", "marketing",
+        capabilities=["plan_video"],
+        description="Plans video hooks, talking points, B-roll, and captions.",
+    )
+    AgentCoordinator.register_agent(
+        "creative_design_agent", "marketing",
+        capabilities=["create_design_brief"],
+        description="Generates creative briefs for graphics, carousels, and ad creatives for a designer or image-gen tool to execute.",
+    )
+    AgentCoordinator.register_agent(
+        "email_marketing_agent", "marketing",
+        capabilities=["draft_email_campaign"],
+        description="Drafts newsletters and campaign emails, filed for approval before sending to a real audience segment.",
+    )
+    AgentCoordinator.register_agent(
+        "whatsapp_marketing_agent", "marketing",
+        capabilities=["draft_whatsapp_campaign"],
+        description="Drafts WhatsApp campaigns, filed for approval before sending via the real Meta Cloud API.",
+    )
+    AgentCoordinator.register_agent(
+        "campaign_manager_agent", "marketing",
+        capabilities=["plan_campaign"],
+        description="Plans and coordinates multi-channel campaigns with clear goals, timelines, and KPIs.",
+    )
+    AgentCoordinator.register_agent(
+        "marketing_automation_agent", "marketing",
+        capabilities=["trigger_marketing_automation"],
+        description="Fires n8n marketing workflows — publishing, CRM sync, scheduled posts — with real payload data.",
+    )
+    AgentCoordinator.register_agent(
+        "analytics_attribution_agent", "marketing",
+        capabilities=["generate_analytics_report"],
+        description="Tracks attribution, LTV, CAC, and campaign performance from real platform data; produces executive summaries.",
+    )
+    AgentCoordinator.register_agent(
+        "community_engagement_agent", "marketing",
+        capabilities=["monitor_communities"],
+        description="Monitors Reddit discussions and drafts thoughtful (non-pitchy) replies for approval.",
+    )
+    AgentCoordinator.register_agent(
+        "brand_monitoring_agent", "marketing",
+        capabilities=["monitor_brand_mentions"],
+        description="Tracks brand mentions on Reddit and classifies sentiment, flagging negative mentions.",
+    )
+    AgentCoordinator.register_agent(
+        "cro_agent", "marketing",
+        capabilities=["analyze_conversion_funnel"],
+        description="Analyzes the real deal-stage funnel and recommends conversion improvements.",
+    )
+    AgentCoordinator.register_agent(
+        "partnership_influencer_agent", "marketing",
+        capabilities=["discover_partnership_leads"],
+        description="Discovers potential partners, podcasts, and communities via Reddit/HN, and drafts outreach pitches.",
+    )
+    AgentCoordinator.register_agent(
+        "product_marketing_agent", "marketing",
+        capabilities=["build_product_marketing_kit"],
+        description="Coordinates launch announcements, positioning, and sales enablement materials for new features.",
     )
 
 

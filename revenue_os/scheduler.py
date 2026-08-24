@@ -409,6 +409,69 @@ def job_sync_gmail_inbox() -> dict[str, Any]:
     }
 
 
+def job_run_marketing_cycle() -> dict[str, Any]:
+    """The AI CMO's daily cycle — market research, persona refresh, content
+    strategy, and drafted campaigns, all in one pass, per authorized org.
+
+    ACP-3: per-org run is a governed WorkItem, same shape as gmail sync.
+    """
+    from revenue_os.services.acp2_work_contract import WORK_MARKETING_CYCLE, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
+    from revenue_os.services.marketing_orchestrator import run_marketing_cycle
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
+
+    db = SessionLocal()
+    try:
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="marketing_cycle_blocked")
+        if blocked is not None:
+            return blocked
+    finally:
+        db.close()
+
+    day_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+    results = []
+    db = SessionLocal()
+    try:
+        for organization_id in orgs or []:
+
+            def _exec(_work, oid=organization_id):  # noqa: ANN001
+                return run_marketing_cycle(organization_id=oid)
+
+            work = orchestrate_claimed(
+                db,
+                work_kind=WORK_MARKETING_CYCLE,
+                organization_id=organization_id,
+                source="scheduler",
+                actor=ACTOR,
+                executor=_exec,
+                target_type="organization",
+                target_id=organization_id,
+                logical_key=day_key,
+            )
+            results.append(
+                {
+                    "organization_id": organization_id,
+                    "state": work.state.value,
+                    "result": work.result,
+                }
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    return {
+        "ok": True,
+        "organizations": list(orgs or []),
+        "results": results,
+        "orchestrated": True,
+        "succeeded": sum(1 for r in results if r["state"] == WorkState.SUCCEEDED.value),
+    }
+
+
 def job_snapshot_pipeline_metrics() -> dict[str, Any]:
     """Persist pipeline-health snapshots per authorized organization.
 
@@ -657,6 +720,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "acp3_reconcile", job_acp3_reconcile,
         _env_int("HEARTBEAT_ACP3_RECONCILE_SEC", 1800),
+    )
+    scheduler.register(
+        "run_marketing_cycle", job_run_marketing_cycle,
+        _env_int("HEARTBEAT_MARKETING_CYCLE_SEC", 86400),
     )
     if heartbeat_enabled():
         scheduler.start()

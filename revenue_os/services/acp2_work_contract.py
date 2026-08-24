@@ -50,6 +50,7 @@ WORK_DEAL_STAGE = "deal_stage_mutation"
 WORK_CONTACT_STATUS = "contact_status_mutation"
 WORK_QD_DECIDE = "qualified_demand_decide"
 WORK_APPROVAL_DECIDE = "approval_decide"
+WORK_MARKETING_CYCLE = "marketing_cycle"
 
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_MAX_DELEGATION_DEPTH = 2
