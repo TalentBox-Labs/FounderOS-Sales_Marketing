@@ -39,20 +39,33 @@ class TestHeartbeatScheduler:
         with pytest.raises(KeyError):
             scheduler.run_job_now("this_job_does_not_exist")
 
-    def test_marketing_cycle_job_is_wired_to_orchestrator(self) -> None:
-        """job_run_marketing_cycle must call the real orchestrator, not a
-        stub — verified by asserting it returns the orchestrator's own
-        report shape (an 'ok' key and a 'stages' dict)."""
+    def test_marketing_cycle_job_is_wired_to_orchestrator(self, monkeypatch, revenue_db) -> None:
+        """job_run_marketing_cycle is a governed per-org WorkItem, same
+        shape as job_sync_gmail_inbox — verified by asserting it actually
+        ran the orchestrator for the allowlisted, ACTIVE org and returned
+        its real report shape (an 'ok' key and a 'stages' dict) as the
+        per-org result."""
         from unittest.mock import patch
 
+        from revenue_os.models.organization import Organization, OrganizationStatus
         from revenue_os.scheduler import job_run_marketing_cycle
 
+        org = Organization(name="Marketing Cycle Test Org", slug="marketing-cycle-test", status=OrganizationStatus.ACTIVE)
+        revenue_db.add(org)
+        revenue_db.commit()
+        revenue_db.refresh(org)
+        org_id = str(org.id)
+
+        monkeypatch.setenv("ACP1_AUTONOMOUS_ORGANIZATION_IDS", org_id)
         with patch("revenue_os.integrations.public_sources.search_reddit", return_value=[]), \
              patch("revenue_os.integrations.public_sources.search_hackernews", return_value=[]), \
              patch("revenue_os.integrations.n8n.trigger_workflow", return_value=None):
             result = job_run_marketing_cycle()
         assert result["ok"] is True
-        assert "stages" in result
+        assert org_id in result["organizations"]
+        cycle_result = result["results"][0]["result"]
+        assert cycle_result["ok"] is True
+        assert "stages" in cycle_result
 
 
 class TestAgentRegistry:

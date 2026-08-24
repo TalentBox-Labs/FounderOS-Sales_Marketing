@@ -32,7 +32,9 @@ def _campaign_dict(c: Any) -> dict[str, Any]:
 # ── Agent 11: Email Marketing ────────────────────────────────────────────────
 
 
-def draft_email_campaign(campaign_type: str, context: str = "", audience_status: str | None = None) -> dict[str, Any]:
+def draft_email_campaign(
+    campaign_type: str, context: str = "", audience_status: str | None = None, *, organization_id: str,
+) -> dict[str, Any]:
     """Drafts campaign copy and files ONE approval to send it to a real
     audience segment (contacts matching audience_status, or everyone with
     an email on file)."""
@@ -40,10 +42,13 @@ def draft_email_campaign(campaign_type: str, context: str = "", audience_status:
     from revenue_os.models.contact import Contact, ContactStatus
     from revenue_os.services import ai_service
     from revenue_os.services.approvals import request_approval
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     db = SessionLocal()
     try:
-        query = db.query(Contact).filter(Contact.email.isnot(None))
+        query = db.query(Contact).filter(
+            Contact.email.isnot(None), Contact.organization_id == tenant_org_uuid(organization_id)
+        )
         if audience_status:
             try:
                 query = query.filter(Contact.status == ContactStatus(audience_status))
@@ -60,6 +65,7 @@ def draft_email_campaign(campaign_type: str, context: str = "", audience_status:
         title=f"Email campaign: {campaign_type} to {len(recipients)} contacts",
         description=f"AI-drafted campaign. Audience: {audience_status or 'all contacts with email'} ({len(recipients)} recipients).",
         payload={"campaign_type": campaign_type, "recipients": recipients, **campaign},
+        organization_id=organization_id,
     )
     return {"ok": True, "recipient_count": len(recipients), "approval_id": approval["id"], **campaign}
 
@@ -67,9 +73,15 @@ def draft_email_campaign(campaign_type: str, context: str = "", audience_status:
 # ── Agent 12: WhatsApp Marketing ─────────────────────────────────────────────
 
 
-def draft_whatsapp_campaign(campaign_type: str, context: str = "", tag: str | None = None) -> dict[str, Any]:
+def draft_whatsapp_campaign(
+    campaign_type: str, context: str = "", tag: str | None = None, *, organization_id: str,
+) -> dict[str, Any]:
     """Drafts WhatsApp campaign copy and files it for approval before
-    sending to any real audience tag."""
+    sending to any real audience tag.
+
+    Note: WhatsAppClient's contact store is global/untenanted (same as the
+    existing M3 broadcast feature this reuses) — recipient selection isn't
+    org-scoped yet."""
     from revenue_os.integrations.whatsapp import WhatsAppClient
     from revenue_os.services import ai_service
     from revenue_os.services.approvals import request_approval
@@ -82,6 +94,7 @@ def draft_whatsapp_campaign(campaign_type: str, context: str = "", tag: str | No
         title=f"WhatsApp campaign: {campaign_type} to {len(recipients)} contact(s)" + (f" (tag: {tag})" if tag else ""),
         description=f"AI-drafted WhatsApp message for {len(recipients)} recipient(s).",
         payload={"campaign_type": campaign_type, "tag": tag, "message": campaign["message"]},
+        organization_id=organization_id,
     )
     return {"ok": True, "recipient_count": len(recipients), "approval_id": approval["id"], **campaign}
 
@@ -89,19 +102,20 @@ def draft_whatsapp_campaign(campaign_type: str, context: str = "", tag: str | No
 # ── Agent 13: Campaign Manager ───────────────────────────────────────────────
 
 
-def plan_campaign(name: str, goal: str, channels: list[str], context: str = "") -> dict[str, Any]:
+def plan_campaign(name: str, goal: str, channels: list[str], context: str = "", *, organization_id: str) -> dict[str, Any]:
     """Plans a multi-channel campaign and persists it as a real
     MarketingCampaign row other agents' work can be attributed to."""
     from revenue_os.database import SessionLocal
     from revenue_os.models.marketing import MarketingCampaign
     from revenue_os.services import ai_service
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     plan = ai_service.generate_campaign_plan(goal, channels, context)
 
     db = SessionLocal()
     try:
         campaign = MarketingCampaign(
-            name=name, goal=goal, channels=",".join(channels), status="planning",
+            organization_id=tenant_org_uuid(organization_id), name=name, goal=goal, channels=",".join(channels), status="planning",
             kpis="; ".join(plan.get("kpis", [])),
             notes=json.dumps(plan.get("timeline", [])),
         )
@@ -115,13 +129,16 @@ def plan_campaign(name: str, goal: str, channels: list[str], context: str = "") 
     return {"ok": True, "campaign": result, "plan": plan}
 
 
-def list_campaigns(status: str | None = None) -> list[dict[str, Any]]:
+def list_campaigns(status: str | None = None, *, organization_id: str) -> list[dict[str, Any]]:
     from revenue_os.database import SessionLocal
     from revenue_os.models.marketing import MarketingCampaign
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     db = SessionLocal()
     try:
-        q = db.query(MarketingCampaign).order_by(MarketingCampaign.created_at.desc())
+        q = db.query(MarketingCampaign).filter(
+            MarketingCampaign.organization_id == tenant_org_uuid(organization_id)
+        ).order_by(MarketingCampaign.created_at.desc())
         if status:
             q = q.filter(MarketingCampaign.status == status)
         return [_campaign_dict(c) for c in q.limit(200).all()]
@@ -129,11 +146,12 @@ def list_campaigns(status: str | None = None) -> list[dict[str, Any]]:
         db.close()
 
 
-def update_campaign_status(campaign_id: str, status: str) -> dict[str, Any]:
+def update_campaign_status(campaign_id: str, status: str, *, organization_id: str) -> dict[str, Any]:
     import uuid as uuid_lib
 
     from revenue_os.database import SessionLocal
     from revenue_os.models.marketing import MarketingCampaign
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     if status not in ("planning", "active", "completed"):
         return {"ok": False, "reason": f"Invalid status: {status}"}
@@ -144,7 +162,9 @@ def update_campaign_status(campaign_id: str, status: str) -> dict[str, Any]:
             cid = uuid_lib.UUID(campaign_id)
         except ValueError:
             return {"ok": False, "reason": "Invalid campaign_id"}
-        campaign = db.get(MarketingCampaign, cid)
+        campaign = db.query(MarketingCampaign).filter(
+            MarketingCampaign.id == cid, MarketingCampaign.organization_id == tenant_org_uuid(organization_id)
+        ).first()
         if campaign is None:
             return {"ok": False, "reason": "Campaign not found"}
         campaign.status = status
@@ -159,7 +179,7 @@ def update_campaign_status(campaign_id: str, status: str) -> dict[str, Any]:
 # ── Agent 14: Marketing Automation ───────────────────────────────────────────
 
 
-def trigger_marketing_automation(workflow_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+def trigger_marketing_automation(workflow_name: str, payload: dict[str, Any], *, organization_id: str) -> dict[str, Any]:
     """Fires a named n8n marketing workflow (e.g. "publish-content",
     "sync-crm-tags", "schedule-social-post") with real payload data —
     what that webhook actually does is whatever the founder has built in

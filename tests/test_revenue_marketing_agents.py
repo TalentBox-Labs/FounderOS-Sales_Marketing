@@ -2,6 +2,11 @@
 campaigns/analytics agents plus the full orchestrator pipeline. External
 calls (Reddit, Hacker News, n8n, Meta's WhatsApp Cloud API) are mocked so
 these tests never depend on network access or real credentials.
+
+Content Strategy, Content Writer, LinkedIn Content, and Social Media are
+deferred (superseded by src/marketing_crew.py's existing content agents —
+see docs/marketing/P1_MARKETING_OS_PRIORITY_DECISION.md) and covered here
+only for their honest-stub behavior, not real generation.
 """
 
 from __future__ import annotations
@@ -10,6 +15,9 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+
+_TEST_ORG_ID = "00000000-0000-0000-0000-0000000000b1"
+_TEST_ORG_UUID = uuid.UUID(_TEST_ORG_ID)
 
 FAKE_REDDIT = [
     {"title": "Best CRM for staffing agencies?", "body": "Looking for recommendations",
@@ -34,12 +42,15 @@ class TestMarketResearchAgent:
         from revenue_os.models.marketing import MarketingInsight
         from revenue_os.services.marketing_research import run_market_research
 
-        result = run_market_research("staffing CRM")
+        result = run_market_research("staffing CRM", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["signals_found"] == {"reddit": 1, "hackernews": 1, "competitors": 0}
         assert result["unavailable_channels"]  # X/Discord/etc honestly listed, never silently dropped
 
-        logged = revenue_db.query(MarketingInsight).filter(MarketingInsight.agent_name == "market_research_agent").count()
+        logged = revenue_db.query(MarketingInsight).filter(
+            MarketingInsight.agent_name == "market_research_agent",
+            MarketingInsight.organization_id == _TEST_ORG_UUID,
+        ).count()
         assert logged >= 1
 
 
@@ -47,7 +58,7 @@ class TestCommunityEngagementAgent:
     def test_monitor_communities_drafts_replies_for_top_threads(self, public_sources_mocked) -> None:
         from revenue_os.services.marketing_research import monitor_communities
 
-        result = monitor_communities("staffing CRM", subreddit="staffing")
+        result = monitor_communities("staffing CRM", subreddit="staffing", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["threads_found"] == 1
         assert len(result["drafted_replies"]) == 1
@@ -58,7 +69,7 @@ class TestBrandMonitoringAgent:
     def test_monitor_brand_mentions_classifies_sentiment(self, public_sources_mocked) -> None:
         from revenue_os.services.marketing_research import monitor_brand_mentions
 
-        result = monitor_brand_mentions("WorkCrew")
+        result = monitor_brand_mentions("WorkCrew", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["mentions_found"] == 1
         assert result["mentions"][0]["sentiment"] in ("positive", "neutral", "negative")
@@ -69,13 +80,13 @@ class TestPartnershipAgent:
     def test_discover_dedupes_by_url_on_rerun(self, public_sources_mocked) -> None:
         from revenue_os.services.marketing_research import discover_partnership_leads, list_partnership_leads
 
-        first = discover_partnership_leads("staffing podcasts")
+        first = discover_partnership_leads("staffing podcasts", organization_id=_TEST_ORG_ID)
         assert first["new_leads_created"] == 2  # 1 reddit + 1 hn
 
-        second = discover_partnership_leads("staffing podcasts")
+        second = discover_partnership_leads("staffing podcasts", organization_id=_TEST_ORG_ID)
         assert second["new_leads_created"] == 0  # same URLs — nothing new
 
-        leads = list_partnership_leads()
+        leads = list_partnership_leads(organization_id=_TEST_ORG_ID)
         assert len(leads) >= 2
 
     def test_draft_pitch_marks_lead_contacted(self) -> None:
@@ -89,10 +100,10 @@ class TestPartnershipAgent:
                            "created_utc": 1}]
         with patch("revenue_os.integrations.public_sources.search_reddit", return_value=unique_reddit), \
              patch("revenue_os.integrations.public_sources.search_hackernews", return_value=[]):
-            created = discover_partnership_leads("unique query for pitch test", lead_type="podcast")
+            created = discover_partnership_leads("unique query for pitch test", lead_type="podcast", organization_id=_TEST_ORG_ID)
         lead_id = created["new_leads"][0]["id"]
 
-        result = draft_partnership_pitch(lead_id, our_context="AI-native CRM")
+        result = draft_partnership_pitch(lead_id, our_context="AI-native CRM", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["pitch"]
 
@@ -102,11 +113,14 @@ class TestCustomerPersonaAgent:
         from revenue_os.models.marketing import CustomerPersona
         from revenue_os.services.marketing_strategy import update_customer_persona
 
-        first = update_customer_persona()
-        second = update_customer_persona()
+        first = update_customer_persona(organization_id=_TEST_ORG_ID)
+        second = update_customer_persona(organization_id=_TEST_ORG_ID)
         assert first["persona"]["name"] == second["persona"]["name"]
 
-        rows = revenue_db.query(CustomerPersona).filter(CustomerPersona.name == first["persona"]["name"]).all()
+        rows = revenue_db.query(CustomerPersona).filter(
+            CustomerPersona.name == first["persona"]["name"],
+            CustomerPersona.organization_id == _TEST_ORG_UUID,
+        ).all()
         assert len(rows) == 1  # upsert, not insert-again
 
 
@@ -122,72 +136,80 @@ class TestSEOAndContentStrategyAgents:
     def test_seo_strategy_reflects_tracked_keyword_count(self, revenue_db) -> None:
         from revenue_os.services.marketing_strategy import build_seo_strategy
 
-        before = build_seo_strategy("")["keywords_tracked"]
+        before = build_seo_strategy("", organization_id=_TEST_ORG_ID)["keywords_tracked"]
         self._seed_keyword(revenue_db)
-        after = build_seo_strategy("")["keywords_tracked"]
+        after = build_seo_strategy("", organization_id=_TEST_ORG_ID)["keywords_tracked"]
         assert after == before + 1
 
-    def test_content_strategy_returns_weeks(self) -> None:
+    def test_content_strategy_is_deferred(self) -> None:
+        """Deferred — superseded by src/marketing_crew.py's content_strategist agent."""
         from revenue_os.services.marketing_strategy import build_content_strategy
 
-        result = build_content_strategy("B2B CRM", num_weeks=5)
-        assert result["ok"] is True
-        assert len(result["weeks"]) == 5
+        result = build_content_strategy("B2B CRM", num_weeks=5, organization_id=_TEST_ORG_ID)
+        assert result["ok"] is False
+        assert "Superseded" in result["reason"]
 
 
 class TestGEOAgent:
     def test_geo_requires_title_and_content_or_article_id(self) -> None:
         from revenue_os.services.marketing_strategy import analyze_geo_readiness
 
-        result = analyze_geo_readiness()
+        result = analyze_geo_readiness(organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
 
     def test_geo_analyzes_given_content(self) -> None:
         from revenue_os.services.marketing_strategy import analyze_geo_readiness
 
-        result = analyze_geo_readiness(title="How to pick a CRM", content="A CRM helps track deals.")
+        result = analyze_geo_readiness(
+            title="How to pick a CRM", content="A CRM helps track deals.", organization_id=_TEST_ORG_ID,
+        )
         assert result["ok"] is True
         assert "faqs" in result
 
 
 class TestContentWriterAgent:
-    def test_write_content_publishes_real_kb_article(self, revenue_db) -> None:
-        from revenue_os.models.content import KnowledgeBaseArticle
+    """Deferred — superseded by src/marketing_crew.py's blog_writer agent."""
+
+    def test_write_content_is_deferred(self) -> None:
         from revenue_os.services.marketing_content import write_content
 
-        result = write_content("blog post", "Why staffing agencies need an AI CRM")
-        assert result["ok"] is True
-        assert result["article_id"]
-
-        article = revenue_db.get(KnowledgeBaseArticle, uuid.UUID(result["article_id"]))
-        assert article is not None
-        assert article.embedding_id == result["article_id"]
-
-    def test_write_content_publish_false_skips_kb(self) -> None:
-        from revenue_os.services.marketing_content import write_content
-
-        result = write_content("blog post", "Draft only", publish=False)
-        assert result["ok"] is True
-        assert "article_id" not in result
+        result = write_content("blog post", "Why staffing agencies need an AI CRM", organization_id=_TEST_ORG_ID)
+        assert result["ok"] is False
+        assert "Superseded" in result["reason"]
 
 
 class TestLinkedInAndSocialContentAgents:
-    def test_linkedin_content_files_publish_approval(self) -> None:
-        from revenue_os.services.approvals import list_requests
+    """Deferred — superseded by src/marketing_crew.py's social_copywriter agent."""
+
+    def test_linkedin_content_is_deferred(self) -> None:
         from revenue_os.services.marketing_content import draft_linkedin_content
 
-        result = draft_linkedin_content("educational", "hiring signals")
-        assert result["ok"] is True
-        pending = list_requests(status="pending")
-        match = next(r for r in pending if r["id"] == result["approval_id"])
-        assert match["action_type"] == "publish_linkedin_post"
+        result = draft_linkedin_content("educational", "hiring signals", organization_id=_TEST_ORG_ID)
+        assert result["ok"] is False
+        assert "Superseded" in result["reason"]
 
-    def test_social_posts_covers_every_requested_platform(self) -> None:
+    def test_social_posts_is_deferred(self) -> None:
         from revenue_os.services.marketing_content import draft_social_posts
 
-        result = draft_social_posts("launch day", ["linkedin", "x", "instagram"])
+        result = draft_social_posts("launch day", ["linkedin", "x", "instagram"], organization_id=_TEST_ORG_ID)
+        assert result["ok"] is False
+        assert "Superseded" in result["reason"]
+
+
+class TestVideoAndCreativeAgents:
+    def test_plan_video_returns_script(self) -> None:
+        from revenue_os.services.marketing_content import plan_video
+
+        result = plan_video("launch day", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
-        assert set(result["variants"].keys()) == {"linkedin", "x", "instagram"}
+        assert "hook" in result
+
+    def test_create_design_brief_returns_concept(self) -> None:
+        from revenue_os.services.marketing_content import create_design_brief
+
+        result = create_design_brief("social graphic", "launch day", organization_id=_TEST_ORG_ID)
+        assert result["ok"] is True
+        assert "concept" in result
 
 
 class TestEmailAndWhatsAppCampaignAgents:
@@ -195,11 +217,14 @@ class TestEmailAndWhatsAppCampaignAgents:
         from revenue_os.models.contact import Contact
         from revenue_os.services.marketing_campaigns import draft_email_campaign
 
-        c = Contact(first_name="Camp", last_name="Aign", email=f"camp-{uuid.uuid4().hex[:8]}@example.com")
+        c = Contact(
+            first_name="Camp", last_name="Aign", email=f"camp-{uuid.uuid4().hex[:8]}@example.com",
+            organization_id=_TEST_ORG_UUID,
+        )
         revenue_db.add(c)
         revenue_db.commit()
 
-        result = draft_email_campaign("newsletter")
+        result = draft_email_campaign("newsletter", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["recipient_count"] >= 1
 
@@ -208,7 +233,7 @@ class TestEmailAndWhatsAppCampaignAgents:
         from revenue_os.services.marketing_campaigns import draft_whatsapp_campaign
 
         WhatsAppClient.add_contact("+15550000001", "Test WA Contact", tags=["vip-test-tag"])
-        result = draft_whatsapp_campaign("promotional", tag="vip-test-tag")
+        result = draft_whatsapp_campaign("promotional", tag="vip-test-tag", organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["recipient_count"] == 1
 
@@ -217,22 +242,22 @@ class TestCampaignManagerAgent:
     def test_plan_list_and_update_campaign(self) -> None:
         from revenue_os.services.marketing_campaigns import list_campaigns, plan_campaign, update_campaign_status
 
-        created = plan_campaign("Q3 Launch", "Grow pipeline", ["seo", "email"])
+        created = plan_campaign("Q3 Launch", "Grow pipeline", ["seo", "email"], organization_id=_TEST_ORG_ID)
         assert created["ok"] is True
         campaign_id = created["campaign"]["id"]
 
-        campaigns = list_campaigns()
+        campaigns = list_campaigns(organization_id=_TEST_ORG_ID)
         assert any(c["id"] == campaign_id for c in campaigns)
 
-        updated = update_campaign_status(campaign_id, "active")
+        updated = update_campaign_status(campaign_id, "active", organization_id=_TEST_ORG_ID)
         assert updated["ok"] is True
         assert updated["campaign"]["status"] == "active"
 
     def test_update_campaign_rejects_invalid_status(self) -> None:
         from revenue_os.services.marketing_campaigns import plan_campaign, update_campaign_status
 
-        created = plan_campaign("Bad status test", "goal", ["email"])
-        result = update_campaign_status(created["campaign"]["id"], "not_a_real_status")
+        created = plan_campaign("Bad status test", "goal", ["email"], organization_id=_TEST_ORG_ID)
+        result = update_campaign_status(created["campaign"]["id"], "not_a_real_status", organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
 
 
@@ -241,7 +266,7 @@ class TestMarketingAutomationAgent:
         from revenue_os.services.marketing_campaigns import trigger_marketing_automation
 
         with patch("revenue_os.integrations.n8n.trigger_workflow", return_value=None):
-            result = trigger_marketing_automation("publish-content", {"article_id": "abc"})
+            result = trigger_marketing_automation("publish-content", {"article_id": "abc"}, organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
         assert result["note"]
 
@@ -249,7 +274,7 @@ class TestMarketingAutomationAgent:
         from revenue_os.services.marketing_campaigns import trigger_marketing_automation
 
         with patch("revenue_os.integrations.n8n.trigger_workflow", return_value={"queued": True}):
-            result = trigger_marketing_automation("publish-content", {"article_id": "abc"})
+            result = trigger_marketing_automation("publish-content", {"article_id": "abc"}, organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["note"] is None
 
@@ -262,7 +287,7 @@ class TestAnalyticsAndCROAgents:
         revenue_db.add(SEOKeyword(keyword=f"cro-test-{uuid.uuid4().hex[:6]}"))
         revenue_db.commit()
 
-        result = generate_analytics_report()
+        result = generate_analytics_report(organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["keywords_tracked"] >= 1
         assert result["executive_summary"]
@@ -273,26 +298,34 @@ class TestAnalyticsAndCROAgents:
         from revenue_os.services.deal_automation_service import get_or_create_sales_pipeline
         from revenue_os.services.marketing_analytics import analyze_conversion_funnel
 
-        c = Contact(first_name="Funnel", last_name="Test", email=f"funnel-{uuid.uuid4().hex[:8]}@example.com")
+        c = Contact(
+            first_name="Funnel", last_name="Test", email=f"funnel-{uuid.uuid4().hex[:8]}@example.com",
+            organization_id=_TEST_ORG_UUID,
+        )
         revenue_db.add(c)
         revenue_db.flush()
         pipeline = get_or_create_sales_pipeline(revenue_db)
-        revenue_db.add(Deal(name="Funnel deal", value=1000, stage=DealStage.NEGOTIATION, contact_id=c.id, pipeline_id=pipeline.id))
+        revenue_db.add(Deal(
+            name="Funnel deal", value=1000, stage=DealStage.NEGOTIATION, contact_id=c.id,
+            pipeline_id=pipeline.id, organization_id=_TEST_ORG_UUID,
+        ))
         revenue_db.commit()
 
-        result = analyze_conversion_funnel()
+        result = analyze_conversion_funnel(organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["funnel"].get("negotiation", 0) >= 1
 
 
 class TestMarketingOrchestrator:
     def test_run_marketing_cycle_completes_all_stages_with_real_side_effects(self, public_sources_mocked, revenue_db) -> None:
-        from revenue_os.models.content import KnowledgeBaseArticle
+        """Content Strategy / Content Writer / Social Media stages degrade
+        to an honest {"ok": False} rather than breaking the pipeline —
+        see the module docstring for why those are deferred."""
         from revenue_os.models.marketing import MarketingCampaign
         from revenue_os.services.marketing_orchestrator import run_marketing_cycle
 
         with patch("revenue_os.integrations.n8n.trigger_workflow", return_value=None):
-            result = run_marketing_cycle(business_context="B2B CRM for staffing agencies")
+            result = run_marketing_cycle(business_context="B2B CRM for staffing agencies", organization_id=_TEST_ORG_ID)
 
         assert result["ok"] is True
         expected_stages = {
@@ -302,9 +335,9 @@ class TestMarketingOrchestrator:
         }
         assert expected_stages.issubset(result["stages"].keys())
 
-        # Real side effects, not just a text report:
-        article_id = result["stages"]["content_writer"]["article_id"]
-        assert revenue_db.get(KnowledgeBaseArticle, uuid.UUID(article_id)) is not None
+        # Real side effects from the non-deferred stages:
+        video = result["stages"]["video_strategy"]
+        assert video.get("hook")
 
         campaign_id = result["stages"]["campaign_manager"]["campaign_id"]
         assert revenue_db.get(MarketingCampaign, uuid.UUID(campaign_id)) is not None

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, DateTime, String, Text, func
+from sqlalchemy import Column, DateTime, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from revenue_os.models.base import Base
@@ -19,6 +19,7 @@ class MarketingInsight(Base):
     __tablename__ = "marketing_insights"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     agent_name = Column(String(64), nullable=False)
     category = Column(String(50), nullable=False)  # market_research | community | brand_mention | partnership
     title = Column(String(500), nullable=False)
@@ -33,9 +34,11 @@ class CustomerPersona(Base):
     market data comes in — 'continuously updated', not regenerated blind."""
 
     __tablename__ = "customer_personas"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_customer_personas_org_name"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False, unique=True)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
     summary = Column(Text, nullable=False, default="")
     pain_points = Column(Text, default="")
     motivations = Column(Text, default="")
@@ -54,6 +57,7 @@ class MarketingCampaign(Base):
     __tablename__ = "marketing_campaigns"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     goal = Column(Text, default="")
     channels = Column(Text, default="")  # comma-separated: seo,email,linkedin,whatsapp,...
@@ -74,6 +78,7 @@ class PartnershipLead(Base):
     __tablename__ = "partnership_leads"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     lead_type = Column(String(50), nullable=False, default="other")  # influencer|podcast|newsletter|community|affiliate|other
     url = Column(String(1000))

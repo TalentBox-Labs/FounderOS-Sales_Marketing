@@ -27,20 +27,23 @@ AGENT_PARTNERSHIP = "partnership_influencer_agent"
 
 def _log_insight(
     db: Session, agent_name: str, category: str, title: str, summary: str,
-    source_url: str | None = None, sentiment: str | None = None,
+    *, organization_id: str, source_url: str | None = None, sentiment: str | None = None,
 ) -> None:
     from revenue_os.models.marketing import MarketingInsight
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     db.add(MarketingInsight(
-        agent_name=agent_name, category=category, title=title[:500], summary=summary,
-        source_url=source_url, sentiment=sentiment,
+        organization_id=tenant_org_uuid(organization_id), agent_name=agent_name, category=category,
+        title=title[:500], summary=summary, source_url=source_url, sentiment=sentiment,
     ))
 
 
 # ── Agent 1: Market Research ─────────────────────────────────────────────────
 
 
-def run_market_research(query: str, competitor_linkedin_urls: list[str] | None = None) -> dict[str, Any]:
+def run_market_research(
+    query: str, competitor_linkedin_urls: list[str] | None = None, *, organization_id: str,
+) -> dict[str, Any]:
     """Pulls real Reddit + Hacker News signals and, if given competitor
     LinkedIn company URLs, real funding/hiring data via the existing
     Proxycurl enrichment. Synthesizes insights + opportunities via LLM
@@ -74,9 +77,9 @@ def run_market_research(query: str, competitor_linkedin_urls: list[str] | None =
     db = SessionLocal()
     try:
         for text in result.get("insights", []):
-            _log_insight(db, AGENT_MARKET_RESEARCH, "market_research", query, text)
+            _log_insight(db, AGENT_MARKET_RESEARCH, "market_research", query, text, organization_id=organization_id)
         for text in result.get("opportunities", []):
-            _log_insight(db, AGENT_MARKET_RESEARCH, "opportunity", query, text)
+            _log_insight(db, AGENT_MARKET_RESEARCH, "opportunity", query, text, organization_id=organization_id)
         db.commit()
     finally:
         db.close()
@@ -92,7 +95,9 @@ def run_market_research(query: str, competitor_linkedin_urls: list[str] | None =
 # ── Agent 16: Community Engagement ───────────────────────────────────────────
 
 
-def monitor_communities(query: str, subreddit: str | None = None, draft_replies: bool = True) -> dict[str, Any]:
+def monitor_communities(
+    query: str, subreddit: str | None = None, draft_replies: bool = True, *, organization_id: str,
+) -> dict[str, Any]:
     """Reddit only for now — the one community channel with a compliant
     public API. GitHub issues / Discord / Slack / Product Hunt need their
     own configured connector before this agent can cover them."""
@@ -108,7 +113,7 @@ def monitor_communities(query: str, subreddit: str | None = None, draft_replies:
             _log_insight(
                 db, AGENT_COMMUNITY, "community", t["title"],
                 f"r/{t['subreddit']} · {t['score']} upvotes, {t['num_comments']} comments",
-                source_url=t["url"],
+                organization_id=organization_id, source_url=t["url"],
             )
         db.commit()
 
@@ -126,7 +131,7 @@ def monitor_communities(query: str, subreddit: str | None = None, draft_replies:
 # ── Agent 17: Brand Monitoring ───────────────────────────────────────────────
 
 
-def monitor_brand_mentions(brand_name: str) -> dict[str, Any]:
+def monitor_brand_mentions(brand_name: str, *, organization_id: str) -> dict[str, Any]:
     """Searches Reddit for brand mentions and classifies sentiment on each
     — flags negative mentions so they don't sit unnoticed."""
     from revenue_os.database import SessionLocal
@@ -143,7 +148,8 @@ def monitor_brand_mentions(brand_name: str) -> dict[str, Any]:
             scored.append({**m, "sentiment": sentiment})
             _log_insight(
                 db, AGENT_BRAND_MONITOR, "brand_mention", m["title"],
-                f"r/{m['subreddit']} · sentiment: {sentiment}", source_url=m["url"], sentiment=sentiment,
+                f"r/{m['subreddit']} · sentiment: {sentiment}",
+                organization_id=organization_id, source_url=m["url"], sentiment=sentiment,
             )
         db.commit()
     finally:
@@ -160,27 +166,36 @@ def monitor_brand_mentions(brand_name: str) -> dict[str, Any]:
 # ── Agent 19: Partnership & Influencer ───────────────────────────────────────
 
 
-def discover_partnership_leads(query: str, lead_type: str = "other") -> dict[str, Any]:
+def discover_partnership_leads(query: str, lead_type: str = "other", *, organization_id: str) -> dict[str, Any]:
     """Searches Reddit/HN for potential partners (communities, newsletters,
     podcasts mentioned in context) and files new ones as PartnershipLead
-    rows — deduplicated by URL, so re-running doesn't create duplicates."""
+    rows — deduplicated by URL within the tenant, so re-running doesn't
+    create duplicates."""
     from revenue_os.database import SessionLocal
     from revenue_os.integrations.public_sources import search_hackernews, search_reddit
     from revenue_os.models.marketing import PartnershipLead
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     reddit = search_reddit(query, limit=8)
     hn = search_hackernews(query, limit=8)
     candidates = [{"name": r["title"], "url": r["url"], "source": "reddit"} for r in reddit] + \
                  [{"name": h["title"], "url": h["url"], "source": "hackernews"} for h in hn]
 
+    org_uuid = tenant_org_uuid(organization_id)
     db = SessionLocal()
     created = []
     try:
-        existing_urls = {row.url for row in db.query(PartnershipLead.url).all()}
+        existing_urls = {
+            row.url for row in
+            db.query(PartnershipLead.url).filter(PartnershipLead.organization_id == org_uuid).all()
+        }
         for c in candidates:
             if c["url"] in existing_urls:
                 continue
-            lead = PartnershipLead(name=c["name"][:255], url=c["url"], lead_type=lead_type, source=c["source"])
+            lead = PartnershipLead(
+                organization_id=org_uuid, name=c["name"][:255], url=c["url"],
+                lead_type=lead_type, source=c["source"],
+            )
             db.add(lead)
             created.append(lead)
             existing_urls.add(c["url"])
@@ -192,13 +207,16 @@ def discover_partnership_leads(query: str, lead_type: str = "other") -> dict[str
     return {"ok": True, "query": query, "candidates_found": len(candidates), "new_leads_created": len(result), "new_leads": result}
 
 
-def list_partnership_leads(status: str | None = None) -> list[dict[str, Any]]:
+def list_partnership_leads(status: str | None = None, *, organization_id: str) -> list[dict[str, Any]]:
     from revenue_os.database import SessionLocal
     from revenue_os.models.marketing import PartnershipLead
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     db = SessionLocal()
     try:
-        q = db.query(PartnershipLead).order_by(PartnershipLead.created_at.desc())
+        q = db.query(PartnershipLead).filter(
+            PartnershipLead.organization_id == tenant_org_uuid(organization_id)
+        ).order_by(PartnershipLead.created_at.desc())
         if status:
             q = q.filter(PartnershipLead.status == status)
         return [
@@ -210,12 +228,13 @@ def list_partnership_leads(status: str | None = None) -> list[dict[str, Any]]:
         db.close()
 
 
-def draft_partnership_pitch(lead_id: str, our_context: str = "") -> dict[str, Any]:
+def draft_partnership_pitch(lead_id: str, our_context: str = "", *, organization_id: str) -> dict[str, Any]:
     import uuid as uuid_lib
 
     from revenue_os.database import SessionLocal
     from revenue_os.models.marketing import PartnershipLead
     from revenue_os.services import ai_service
+    from revenue_os.services.tenant_scoped_access import tenant_org_uuid
 
     db = SessionLocal()
     try:
@@ -223,7 +242,9 @@ def draft_partnership_pitch(lead_id: str, our_context: str = "") -> dict[str, An
             lid = uuid_lib.UUID(lead_id)
         except ValueError:
             return {"ok": False, "reason": "Invalid lead_id"}
-        lead = db.get(PartnershipLead, lid)
+        lead = db.query(PartnershipLead).filter(
+            PartnershipLead.id == lid, PartnershipLead.organization_id == tenant_org_uuid(organization_id)
+        ).first()
         if lead is None:
             return {"ok": False, "reason": "Partnership lead not found"}
 
