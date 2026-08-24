@@ -2,11 +2,63 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
+# revenue_os.config.Settings() is instantiated once, at first import, and
+# raises if SECRET_KEY is unset. conftest.py is always imported before any
+# test module in this directory, so setting these here (module level, not
+# inside a fixture) guarantees they're in place before `from runner_api
+# import app` or `from revenue_os...` runs anywhere in the suite.
+_TEST_DB_PATH = Path(__file__).resolve().parent / "_revenue_os_test.db"
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production-use-only-in-ci")
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_DB_PATH}")
+# Deliberately NOT setting HEARTBEAT_ENABLED=0 here: Main's ACP3 governance
+# layer (revenue_os/services/acp3_durable_runtime.py) treats it as a global
+# "pause all mutating work" switch, not a test-only background-loop toggle.
+# Deliberately NOT setting RUNNER_API_KEY here: several pre-existing tests
+# (tests/test_runner_api.py) rely on "unset = auth bypassed" against a bare
+# TestClient(app). New revenue_os tests should use the cms_client fixture
+# below, which bypasses auth via a dependency override instead — it works
+# whether or not RUNNER_API_KEY happens to be set in the environment.
+
 import pytest
 from fastapi.testclient import TestClient
+
+# ── Revenue OS test database ─────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _revenue_os_schema():
+    """Create every revenue_os table once per test session, against a fresh
+    SQLite file distinct from the dev database (demo.db). Tests share this
+    DB within a session — write assertions against IDs you created, not
+    fixed row counts, the same discipline used everywhere else in this repo."""
+    if _TEST_DB_PATH.exists():
+        _TEST_DB_PATH.unlink()
+
+    import revenue_os.models  # noqa: F401 — registers every model on Base.metadata
+    from revenue_os.database import engine
+    from revenue_os.models.base import Base
+
+    Base.metadata.create_all(bind=engine)
+    yield
+    engine.dispose()
+
+
+@pytest.fixture
+def revenue_db():
+    """A real SQLAlchemy session against the test database, for tests that
+    assert on rows directly rather than through the API."""
+    from revenue_os.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 # ── FastAPI TestClient Fixture ───────────────────────────────────────────────
 

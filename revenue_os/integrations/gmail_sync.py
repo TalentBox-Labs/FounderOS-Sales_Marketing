@@ -6,6 +6,11 @@ API (`gmail.readonly` scope). Matched messages are logged to the sending
 contact's timeline; unmatched senders are skipped rather than dumped in as
 noise — this is about aligning mail to an existing account, not an inbox
 importer.
+
+A matched message from a known contact is treated as a reply: it's logged
+as EMAIL_REPLY (not EMAIL, which is outbound-only) and any of that
+contact's still-pending outreach-sequence steps are cancelled, so a
+sequence stops messaging someone who already wrote back.
 """
 
 from __future__ import annotations
@@ -163,6 +168,7 @@ def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
     from revenue_os.models.activity import Activity, ActivityType, EmailActivity
     from revenue_os.models.contact import Contact
     from revenue_os.services.activity_log import log_agent_action
+    from revenue_os.services.outreach_service import cancel_pending_sequence_steps
 
     org_uuids = [u for u in (org_uuid_or_none(o) for o in organization_ids) if u is not None]
     if not org_uuids:
@@ -174,7 +180,7 @@ def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
         )
 
     db = SessionLocal()
-    checked = matched = created = 0
+    checked = matched = created = sequence_steps_cancelled = 0
     try:
         already_synced = {
             row.message_id for row in
@@ -209,7 +215,7 @@ def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
 
             matched += 1
             activity = Activity(
-                contact_id=contact.id, activity_type=ActivityType.EMAIL, direction="inbound",
+                contact_id=contact.id, activity_type=ActivityType.EMAIL_REPLY, direction="inbound",
                 subject=headers.get("Subject", "")[:500], body=message.get("snippet", ""),
                 status="completed",
             )
@@ -221,6 +227,9 @@ def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
             ))
             contact.last_contacted_at = datetime.now(timezone.utc)
             db.add(contact)
+            sequence_steps_cancelled += cancel_pending_sequence_steps(
+                db, contact.id, reason=f"Replied: {headers.get('Subject', '')[:120]}"
+            )
             created += 1
             log_agent_action(
                 actor="heartbeat",
@@ -241,4 +250,5 @@ def sync_inbox(*, organization_ids: list[str] | None = None) -> dict[str, Any]:
         "matched": matched,
         "created": created,
         "organizations": list(organization_ids),
+        "sequence_steps_cancelled": sequence_steps_cancelled,
     }
