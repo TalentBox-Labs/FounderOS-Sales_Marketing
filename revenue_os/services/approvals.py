@@ -554,7 +554,7 @@ def _run_approval_effect(db: Session, request: ApprovalRequest) -> dict[str, Any
         if isinstance(legacy_idempotency_key, str) and legacy_idempotency_key.strip():
             # Preserve legacy workflow identity for provenance/backward-compat frozen tests,
             # while still embedding the stable approval_effect identity.
-            payload["idempotency_key"] = f"{legacy_idempotency_key}:{effect_key}"
+            payload["idempotency_key"] = f"{effect_key}:{legacy_idempotency_key}"
         else:
             payload["idempotency_key"] = effect_key
 
