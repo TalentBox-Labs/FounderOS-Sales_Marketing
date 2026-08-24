@@ -878,6 +878,100 @@ def ensure_command_center_snapshot_shape(snapshot: Any) -> dict[str, Any]:
         out,
         organization_id=str(org_for_v2) if org_for_v2 else None,
     )
+    # I2 glue: attach existing COS-5 actions / labels onto V2 cards (presentation only).
+    out["command_v2"] = _enrich_command_v2_with_decision_actions(out)
+    return out
+
+
+def _enrich_command_v2_with_decision_actions(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Copy existing decision_item actions onto matching V2 cards. No new authority."""
+    v2 = snapshot.get("command_v2")
+    if not isinstance(v2, dict):
+        return {
+            "organization_id": snapshot.get("organization_id"),
+            "source": "command_v2_projection",
+            "persistent": False,
+            "fail_closed_reason": "missing_projection",
+            "buckets": {
+                "NEEDS_YOUR_JUDGMENT": [],
+                "BLOCKED_OR_DEGRADED": [],
+                "RUNNING_WITHOUT_YOU": [],
+                "RECENTLY_CHANGED": [],
+            },
+            "groups": [],
+            "cards": [],
+        }
+    out = dict(v2)
+    items = snapshot.get("decision_items")
+    if not isinstance(items, list):
+        items = []
+
+    by_item_key: dict[str, dict[str, Any]] = {}
+    by_approval: dict[str, dict[str, Any]] = {}
+    by_demand: dict[str, dict[str, Any]] = {}
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        item_id = raw.get("item_id")
+        if item_id:
+            by_item_key[f"item:{item_id}"] = raw
+        prov = raw.get("provenance") if isinstance(raw.get("provenance"), dict) else {}
+        subject = prov.get("subject_id")
+        kind = raw.get("kind")
+        if kind == "approval" and subject:
+            by_approval[str(subject)] = raw
+        if kind == "qualified_demand" and subject:
+            by_demand[str(subject)] = raw
+
+    def _match(card: dict[str, Any]) -> dict[str, Any] | None:
+        key = card.get("card_key")
+        if isinstance(key, str) and key in by_item_key:
+            return by_item_key[key]
+        if card.get("subject_kind") == "approval_request" and card.get("subject_id"):
+            return by_approval.get(str(card["subject_id"]))
+        if card.get("subject_kind") == "demand" and card.get("subject_id"):
+            return by_demand.get(str(card["subject_id"]))
+        return None
+
+    enriched_cards: list[dict[str, Any]] = []
+    for card in out.get("cards") or []:
+        if not isinstance(card, dict):
+            continue
+        merged = dict(card)
+        di = _match(merged)
+        if di is not None:
+            if di.get("command_actions"):
+                merged["command_actions"] = di.get("command_actions")
+            if di.get("person_label"):
+                merged["person_label"] = di.get("person_label")
+            if di.get("company_label"):
+                merged["company_label"] = di.get("company_label")
+            if di.get("authority_state_label"):
+                merged["authority_state_label"] = di.get("authority_state_label")
+            if di.get("outcome"):
+                merged["outcome"] = di.get("outcome")
+            if not merged.get("href") and di.get("href"):
+                merged["href"] = di.get("href")
+            if not merged.get("proposed_action") and di.get("proposed_action"):
+                merged["proposed_action"] = di.get("proposed_action")
+            if not merged.get("reason") and di.get("reason"):
+                merged["reason"] = di.get("reason")
+        enriched_cards.append(merged)
+
+    buckets = out.get("buckets") if isinstance(out.get("buckets"), dict) else {}
+    new_buckets: dict[str, list[dict[str, Any]]] = {}
+    by_key = {c.get("card_key"): c for c in enriched_cards}
+    for name, lst in buckets.items():
+        rebuilt: list[dict[str, Any]] = []
+        if isinstance(lst, list):
+            for card in lst:
+                if not isinstance(card, dict):
+                    continue
+                rebuilt.append(by_key.get(card.get("card_key"), dict(card)))
+        new_buckets[str(name)] = rebuilt
+
+    out["cards"] = enriched_cards
+    out["buckets"] = new_buckets
     return out
 
 

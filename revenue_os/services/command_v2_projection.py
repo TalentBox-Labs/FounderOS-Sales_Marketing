@@ -158,16 +158,27 @@ def _subject_from_decision_item(item: dict[str, Any]) -> tuple[str | None, str |
 
 
 def _dedupe_key_for_item(item: dict[str, Any], *, fallback_prefix: str) -> str:
+    """Canonical presentation dedupe. ApprovalRequest.id wins over item_id."""
+    provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
+    kind = _norm_str(item.get("kind"))
+    if kind == "approval":
+        approval_id = _norm_str(provenance.get("subject_id")) or _norm_str(item.get("id"))
+        if approval_id:
+            return f"approval:{approval_id}"
+    if kind == "qualified_demand":
+        demand_id = _norm_str(provenance.get("subject_id"))
+        if demand_id:
+            return f"demand:{demand_id}"
     item_id = _norm_str(item.get("item_id"))
     if item_id:
         return f"item:{item_id}"
-    approval_id = None
-    provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
-    if _norm_str(item.get("kind")) == "approval":
-        approval_id = _norm_str(provenance.get("subject_id")) or _norm_str(item.get("id"))
-    if approval_id:
-        return f"approval:{approval_id}"
     return f"{fallback_prefix}:{id(item)}"
+
+
+def _mark_seen(seen: set[str], *keys: str | None) -> None:
+    for key in keys:
+        if key:
+            seen.add(key)
 
 
 def _next_move_for_decision(item: dict[str, Any], *, bucket: str) -> str | None:
@@ -204,7 +215,18 @@ def _cards_from_decision_items(
         if authority == "requires_founder" and kind in ("approval", "qualified_demand"):
             if dedupe in seen:
                 continue
-            seen.add(dedupe)
+            # Also fence alternate keys so pending_approvals cannot double-emit.
+            alt_keys: list[str] = [dedupe]
+            item_id = _norm_str(raw.get("item_id"))
+            if item_id:
+                alt_keys.append(f"item:{item_id}")
+            if kind == "approval" and subject_id:
+                alt_keys.append(f"approval:{subject_id}")
+            if kind == "qualified_demand" and subject_id:
+                alt_keys.append(f"demand:{subject_id}")
+            if any(k in seen for k in alt_keys):
+                continue
+            _mark_seen(seen, *alt_keys)
             bucket = BUCKET_NEEDS_YOUR_JUDGMENT
             cards.append(
                 _card(

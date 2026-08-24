@@ -2,7 +2,7 @@
 
 {% block title %}Command Center — Founder OS{% endblock %}
 {% block topbar_title %}Command Center{% endblock %}
-{% block topbar_meta %}What needs your attention — decide, act through governed paths, see what followed{% endblock %}
+{% block topbar_meta %}What needs your judgment, what is blocked, what runs without you, what changed{% endblock %}
 
 {% block topbar_right %}
   {% if operator.configured %}
@@ -14,26 +14,357 @@
 {% endblock %}
 
 {% block content %}
+<style>
+  .command-v2-home { margin-bottom: 28px; }
+  .command-v2-header {
+    margin-bottom: 18px;
+    padding: 16px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .command-v2-header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+  }
+  .command-v2-summary-line {
+    font-size: 14px;
+    color: var(--text);
+    margin: 4px 0;
+  }
+  .command-v2-section {
+    margin-bottom: 18px;
+    padding: 18px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .command-v2-section.dominant {
+    border-color: var(--amber);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 35%, transparent);
+  }
+  .command-v2-section-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 4px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .command-v2-section-count {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .command-v2-section-intro {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0 0 12px 0;
+  }
+  .command-v2-card {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .command-v2-card:first-of-type { border-top: none; padding-top: 0; }
+  .command-v2-card-title { font-weight: 600; margin: 4px 0; }
+  .command-v2-compat {
+    margin-top: 28px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .command-v2-compat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+</style>
+
 <p class="founder-meta" data-testid="command-spine-intro" style="margin-bottom:16px">
-  What needs your attention, why it matters, and what you can decide here —
-  through existing governed Sales and Approvals paths. Some actions happen on this
-  page; others continue on the person workspace or Approval Inbox. Sending and booking
-  still require your approval.
+  What needs your judgment, why it matters, and what continues without you —
+  projected from existing Founder OS truth. Sending and booking still require your approval.
 </p>
 
 {% if snapshot.state == 'unavailable' %}
 <p class="founder-empty" data-testid="command-unavailable">{{ snapshot.message or 'Organization context required' }}</p>
 {% else %}
 
-{# COS-3 decision_loop is required; tolerate partial/mocked snapshots without renaming. #}
 {% set decision_loop = snapshot.decision_loop if snapshot.decision_loop is mapping else {} %}
 {% set decision_items = snapshot.decision_items if snapshot.decision_items is sequence else [] %}
+{% set v2 = snapshot.command_v2 if snapshot.command_v2 is mapping else {} %}
+{% set v2_buckets = v2.buckets if v2.buckets is mapping else {} %}
+{% set needs = v2_buckets.NEEDS_YOUR_JUDGMENT if v2_buckets.NEEDS_YOUR_JUDGMENT is sequence else [] %}
+{% set blocked = v2_buckets.BLOCKED_OR_DEGRADED if v2_buckets.BLOCKED_OR_DEGRADED is sequence else [] %}
+{% set running = v2_buckets.RUNNING_WITHOUT_YOU if v2_buckets.RUNNING_WITHOUT_YOU is sequence else [] %}
+{% set recent = v2_buckets.RECENTLY_CHANGED if v2_buckets.RECENTLY_CHANGED is sequence else [] %}
+{% set needs_n = needs|length %}
+{% set blocked_n = blocked|length %}
+{% set running_n = running|length %}
+{% set recent_n = recent|length %}
+
+<div class="command-v2-home" data-testid="command-v2-home">
+
+  <div class="command-v2-header" data-testid="command-v2-executive-header">
+    <h1>Operating summary</h1>
+    {% if snapshot.state == 'partial' or (snapshot.errors and snapshot.errors|length > 0) or v2.fail_closed_reason %}
+    <p class="founder-meta" data-testid="command-v2-degraded">
+      <span class="pill amber">Incomplete or degraded</span>
+      {% if snapshot.message %}{{ snapshot.message }}{% endif %}
+      {% if snapshot.errors %} · Data gaps: {{ snapshot.errors | join(', ') }}{% endif %}
+      {% if v2.fail_closed_reason %} · Projection: {{ v2.fail_closed_reason }}{% endif %}
+    </p>
+    {% endif %}
+    <p class="command-v2-summary-line" data-testid="command-v2-summary-needs">
+      {% if needs_n == 1 %}1 decision needs you.{% else %}{{ needs_n }} decisions need you.{% endif %}
+    </p>
+    <p class="command-v2-summary-line" data-testid="command-v2-summary-blocked">
+      {% if blocked_n == 1 %}1 operation is blocked or degraded.{% else %}{{ blocked_n }} operations are blocked or degraded.{% endif %}
+    </p>
+    <p class="command-v2-summary-line" data-testid="command-v2-summary-running">
+      {% if running_n == 1 %}1 operation is progressing without you.{% else %}{{ running_n }} operations are progressing without you.{% endif %}
+    </p>
+    {% if recent_n > 0 %}
+    <p class="command-v2-summary-line" data-testid="command-v2-summary-recent">
+      {% if recent_n == 1 %}1 material change recently.{% else %}{{ recent_n }} material changes recently.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  {# —— A. Needs your judgment (dominant; also satisfies COS-3 decision-loop contract) —— #}
+  <section class="command-v2-section dominant" data-testid="command-v2-needs-judgment">
+    <div data-testid="command-decision-loop">
+      <div class="command-v2-section-title">
+        <span>Needs your judgment</span>
+        <span class="command-v2-section-count" data-testid="command-v2-needs-count">{{ needs_n }}</span>
+      </div>
+      <p class="command-v2-section-intro">
+        Decisions that require a founder. ApprovalRequest remains authoritative.
+        <span data-testid="command-stat-requires" class="founder-meta">Needs your decision: {{ decision_loop.requires_founder | default(needs_n) }}</span>
+      </p>
+
+      {% if not needs and not decision_items %}
+        <p class="founder-empty" data-testid="command-v2-needs-empty">Nothing needs your judgment right now</p>
+      {% else %}
+        {% set shown_keys = [] %}
+        {% for card in needs %}
+        <div class="command-v2-card founder-list-item"
+             data-testid="command-decision-item"
+             data-v2-card="needs"
+             data-authority="requires_founder"
+             data-kind="{{ card.kind or '' }}"
+             data-visible-state="{{ card.visible_state or '' }}">
+          <span class="pill amber" data-testid="decision-authority">
+            {{ card.authority_state_label or 'Needs your judgment' }}
+          </span>
+          {% if card.visible_state %}
+          <span class="pill amber" data-testid="command-v2-visible-state">{{ card.visible_state | replace('_', ' ') | title }}</span>
+          {% endif %}
+          <div class="command-v2-card-title"><strong>{{ card.title or 'Decision required' }}</strong></div>
+          {% if card.person_label or card.company_label %}
+          <div class="founder-meta">
+            {% if card.person_label %}{{ card.person_label }}{% endif %}
+            {% if card.person_label and card.company_label %} · {% endif %}
+            {% if card.company_label %}{{ card.company_label }}{% endif %}
+          </div>
+          {% endif %}
+          {% if card.reason %}
+          <div class="founder-meta">{{ card.reason }}</div>
+          {% endif %}
+          {% if card.proposed_action %}
+          <div class="founder-meta">Proposal: {{ card.proposed_action }}</div>
+          {% endif %}
+          {% if card.next_move %}
+          <div class="founder-meta" data-testid="command-v2-next-move">Next: {{ card.next_move | replace('_', ' ') | title }}</div>
+          {% endif %}
+          {% if card.command_actions %}
+          <div class="founder-meta" data-testid="command-actions" style="margin-top:8px">
+            {% for action in card.command_actions %}
+              {% if action.execution_mode == 'INLINE_GOVERNED' %}
+                {% if operator.configured %}
+                <button type="button"
+                  class="btn {% if action.requires_reason %}btn-ghost{% else %}btn-primary{% endif %} btn-sm"
+                  style="margin:4px 4px 0 0"
+                  data-testid="command-inline-action"
+                  data-action-type="{{ action.action_type }}"
+                  data-endpoint="{{ action.endpoint }}"
+                  data-subject="{{ action.subject_id }}"
+                  data-requires-reason="{{ 'true' if action.requires_reason else 'false' }}"
+                  onclick="commandInlineAction(this)">{{ action.label }}</button>
+                {% else %}
+                <span class="founder-meta">Sign in as a human operator to {{ action.label | lower }}</span>
+                {% endif %}
+              {% elif action.execution_mode == 'NAVIGATE_GOVERNED' %}
+                <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-nav-action"
+                   href="{{ action.href }}">{{ action.label }} →</a>
+                <span class="pill gray">{{ action.execution_mode_label }}</span>
+              {% else %}
+                {% if action.href %}
+                <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-info-action"
+                   href="{{ action.href }}">{{ action.label }} →</a>
+                {% endif %}
+                <span class="pill gray">{{ action.execution_mode_label }}</span>
+              {% endif %}
+              {% if action.reason %}
+              <div class="founder-meta">{{ action.reason }}</div>
+              {% endif %}
+            {% endfor %}
+          </div>
+          {% elif card.href %}
+          <div class="founder-meta"><a href="{{ card.href }}">Open context →</a></div>
+          {% endif %}
+          <div class="founder-meta">
+            {% if card.provenance_action_type %}
+            <span data-testid="decision-provenance">{{ card.provenance_action_type }}</span>
+            {% endif %}
+            {% if card.occurred_at %} · {{ card.occurred_at }}{% endif %}
+          </div>
+        </div>
+        {% if card.card_key %}{% set _ = shown_keys.append(card.card_key) %}{% endif %}
+        {% endfor %}
+
+        {# Ready / informational items may appear here only as non-authority recommendations.
+           Do not add a separate recommendations rail. #}
+        {% for item in decision_items %}
+          {% if item.authority_state == 'ready' or item.authority_state == 'informational' %}
+          {% set ik = 'item:' ~ (item.item_id or '') %}
+          {% if ik not in shown_keys %}
+          <div class="command-v2-card founder-list-item"
+               data-testid="command-decision-item"
+               data-authority="{{ item.authority_state }}"
+               data-kind="{{ item.kind }}">
+            {% if item.authority_state == 'ready' %}
+            <span class="pill green" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+            <span class="pill gray" data-testid="command-v2-recommendation-not-authority">Recommendation — not authority</span>
+            {% else %}
+            <span class="pill gray" data-testid="decision-authority">{{ item.authority_state_label }}</span>
+            {% endif %}
+            <div class="command-v2-card-title"><strong>{{ item.title }}</strong></div>
+            {% if item.person_label or item.company_label %}
+            <div class="founder-meta">
+              {% if item.person_label %}{{ item.person_label }}{% endif %}
+              {% if item.person_label and item.company_label %} · {% endif %}
+              {% if item.company_label %}{{ item.company_label }}{% endif %}
+            </div>
+            {% endif %}
+            {% if item.reason %}<div class="founder-meta">{{ item.reason }}</div>{% endif %}
+            {% if item.proposed_action %}<div class="founder-meta">Recommendation: {{ item.proposed_action }}</div>{% endif %}
+            {% if item.command_actions %}
+            <div class="founder-meta" data-testid="command-actions" style="margin-top:8px">
+              {% for action in item.command_actions %}
+                {% if action.execution_mode == 'NAVIGATE_GOVERNED' %}
+                  <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-nav-action"
+                     href="{{ action.href }}">{{ action.label }} →</a>
+                {% elif action.href %}
+                  <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-info-action"
+                     href="{{ action.href }}">{{ action.label }} →</a>
+                {% endif %}
+              {% endfor %}
+            </div>
+            {% elif item.href %}
+            <div class="founder-meta"><a href="{{ item.href }}">Open →</a></div>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    </div>
+  </section>
+
+  {# —— B. Blocked or degraded —— #}
+  <section class="command-v2-section" data-testid="command-v2-blocked">
+    <div class="command-v2-section-title">
+      <span>Blocked or degraded</span>
+      <span class="command-v2-section-count">{{ blocked_n }}</span>
+    </div>
+    <p class="command-v2-section-intro">Unable to progress, provider waits, or degraded data. Autonomous recovery belongs under Running without you.</p>
+    {% if not blocked %}
+      <p class="founder-empty" data-testid="command-v2-blocked-empty">No blocked or degraded operations</p>
+    {% else %}
+      {% for card in blocked %}
+      <div class="command-v2-card founder-list-item" data-testid="command-v2-blocked-card" data-visible-state="{{ card.visible_state or '' }}">
+        {% if card.visible_state == 'WAITING_ON_PROVIDER' %}
+        <span class="pill amber" data-testid="command-v2-visible-state">Waiting on provider</span>
+        {% elif card.visible_state == 'FAILED' %}
+        <span class="pill amber" data-testid="command-v2-visible-state">Failed</span>
+        {% elif card.visible_state == 'UNKNOWN' %}
+        <span class="pill gray" data-testid="command-v2-visible-state">Unknown</span>
+        {% else %}
+        <span class="pill amber" data-testid="command-v2-visible-state">Blocked</span>
+        {% endif %}
+        <div class="command-v2-card-title"><strong>{{ card.title or 'Blocked operation' }}</strong></div>
+        {% if card.reason %}<div class="founder-meta">{{ card.reason }}</div>{% endif %}
+        {% if card.next_move %}
+        <div class="founder-meta" data-testid="command-v2-next-move">{{ card.next_move | replace('_', ' ') | title }}</div>
+        {% endif %}
+        {% if card.occurred_at %}<div class="founder-meta">{{ card.occurred_at }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </section>
+
+  {# —— C. Running without you —— #}
+  <section class="command-v2-section" data-testid="command-v2-running">
+    <div class="command-v2-section-title">
+      <span>Running without you</span>
+      <span class="command-v2-section-count">{{ running_n }}</span>
+    </div>
+    <p class="command-v2-section-intro">Autonomous progress only. Recovering stays Recovering — not success.</p>
+    {% if not running %}
+      <p class="founder-empty" data-testid="command-v2-running-empty">Nothing is progressing autonomously right now</p>
+    {% else %}
+      {% for card in running %}
+      <div class="command-v2-card founder-list-item" data-testid="command-v2-running-card" data-visible-state="{{ card.visible_state or '' }}">
+        {% if card.visible_state == 'RECOVERING' %}
+        <span class="pill blue" data-testid="command-v2-visible-state">Recovering</span>
+        {% elif card.visible_state == 'RUNNING' or card.visible_state == 'ACTIVE' %}
+        <span class="pill green" data-testid="command-v2-visible-state">{% if card.visible_state == 'ACTIVE' %}Active{% else %}Running{% endif %}</span>
+        {% else %}
+        <span class="pill gray" data-testid="command-v2-visible-state">{{ card.visible_state or 'In progress' }}</span>
+        {% endif %}
+        <div class="command-v2-card-title"><strong>{{ card.title or 'Agent work' }}</strong></div>
+        {% if card.reason %}<div class="founder-meta">{{ card.reason }}</div>{% endif %}
+        {% if card.next_move %}
+        <div class="founder-meta" data-testid="command-v2-next-move">{{ card.next_move | replace('_', ' ') | title }}</div>
+        {% endif %}
+        {% if card.occurred_at %}<div class="founder-meta">{{ card.occurred_at }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </section>
+
+  {# —— D. Recently changed —— #}
+  <section class="command-v2-section" data-testid="command-v2-recent">
+    <div class="command-v2-section-title">
+      <span>Recently changed</span>
+      <span class="command-v2-section-count">{{ recent_n }}</span>
+    </div>
+    <p class="command-v2-section-intro">Proven recent or completed outcomes only — not a synthetic event stream.</p>
+    {% if not recent %}
+      <p class="founder-empty" data-testid="command-v2-recent-empty">No recent proven changes</p>
+    {% else %}
+      {% for card in recent %}
+      <div class="command-v2-card founder-list-item" data-testid="command-v2-recent-card" data-visible-state="{{ card.visible_state or '' }}">
+        <span class="pill blue" data-testid="command-v2-visible-state">Completed</span>
+        <div class="command-v2-card-title"><strong>{{ card.title or 'Recent change' }}</strong></div>
+        {% if card.next_move %}
+        <div class="founder-meta" data-testid="command-v2-next-move">{{ card.next_move | replace('_', ' ') | title }}</div>
+        {% endif %}
+        {% if card.occurred_at %}<div class="founder-meta">{{ card.occurred_at }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </section>
+</div>
+
+{# —— Compatibility / frozen Command V1 supporting surfaces (not V2 home) —— #}
+<div class="command-v2-compat" data-testid="command-v1-compatibility">
+  <div class="command-v2-compat-label">Supporting operating surfaces</div>
 
 <div class="founder-stat-row" data-testid="command-decision-summary">
-  <div class="founder-stat" data-testid="command-stat-requires">
-    <div class="founder-stat-label">Needs your decision</div>
-    <div class="founder-stat-val">{{ decision_loop.requires_founder | default(0) }}</div>
-  </div>
   <div class="founder-stat" data-testid="command-stat-ready">
     <div class="founder-stat-label">Ready / recommended</div>
     <div class="founder-stat-val">{{ decision_loop.ready | default(0) }}</div>
@@ -54,85 +385,6 @@
     <div class="founder-stat-label">Deals on people</div>
     <div class="founder-stat-val">{{ snapshot.pipeline.deals }}</div>
   </div>
-</div>
-
-<div class="founder-card" data-testid="command-decision-loop" style="margin-bottom:20px">
-  <div class="founder-card-title">Commercial decisions</div>
-  {% if not decision_items %}
-    <p class="founder-empty">Nothing needs your attention right now</p>
-  {% else %}
-    {% for item in decision_items[:12] %}
-    <div class="founder-list-item" data-testid="command-decision-item" data-authority="{{ item.authority_state }}" data-kind="{{ item.kind }}">
-      {% if item.authority_state == 'requires_founder' %}
-      <span class="pill amber" data-testid="decision-authority">{{ item.authority_state_label }}</span>
-      {% elif item.authority_state == 'ready' %}
-      <span class="pill green" data-testid="decision-authority">{{ item.authority_state_label }}</span>
-      {% elif item.authority_state == 'completed' %}
-      <span class="pill blue" data-testid="decision-authority">{{ item.authority_state_label }}</span>
-      {% else %}
-      <span class="pill gray" data-testid="decision-authority">{{ item.authority_state_label }}</span>
-      {% endif %}
-      <strong>{{ item.title }}</strong>
-      {% if item.person_label or item.company_label %}
-      <div class="founder-meta">
-        {% if item.person_label %}{{ item.person_label }}{% endif %}
-        {% if item.person_label and item.company_label %} · {% endif %}
-        {% if item.company_label %}{{ item.company_label }}{% endif %}
-      </div>
-      {% endif %}
-      {% if item.reason %}
-      <div class="founder-meta">{{ item.reason }}</div>
-      {% endif %}
-      {% if item.proposed_action %}
-      <div class="founder-meta">Next: {{ item.proposed_action }}</div>
-      {% endif %}
-      {% if item.outcome %}
-      <div class="founder-meta">Outcome: {{ item.outcome }}</div>
-      {% endif %}
-      {% if item.command_actions %}
-      <div class="founder-meta" data-testid="command-actions" style="margin-top:8px">
-        {% for action in item.command_actions %}
-          {% if action.execution_mode == 'INLINE_GOVERNED' %}
-            {% if operator.configured %}
-            <button type="button"
-              class="btn {% if action.requires_reason %}btn-ghost{% else %}btn-primary{% endif %} btn-sm"
-              style="margin:4px 4px 0 0"
-              data-testid="command-inline-action"
-              data-action-type="{{ action.action_type }}"
-              data-endpoint="{{ action.endpoint }}"
-              data-subject="{{ action.subject_id }}"
-              data-requires-reason="{{ 'true' if action.requires_reason else 'false' }}"
-              onclick="commandInlineAction(this)">{{ action.label }}</button>
-            {% else %}
-            <span class="founder-meta">Sign in as a human operator to {{ action.label | lower }}</span>
-            {% endif %}
-          {% elif action.execution_mode == 'NAVIGATE_GOVERNED' %}
-            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-nav-action"
-               href="{{ action.href }}">{{ action.label }} →</a>
-            <span class="pill gray">{{ action.execution_mode_label }}</span>
-          {% else %}
-            {% if action.href %}
-            <a class="btn btn-ghost btn-sm" style="margin:4px 4px 0 0" data-testid="command-info-action"
-               href="{{ action.href }}">{{ action.label }} →</a>
-            {% endif %}
-            <span class="pill gray">{{ action.execution_mode_label }}</span>
-          {% endif %}
-          {% if action.reason %}
-          <div class="founder-meta">{{ action.reason }}</div>
-          {% endif %}
-        {% endfor %}
-      </div>
-      {% endif %}
-      <div class="founder-meta">
-        {% if item.href and not item.command_actions %}<a href="{{ item.href }}">Open →</a>{% endif %}
-        {% if item.provenance and item.provenance.action_type %}
-        · <span data-testid="decision-provenance">{{ item.provenance.action_type }}</span>
-        {% endif %}
-        {% if item.occurred_at %} · {{ item.occurred_at }}{% endif %}
-      </div>
-    </div>
-    {% endfor %}
-  {% endif %}
 </div>
 
 {% set orch = snapshot.agent_orchestration or {} %}
@@ -420,6 +672,8 @@
     {% endif %}
   </div>
 </div>
+</div>{# end command-v1-compatibility #}
+
 {% endif %}
 
 <pre id="command-action-result" data-testid="command-action-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
