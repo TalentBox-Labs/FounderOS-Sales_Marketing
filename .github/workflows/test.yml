@@ -13,6 +13,21 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
 
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: revenue_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
     - uses: actions/checkout@v4
 
@@ -31,6 +46,7 @@ jobs:
         python -m pytest tests/ -v
       env:
         SECRET_KEY: ${{ secrets.TEST_SECRET_KEY }}
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/revenue_os
 
     - name: Verify fixture sync (no writes allowed)
       run: |
