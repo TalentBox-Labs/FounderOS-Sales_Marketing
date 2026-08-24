@@ -39,12 +39,14 @@
 
 <div class="card" style="margin-bottom:18px" data-testid="operator-attention">
   <div class="card-title">Attention</div>
-  {% if flow.attention.state == 'unavailable' %}
-    <p class="of-degraded" data-testid="attention-unavailable">{{ flow.attention.message }}</p>
-  {% elif flow.attention.state == 'empty' %}
-    <p class="of-degraded" data-testid="attention-empty">{{ flow.attention.message }}</p>
+  {% set attention = flow.attention if flow.attention is mapping else {} %}
+  {% if attention.get('state') == 'unavailable' %}
+    <p class="of-degraded" data-testid="attention-unavailable">{{ attention.get('message') }}</p>
+  {% elif attention.get('state') == 'empty' or not attention.get('items') %}
+    <p class="of-degraded" data-testid="attention-empty">{{ attention.get('message') or 'No operator decisions pending' }}</p>
   {% else %}
-    {% for item in flow.attention.items %}
+    {# Explicit key access — same Jinja trap as cockpit data['items'] vs dict.items #}
+    {% for item in attention['items'] %}
     <div class="of-item" data-testid="attention-item" data-kind="{{ item.kind }}">
       <strong>{{ item.label }}</strong>
       <div class="of-meta">{{ item.detail }}</div>

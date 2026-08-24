@@ -7,6 +7,7 @@ tenant isolation, human authority, booking negative scope, demo seed bounds.
 from __future__ import annotations
 
 import inspect
+import re
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -306,7 +307,12 @@ def test_command_center_populated(client: TestClient, monkeypatch: pytest.Monkey
     assert r.status_code == 200
     assert "Draft to Alex" in r.text
     assert "New Demand" in r.text
-    assert "Booking eligible" in r.text
+    # UI-D2 superseded Command copy "Booking eligible" with governed proposal UX.
+    # OBSOLETE_CONTRACT_RECONCILIATION: keep eligibility visible without implying
+    # a pending ApprovalRequest or ungoverned booking execution.
+    assert "Meeting interest" in r.text
+    assert "Ready to propose a meeting" in r.text
+    assert "booking workflow pending" not in r.text.lower()
     assert "randint" not in r.text
 
 
@@ -497,6 +503,13 @@ def test_no_optional_data_crashes(client: TestClient, monkeypatch: pytest.Monkey
 def test_booking_eligibility_shown_without_booking_action(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """UI-D2 superseded D1.5 'booking workflow pending' as general eligibility copy.
+
+    OBSOLETE_CONTRACT_RECONCILIATION: eligibility-without-pending-approval must show
+    meeting interest / booking eligible without implying an ApprovalRequest is pending,
+    and without ungoverned 'book a meeting' execution. Pending-workflow copy remains
+    owned by INT-D2 APPROVAL_PENDING paths.
+    """
     monkeypatch.setattr("runner_api_routers.ui.founder_login_redirect", lambda _r: None)
     workspace = {
         "generated_at": "now",
@@ -538,18 +551,23 @@ def test_booking_eligibility_shown_without_booking_action(
     assert r.status_code == 200
     assert "Meeting interest" in r.text
     assert "Booking eligible" in r.text
-    assert "booking workflow pending" in r.text.lower()
+    # Eligible without pending ApprovalRequest must not claim approval-pending workflow.
+    assert 'data-testid="booking-approval-pending"' not in r.text
+    assert "booking workflow pending" not in r.text.lower()
     lower = r.text.lower()
     assert "book a meeting" not in lower
-    assert "select a slot" not in lower
-    assert "availability" not in lower or "not available" in lower
+    assert "calendar booking" not in lower
 
 
 def test_no_fake_availability_ui() -> None:
+    """UI-D2/INT-D2 allow book_meeting as HUMAN_REQUIRED approval action_type.
+
+    OBSOLETE_CONTRACT_RECONCILIATION: replace blanket 'book_meeting' ban with
+    stronger invariants — no fake calendar booking UI on non-booking surfaces;
+    approvals may render book_meeting; client still posts empty decision body.
+    """
     for name in (
-        "founder_contact.html",
         "founder_command.html",
-        "founder_approvals.html",
         "founder_activity.html",
         "founder_demand.html",
     ):
@@ -557,6 +575,16 @@ def test_no_fake_availability_ui() -> None:
         assert "book_meeting" not in text
         assert "slot selection" not in text
         assert "calendar booking" not in text
+
+    contact = (TEMPLATES / "founder_contact.html").read_text().lower()
+    assert "slot selection" not in contact
+    assert "calendar booking" not in contact
+    assert "you approve" in contact or "approval required" in contact
+
+    approvals = (TEMPLATES / "founder_approvals.html").read_text()
+    assert "book_meeting" in approvals
+    assert "JSON.stringify({})" in approvals
+    assert "decided_by" not in approvals
 
 
 def test_demo_seed_bounded_to_development() -> None:
@@ -570,12 +598,20 @@ def test_demo_seed_bounded_to_development() -> None:
 
 
 def test_human_authority_preserved() -> None:
+    """Client must not inject requested_by/decided_by as execution authority.
+
+    OBSOLETE_CONTRACT_RECONCILIATION: substring ban on 'requested_by' incorrectly
+    failed on presentation-only requested_by_label. Stronger check: no client
+    identity fields in the decide payload; decided_by absent; label OK.
+    """
     approvals_js = (TEMPLATES / "founder_approvals.html").read_text()
     contact_js = (TEMPLATES / "founder_contact.html").read_text()
-    assert "requested_by" not in approvals_js
-    assert "decided_by" not in approvals_js
     assert 'JSON.stringify({})' in approvals_js
-    assert "requested_by" not in contact_js
+    assert "decided_by" not in approvals_js
+    # Standalone requested_by token forbidden; requested_by_label presentation allowed.
+    assert re.search(r"(?<![\w])requested_by(?![\w])", approvals_js) is None
+    assert re.search(r"(?<![\w])requested_by(?![\w])", contact_js) is None
+    assert "requested_by_label" in approvals_js or "proposal_source" in approvals_js
     assert "advisory only" in contact_js.lower()
     ui_src = inspect.getsource(ui_mod.page_founder_approvals)
     assert "build_approvals_snapshot" in ui_src

@@ -802,6 +802,78 @@ def _reply_summary_from_assessment(assessment_payload: dict[str, Any] | None) ->
     }
 
 
+_EMPTY_DECISION_LOOP: dict[str, int] = {
+    "total": 0,
+    "requires_founder": 0,
+    "ready": 0,
+    "completed": 0,
+    "informational": 0,
+}
+
+
+def ensure_command_center_snapshot_shape(snapshot: Any) -> dict[str, Any]:
+    """Guarantee Command template keys without inventing authority or SoT.
+
+    COS-3 requires decision_loop on /command. Partial/mocked snapshots (UI-D1.5)
+    may omit it; fill zeros so the page renders without renaming the contract.
+    """
+    if not isinstance(snapshot, dict):
+        return {
+            "generated_at": _utc_now(),
+            "state": "unavailable",
+            "message": "Invalid command snapshot",
+            "pending_approvals": [],
+            "pending_approval_count": 0,
+            "pending_demands": [],
+            "pending_demand_count": 0,
+            "pipeline": {"contacts": 0, "deals": 0, "deals_by_stage": {}},
+            "recent_replies": [],
+            "meeting_interest": [],
+            "meeting_booking_pending": [],
+            "follow_up_signals": [],
+            "recent_activity": [],
+            "decision_items": [],
+            "decision_loop": dict(_EMPTY_DECISION_LOOP),
+            "commercial_funnel": {},
+            "agent_orchestration": {"counts": {}},
+            "command_action_summary": {},
+            "errors": [],
+        }
+
+    out = dict(snapshot)
+    loop = out.get("decision_loop")
+    if not isinstance(loop, dict):
+        out["decision_loop"] = dict(_EMPTY_DECISION_LOOP)
+    else:
+        merged = dict(_EMPTY_DECISION_LOOP)
+        merged.update({k: loop[k] for k in _EMPTY_DECISION_LOOP if k in loop})
+        # Preserve any extra keys from a full COS-3 loop while ensuring required ones.
+        for key, value in loop.items():
+            if key not in merged:
+                merged[key] = value
+        out["decision_loop"] = merged
+
+    if not isinstance(out.get("decision_items"), list):
+        out["decision_items"] = []
+    if not isinstance(out.get("agent_orchestration"), dict):
+        out["agent_orchestration"] = {"counts": {}}
+    if not isinstance(out.get("pipeline"), dict):
+        out["pipeline"] = {"contacts": 0, "deals": 0, "deals_by_stage": {}}
+    else:
+        pipe = dict(out["pipeline"])
+        pipe.setdefault("contacts", 0)
+        pipe.setdefault("deals", 0)
+        pipe.setdefault("deals_by_stage", {})
+        out["pipeline"] = pipe
+    if not isinstance(out.get("commercial_funnel"), dict):
+        out["commercial_funnel"] = {}
+    if out.get("pending_approval_count") is None:
+        out["pending_approval_count"] = len(out.get("pending_approvals") or [])
+    if out.get("pending_demand_count") is None:
+        out["pending_demand_count"] = len(out.get("pending_demands") or [])
+    return out
+
+
 def build_command_center_snapshot(*, organization_id: str | None = None) -> dict[str, Any]:
     """Founder Command Center — attention-oriented read composition."""
     snapshot: dict[str, Any] = {
@@ -819,13 +891,7 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         "follow_up_signals": [],
         "recent_activity": [],
         "decision_items": [],
-        "decision_loop": {
-            "total": 0,
-            "requires_founder": 0,
-            "ready": 0,
-            "completed": 0,
-            "informational": 0,
-        },
+        "decision_loop": dict(_EMPTY_DECISION_LOOP),
         "commercial_funnel": {},
         "agent_orchestration": {
             "counts": {
@@ -983,7 +1049,7 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
         logger.warning("Command center ACP-2 orchestration summary unavailable: %s", exc)
         snapshot["errors"].append("agent_orchestration")
     snapshot["ai_completed_count"] = len(snapshot.get("recent_activity") or [])
-    return snapshot
+    return ensure_command_center_snapshot_shape(snapshot)
 
 
 def _scoped_company_names_for_people(

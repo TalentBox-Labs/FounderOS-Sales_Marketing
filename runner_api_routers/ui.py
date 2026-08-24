@@ -47,6 +47,7 @@ from revenue_os.services.founder_ui_read_model import (
     build_command_center_snapshot,
     build_contact_workspace_snapshot,
     build_demand_contacts_snapshot,
+    ensure_command_center_snapshot_shape,
 )
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.tenant_resolution import resolve_tenant_context
@@ -798,7 +799,10 @@ def page_founder_command(request: Request) -> HTMLResponse | RedirectResponse:
     if redirected is not None:
         return redirected
     ctx = _founder_page_context(request, active_page="command")
-    ctx["snapshot"] = build_command_center_snapshot(organization_id=ctx.get("org_id"))
+    # Normalize after composition (and after test mocks) so COS-3 keys always exist.
+    ctx["snapshot"] = ensure_command_center_snapshot_shape(
+        build_command_center_snapshot(organization_id=ctx.get("org_id"))
+    )
     return templates.TemplateResponse(request=request, name="founder_command.html", context=ctx)
 
 
