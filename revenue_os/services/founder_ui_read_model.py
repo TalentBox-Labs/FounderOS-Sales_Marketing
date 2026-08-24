@@ -40,6 +40,7 @@ from revenue_os.services.command_operating_surface import (
     attach_command_actions,
     summarize_command_actions,
 )
+from revenue_os.services.command_v2_projection import compose_command_v2_projection
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
@@ -871,6 +872,12 @@ def ensure_command_center_snapshot_shape(snapshot: Any) -> dict[str, Any]:
         out["pending_approval_count"] = len(out.get("pending_approvals") or [])
     if out.get("pending_demand_count") is None:
         out["pending_demand_count"] = len(out.get("pending_demands") or [])
+    # I1: presentation-only Command V2 projection (no SoT / no authority).
+    org_for_v2 = out.get("organization_id")
+    out["command_v2"] = compose_command_v2_projection(
+        out,
+        organization_id=str(org_for_v2) if org_for_v2 else None,
+    )
     return out
 
 
@@ -914,10 +921,12 @@ def build_command_center_snapshot(*, organization_id: str | None = None) -> dict
     flow_contacts: list[dict[str, Any]] = []
     flow: dict[str, Any] | None = None
     org_uuid = _org_uuid(organization_id)
+    if organization_id:
+        snapshot["organization_id"] = str(organization_id)
     if org_uuid is None:
         snapshot["state"] = "unavailable"
         snapshot["message"] = "Organization context required"
-        return snapshot
+        return ensure_command_center_snapshot_shape(snapshot)
 
     try:
         flow = build_operator_flow_snapshot(organization_id=organization_id)
