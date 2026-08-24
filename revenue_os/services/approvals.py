@@ -254,12 +254,64 @@ def _execute_book_meeting(db: Session, payload: dict) -> dict[str, Any]:
     }
 
 
+def _execute_send_email_campaign(db: Session, payload: dict) -> dict[str, Any]:
+    """Hand a broadcast campaign to n8n — same delivery pattern as a single
+    outreach email, just with a recipient list in the payload."""
+    from revenue_os.integrations.n8n import trigger_workflow
+
+    recipients = payload.get("recipients", [])
+    result = trigger_workflow("send-campaign-email", {
+        "event": "campaign.approved",
+        "recipients": recipients,
+        "subject": payload.get("subject"),
+        "body": payload.get("body"),
+        "cta": payload.get("cta"),
+    })
+    delivered = result is not None
+    return {"handed_to_n8n": delivered, "recipient_count": len(recipients),
+            "note": None if delivered else "n8n unreachable — check n8n and retry"}
+
+
+def _execute_send_whatsapp_campaign(db: Session, payload: dict) -> dict[str, Any]:
+    """Sends the approved message to every WhatsApp contact matching the
+    campaign's tag via the real Meta Cloud API call in WhatsAppClient."""
+    from revenue_os.integrations.whatsapp import MessageType, WhatsAppClient
+
+    recipients = WhatsAppClient.list_contacts(tag=payload.get("tag"))
+    sent, failed = 0, 0
+    for contact in recipients:
+        message = WhatsAppClient.send_message(contact.phone_number, MessageType.TEXT, {"body": payload.get("message", "")})
+        if message and message.status == "sent":
+            sent += 1
+        else:
+            failed += 1
+    return {"sent": sent, "failed": failed, "total": len(recipients)}
+
+
+def _execute_publish_linkedin_post(db: Session, payload: dict) -> dict[str, Any]:
+    """LinkedIn has no compliant API for posting on a company's behalf
+    without app review this platform doesn't have — approving marks the
+    copy ready to post by hand."""
+    return {"delivery": "manual", "note": "No compliant LinkedIn posting API configured — copy the approved text and post it yourself.",
+            "body": payload.get("body")}
+
+
+def _execute_publish_social_post(db: Session, payload: dict) -> dict[str, Any]:
+    """Same manual-posting caveat as LinkedIn, across every platform."""
+    return {"delivery": "manual", "note": "No compliant posting API configured for these platforms — copy the approved variants and post them yourself.",
+            "variants": payload.get("variants")}
+
+
 EXECUTORS: dict[str, Callable[[Session, dict], dict[str, Any]]] = {
     "send_outreach_email": _execute_send_outreach_email,
     "create_deal": _execute_create_deal,
     "send_linkedin_message": _execute_send_linkedin_message,
     "send_reply_email": _execute_send_outreach_email,
     "book_meeting": _execute_book_meeting,
+    "send_email_campaign": _execute_send_email_campaign,
+    "send_whatsapp_campaign": _execute_send_whatsapp_campaign,
+    "publish_linkedin_post": _execute_publish_linkedin_post,
+    "publish_social_post": _execute_publish_social_post,
 }
 
 
