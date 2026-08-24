@@ -14,7 +14,9 @@ from unittest.mock import MagicMock, Mock
 _TEST_DB_PATH = Path(__file__).resolve().parent / "_revenue_os_test.db"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production-use-only-in-ci")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_DB_PATH}")
-os.environ.setdefault("HEARTBEAT_ENABLED", "0")  # don't start the background loop during tests
+# Deliberately NOT setting HEARTBEAT_ENABLED=0 here: Main's ACP3 governance
+# layer (revenue_os/services/acp3_durable_runtime.py) treats it as a global
+# "pause all mutating work" switch, not a test-only background-loop toggle.
 # Deliberately NOT setting RUNNER_API_KEY here: several pre-existing tests
 # (tests/test_runner_api.py) rely on "unset = auth bypassed" against a bare
 # TestClient(app). New revenue_os tests should use the cms_client fixture

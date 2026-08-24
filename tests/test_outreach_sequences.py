@@ -11,6 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
+_TEST_ORG_ID = "00000000-0000-0000-0000-0000000000a4"
+_TEST_ORG_UUID = uuid.UUID(_TEST_ORG_ID)
+
 
 @pytest.fixture
 def contact(revenue_db):
@@ -18,6 +21,7 @@ def contact(revenue_db):
 
     c = Contact(
         first_name="Reply", last_name="Aware", email=f"replyaware-{uuid.uuid4().hex[:8]}@example.com",
+        organization_id=_TEST_ORG_UUID,
     )
     revenue_db.add(c)
     revenue_db.commit()
@@ -131,7 +135,7 @@ class TestGmailSyncPausesSequenceOnReply:
              patch.object(gs, "_refresh_access_token", return_value={"ok": True, "access_token": "fake"}), \
              patch.object(gs, "_list_message_ids", return_value=[message_id]), \
              patch.object(gs, "_get_message", return_value=self._fake_message(message_id, contact.email)):
-            result = gs.sync_inbox()
+            result = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
 
         assert result["ok"] is True
         assert result["matched"] == 1
@@ -163,7 +167,7 @@ class TestGmailSyncPausesSequenceOnReply:
              patch.object(gs, "_refresh_access_token", return_value={"ok": True, "access_token": "fake"}), \
              patch.object(gs, "_list_message_ids", return_value=[message_id]), \
              patch.object(gs, "_get_message", return_value=self._fake_message(message_id, contact.email)):
-            result = gs.sync_inbox()
+            result = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
 
         assert result["ok"] is True
         assert result["matched"] == 1

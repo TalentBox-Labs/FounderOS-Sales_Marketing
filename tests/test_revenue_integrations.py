@@ -11,6 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
+_TEST_ORG_ID = "00000000-0000-0000-0000-0000000000a3"
+_TEST_ORG_UUID = uuid.UUID(_TEST_ORG_ID)
+
 
 class TestCredentialsVault:
     def test_save_and_load_round_trip(self) -> None:
@@ -120,13 +123,17 @@ class TestGmailSync:
             ]},
         }
 
-    def test_sync_matches_known_contact_and_skips_unknown(self, cms_client) -> None:
+    def test_sync_matches_known_contact_and_skips_unknown(self, revenue_db) -> None:
         import revenue_os.integrations.gmail_sync as gs
+        from revenue_os.models.contact import Contact
 
-        create = cms_client.post("/api/v1/crm/contacts", json={
-            "first_name": "Gmail", "last_name": "Match", "email": f"gmailmatch-{uuid.uuid4().hex[:8]}@example.com",
-        })
-        contact_email = create.json()["contact"]["email"]
+        contact_email = f"gmailmatch-{uuid.uuid4().hex[:8]}@example.com"
+        contact = Contact(
+            first_name="Gmail", last_name="Match", email=contact_email,
+            organization_id=_TEST_ORG_UUID,
+        )
+        revenue_db.add(contact)
+        revenue_db.commit()
 
         matched_id = f"msg-{uuid.uuid4().hex[:8]}"
         unmatched_id = f"msg-{uuid.uuid4().hex[:8]}"
@@ -139,20 +146,24 @@ class TestGmailSync:
                  self._fake_message(matched_id, contact_email) if mid == matched_id
                  else self._fake_message(unmatched_id, "stranger@unrelated.com")
              )):
-            result = gs.sync_inbox()
+            result = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
 
         assert result["ok"] is True
         assert result["checked"] == 2
         assert result["matched"] == 1
         assert result["created"] == 1
 
-    def test_sync_is_idempotent_on_rerun(self, cms_client) -> None:
+    def test_sync_is_idempotent_on_rerun(self, revenue_db) -> None:
         import revenue_os.integrations.gmail_sync as gs
+        from revenue_os.models.contact import Contact
 
-        create = cms_client.post("/api/v1/crm/contacts", json={
-            "first_name": "Gmail", "last_name": "Dedup", "email": f"gmaildedup-{uuid.uuid4().hex[:8]}@example.com",
-        })
-        contact_email = create.json()["contact"]["email"]
+        contact_email = f"gmaildedup-{uuid.uuid4().hex[:8]}@example.com"
+        contact = Contact(
+            first_name="Gmail", last_name="Dedup", email=contact_email,
+            organization_id=_TEST_ORG_UUID,
+        )
+        revenue_db.add(contact)
+        revenue_db.commit()
         message_id = f"msg-{uuid.uuid4().hex[:8]}"
 
         with patch("revenue_os.services.credentials_vault.load_credentials",
@@ -160,8 +171,8 @@ class TestGmailSync:
              patch.object(gs, "_refresh_access_token", return_value={"ok": True, "access_token": "fake"}), \
              patch.object(gs, "_list_message_ids", return_value=[message_id]), \
              patch.object(gs, "_get_message", return_value=self._fake_message(message_id, contact_email)):
-            first = gs.sync_inbox()
-            second = gs.sync_inbox()
+            first = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
+            second = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
 
         assert first["created"] == 1
         assert second["created"] == 0  # already synced — EmailActivity.message_id dedup
@@ -170,6 +181,6 @@ class TestGmailSync:
         import revenue_os.integrations.gmail_sync as gs
 
         with patch("revenue_os.services.credentials_vault.load_credentials", return_value=None):
-            result = gs.sync_inbox()
+            result = gs.sync_inbox(organization_ids=[_TEST_ORG_ID])
         assert result["ok"] is False
         assert "not connected" in result["reason"].lower()

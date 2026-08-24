@@ -11,9 +11,33 @@ that reuses the same executor. This test guards that fix.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import patch
 
 import pytest
+
+_TEST_ORG_ID = "00000000-0000-0000-0000-0000000000a1"
+
+
+def _human_tenant(name: str = "tester", org_id: str = _TEST_ORG_ID):
+    from revenue_os.services.identity_context import AuthMethod, IdentityContext, PrincipalKind
+    from revenue_os.services.tenant_context import TenantContext
+
+    return TenantContext(
+        identity=IdentityContext(
+            principal_kind=PrincipalKind.HUMAN,
+            auth_method=AuthMethod.SESSION,
+            is_human=True,
+            display_name=name,
+            role="member",
+        ),
+        organization_id=org_id,
+        organization_name="Test Org",
+        organization_slug="test-org",
+        membership_id="m-test",
+        membership_role="member",
+        membership_status="active",
+    )
 
 
 def test_request_approval_dedupes_same_action_and_target() -> None:
@@ -64,23 +88,33 @@ def test_decide_reject_does_not_execute() -> None:
     req = request_approval(
         requested_by="test_agent", action_type="send_outreach_email",
         title="Reject me", target_type="contact", target_id="contact-reject-1",
-        payload={"body": "x"},
+        payload={"body": "x"}, organization_id=_TEST_ORG_ID,
     )
-    result = decide(req["id"], approve=False, decided_by="tester")
+    result = decide(req["id"], approve=False, tenant=_human_tenant())
     assert result["status"] == "rejected"
     assert result["execution_result"] is None
 
 
-def test_decide_approve_executes_and_persists_result() -> None:
+def test_decide_approve_executes_and_persists_result(revenue_db) -> None:
+    from revenue_os.models.contact import Contact
     from revenue_os.services.approvals import decide, request_approval
+
+    contact = Contact(
+        first_name="X", last_name="Approve", email="x@example.com",
+        organization_id=uuid.UUID(_TEST_ORG_ID),
+    )
+    revenue_db.add(contact)
+    revenue_db.commit()
+    revenue_db.refresh(contact)
 
     with patch("revenue_os.integrations.n8n.trigger_workflow", return_value=None) as mock_trigger:
         req = request_approval(
             requested_by="test_agent", action_type="send_outreach_email",
-            title="Approve me", target_type="contact", target_id="contact-approve-1",
-            payload={"contact_id": "contact-approve-1", "email": "x@example.com", "name": "X"},
+            title="Approve me", target_type="contact", target_id=str(contact.id),
+            payload={"contact_id": str(contact.id), "email": "x@example.com", "name": "X"},
+            organization_id=_TEST_ORG_ID,
         )
-        result = decide(req["id"], approve=True, decided_by="tester")
+        result = decide(req["id"], approve=True, tenant=_human_tenant())
 
     assert result["status"] == "approved"
     assert result["execution_result"]["executed"] is True
@@ -93,9 +127,9 @@ def test_decide_unknown_action_type_records_no_executor() -> None:
 
     req = request_approval(
         requested_by="test_agent", action_type="totally_made_up_action",
-        title="No executor for this", payload={},
+        title="No executor for this", payload={}, organization_id=_TEST_ORG_ID,
     )
-    result = decide(req["id"], approve=True, decided_by="tester")
+    result = decide(req["id"], approve=True, tenant=_human_tenant())
     assert result["status"] == "approved"
     assert result["execution_result"]["executed"] is False
 
@@ -103,10 +137,13 @@ def test_decide_unknown_action_type_records_no_executor() -> None:
 def test_decide_twice_raises() -> None:
     from revenue_os.services.approvals import decide, request_approval
 
-    req = request_approval(requested_by="test_agent", action_type="create_deal", title="Once only", payload={})
-    decide(req["id"], approve=False, decided_by="tester")
+    req = request_approval(
+        requested_by="test_agent", action_type="create_deal", title="Once only",
+        payload={}, organization_id=_TEST_ORG_ID,
+    )
+    decide(req["id"], approve=False, tenant=_human_tenant())
     with pytest.raises(ValueError):
-        decide(req["id"], approve=False, decided_by="tester")
+        decide(req["id"], approve=False, tenant=_human_tenant())
 
 
 class TestExecutors:

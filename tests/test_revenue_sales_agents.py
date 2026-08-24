@@ -10,6 +10,9 @@ from unittest.mock import patch
 
 import pytest
 
+_TEST_ORG_ID = "00000000-0000-0000-0000-0000000000a2"
+_TEST_ORG_UUID = uuid.UUID(_TEST_ORG_ID)
+
 
 @pytest.fixture
 def contact(revenue_db):
@@ -17,7 +20,7 @@ def contact(revenue_db):
 
     c = Contact(
         first_name="Jamie", last_name="Prospect", email=f"jamie-{uuid.uuid4().hex[:8]}@example.com",
-        linkedin_url="https://linkedin.com/in/jamie-prospect",
+        linkedin_url="https://linkedin.com/in/jamie-prospect", organization_id=_TEST_ORG_UUID,
     )
     revenue_db.add(c)
     revenue_db.commit()
@@ -45,11 +48,14 @@ class TestICPResearchAgent:
         from revenue_os.models.contact import Contact
         from revenue_os.services.sales_agents import research_contact
 
-        bare = Contact(first_name="No", last_name="LinkedIn", email=f"nolink-{uuid.uuid4().hex[:8]}@example.com")
+        bare = Contact(
+            first_name="No", last_name="LinkedIn", email=f"nolink-{uuid.uuid4().hex[:8]}@example.com",
+            organization_id=_TEST_ORG_UUID,
+        )
         revenue_db.add(bare)
         revenue_db.commit()
 
-        result = research_contact(str(bare.id))
+        result = research_contact(str(bare.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
         assert "LinkedIn" in result["reason"]
 
@@ -58,7 +64,7 @@ class TestICPResearchAgent:
 
         with patch("revenue_os.services.linkedin_enrichment.enrich_person", return_value=FAKE_PERSON), \
              patch("revenue_os.services.linkedin_enrichment.enrich_company", return_value=FAKE_COMPANY):
-            result = research_contact(str(contact.id))
+            result = research_contact(str(contact.id), organization_id=_TEST_ORG_ID)
 
         assert result["ok"] is True
         assert result["icp_fit"]["score"] == 100
@@ -69,7 +75,7 @@ class TestColdEmailAgent:
     def test_draft_cold_email_files_approval(self, contact) -> None:
         from revenue_os.services.sales_agents import draft_cold_email
 
-        result = draft_cold_email(str(contact.id))
+        result = draft_cold_email(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["approval_id"]
         assert "Jamie" in result["body"]  # real context, not a merge-tag placeholder
@@ -83,11 +89,11 @@ class TestColdEmailAgent:
         from revenue_os.models.contact import Contact
         from revenue_os.services.sales_agents import draft_cold_email
 
-        no_email = Contact(first_name="No", last_name="Email", email=None)
+        no_email = Contact(first_name="No", last_name="Email", email=None, organization_id=_TEST_ORG_UUID)
         revenue_db.add(no_email)
         revenue_db.commit()
 
-        result = draft_cold_email(str(no_email.id))
+        result = draft_cold_email(str(no_email.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
 
 
@@ -95,7 +101,7 @@ class TestLinkedInOpenerAgent:
     def test_draft_linkedin_opener_files_approval(self, contact) -> None:
         from revenue_os.services.sales_agents import draft_linkedin_opener
 
-        result = draft_linkedin_opener(str(contact.id))
+        result = draft_linkedin_opener(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert len(result["connection_note"]) <= 300
         assert result["approval_id"]
@@ -106,7 +112,7 @@ class TestFollowUpSequenceAgent:
         from revenue_os.models.activity import OutreachSequence, SequenceStep
         from revenue_os.services.sales_agents import build_followup_sequence
 
-        result = build_followup_sequence(str(contact.id))
+        result = build_followup_sequence(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert 5 <= len(result["steps"]) <= 7
 
@@ -124,7 +130,7 @@ class TestObjectionHandlerAgent:
     def test_handle_latest_reply_with_no_inbound_email(self, contact) -> None:
         from revenue_os.services.sales_agents import handle_latest_reply
 
-        result = handle_latest_reply(str(contact.id))
+        result = handle_latest_reply(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is False
         assert "reply" in result["reason"].lower()
 
@@ -147,7 +153,7 @@ class TestObjectionHandlerAgent:
             title="Earlier cold email", target_type="contact", target_id=str(contact.id), payload={},
         )
 
-        result = handle_latest_reply(str(contact.id))
+        result = handle_latest_reply(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["category"] == "not_interested"
         assert result["approval_id"] != pre_existing["id"]
@@ -164,6 +170,6 @@ class TestObjectionHandlerAgent:
         revenue_db.add(reply)
         revenue_db.commit()
 
-        result = handle_latest_reply(str(contact.id))
+        result = handle_latest_reply(str(contact.id), organization_id=_TEST_ORG_ID)
         assert result["ok"] is True
         assert result["original_reply"] == "Sounds good, send over pricing"

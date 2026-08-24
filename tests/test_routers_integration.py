@@ -22,18 +22,10 @@ class TestPipelineRouter:
         assert r.json()["status"] == "ok"
 
     def test_api_health_endpoint_returns_ok(self, cms_client: TestClient) -> None:
-        """API health check endpoint returns 200.
-
-        Two routers define GET /api/v1/health: metrics_router (mounted
-        early, prefix="/api/v1") and ui.py's own copy (mounted last,
-        per "UI routes must be last" in runner_api.py). Starlette resolves
-        by registration order, so metrics_router's HealthChecker response
-        always wins and ui.py's copy is unreachable dead code — this
-        asserts the response actually returned, not the one ui.py intends.
-        """
+        """API health check endpoint returns 200."""
         r = cms_client.get("/api/v1/health")
         assert r.status_code == 200
-        assert r.json()["overall"] in ("healthy", "degraded", "unhealthy")
+        assert r.json()["service"] == "WorkCrew CMS OS API"
 
     def test_run_validate_requires_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Validate endpoint requires valid API key."""
