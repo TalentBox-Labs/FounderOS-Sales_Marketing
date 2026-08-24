@@ -24,6 +24,7 @@ from revenue_os.services.acp2_work_contract import (
     WORK_DEAL_STAGE,
     WORK_FOLLOW_UP_PROPOSE,
     WORK_FOLLOW_UP_SEND,
+    WORK_RESEARCH_OUTREACH_PROPOSE,
     WORK_GMAIL_INBOUND,
     WORK_HERMES_DEAL_CREATE,
     WORK_HERMES_QUALIFY_RECOMMEND,
@@ -60,6 +61,13 @@ _CATALOG: dict[str, EffectSpec] = {
         ExecutionMode.AUTONOMOUS,
         frozenset({"heartbeat", "followup_worker", "orchestrator"}),
         "follow_up_propose",
+    ),
+    WORK_RESEARCH_OUTREACH_PROPOSE: EffectSpec(
+        WORK_RESEARCH_OUTREACH_PROPOSE,
+        EFFECT_PROPOSE,
+        ExecutionMode.AUTONOMOUS,
+        frozenset({"heartbeat", "research_worker", "orchestrator"}),
+        "research_outreach_propose",
     ),
     WORK_FOLLOW_UP_SEND: EffectSpec(
         WORK_FOLLOW_UP_SEND,

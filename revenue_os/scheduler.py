@@ -257,6 +257,108 @@ def job_scan_follow_up_eligibility() -> dict[str, Any]:
         db.close()
 
 
+def job_scan_research_outreach_eligibility() -> dict[str, Any]:
+    """Propose governed research→outreach per authorized org (human approval required).
+
+    ACP-2: proposal is orchestrated AUTONOMOUS; send remains HUMAN_REQUIRED via ApprovalRequest.
+    ACP-3: pause/kill gate before discovery.
+    ACP-4: each contact propose runs under orchestrate_claimed.
+    """
+    from revenue_os.services.acp2_work_contract import WORK_RESEARCH_OUTREACH_PROPOSE, WorkState
+    from revenue_os.services.acp3_durable_runtime import gate_new_mutating_work
+    from revenue_os.services.acp4_production_runtime import orchestrate_claimed
+    from revenue_os.services.research_outreach_eligibility import scan_eligible_research_outreach
+    from revenue_os.services.revenue_orchestration_service import (
+        run_research_outreach_proposal_scheduled,
+    )
+
+    gate = gate_new_mutating_work(actor=ACTOR)
+    if gate is not None:
+        return gate
+
+    db = SessionLocal()
+    try:
+        orgs, blocked = _resolve_orgs_or_block(db, action_type="research_outreach_scan_blocked")
+        if blocked is not None:
+            return blocked
+
+        proposed = 0
+        skipped = 0
+        candidates_total = 0
+        for organization_id in orgs or []:
+            candidates = scan_eligible_research_outreach(
+                db, organization_id=organization_id
+            )
+            candidates_total += len(candidates)
+            for item in candidates:
+                if str(item.get("organization_id")) != str(organization_id):
+                    skipped += 1
+                    log_autonomous_blocked(
+                        actor=ACTOR,
+                        action_type="research_outreach_proposal_blocked",
+                        reason="tenant_entity_mismatch",
+                        organization_id=organization_id,
+                        target_type="contact",
+                        target_id=item.get("contact_id"),
+                    )
+                    continue
+
+                def _exec(work, it=item, oid=organization_id):  # noqa: ANN001
+                    result = run_research_outreach_proposal_scheduled(
+                        db, oid, it["contact_id"]
+                    )
+                    if result.get("ok"):
+                        log_agent_action(
+                            actor=ACTOR,
+                            action_type="research_outreach_proposal_scheduled",
+                            target_type="contact",
+                            target_id=it["contact_id"],
+                            organization_id=oid,
+                            detail={
+                                "approval_id": result.get("approval_id"),
+                                "idempotency_key": it.get("idempotency_key"),
+                                "work_id": work.work_id,
+                            },
+                        )
+                        return {
+                            "ok": True,
+                            "approval_id": result.get("approval_id"),
+                            "waiting_human": True,
+                            "escalation_reason": "outbound_send_requires_approval",
+                        }
+                    return {
+                        "blocked": True,
+                        "blocked_reason": result.get("reason") or "not_eligible",
+                    }
+
+                work = orchestrate_claimed(
+                    db,
+                    work_kind=WORK_RESEARCH_OUTREACH_PROPOSE,
+                    organization_id=organization_id,
+                    source="scheduler",
+                    actor=ACTOR,
+                    executor=_exec,
+                    target_type="contact",
+                    target_id=item["contact_id"],
+                    logical_key=str(item.get("idempotency_key") or "research-outreach"),
+                )
+                if work.state in (WorkState.SUCCEEDED, WorkState.WAITING_HUMAN):
+                    proposed += 1
+                else:
+                    skipped += 1
+        db.commit()
+        return {
+            "ok": True,
+            "candidates": candidates_total,
+            "proposals_filed": proposed,
+            "skipped": skipped,
+            "organizations": list(orgs or []),
+            "orchestrated": True,
+        }
+    finally:
+        db.close()
+
+
 def job_check_deals_at_risk() -> dict[str, Any]:
     """Detect at-risk deals per authorized organization and emit events.
 
@@ -653,6 +755,10 @@ def initialize_heartbeat() -> HeartbeatScheduler:
     scheduler.register(
         "scan_follow_up_eligibility", job_scan_follow_up_eligibility,
         _env_int("HEARTBEAT_FOLLOWUP_SCAN_SEC", 3600),
+    )
+    scheduler.register(
+        "scan_research_outreach_eligibility", job_scan_research_outreach_eligibility,
+        _env_int("HEARTBEAT_RESEARCH_OUTREACH_SCAN_SEC", 3600),
     )
     scheduler.register(
         "acp3_reconcile", job_acp3_reconcile,

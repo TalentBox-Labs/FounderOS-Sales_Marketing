@@ -17,6 +17,9 @@ from revenue_os.services.lead_scoring_service import score_contact
 from revenue_os.services.follow_up_eligibility import evaluate_follow_up_eligibility
 from revenue_os.services.booking_eligibility import evaluate_booking_eligibility
 from revenue_os.services.calendar_executor import get_tenant_availability
+from revenue_os.services.research_outreach_eligibility import (
+    evaluate_research_outreach_eligibility,
+)
 from revenue_os.services.revenue_workers import (
     WORKER_BOOKING,
     WORKER_FOLLOWUP,
@@ -61,8 +64,50 @@ def run_research_to_outreach(
     workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """M1 vertical slice through APPROVAL_PENDING. Does not send outbound."""
+    return _run_research_to_outreach(
+        db,
+        tenant.organization_id,
+        contact_id,
+        workflow_run_id=workflow_run_id,
+    )
+
+
+def run_research_outreach_proposal_scheduled(
+    db: Session,
+    organization_id: str,
+    contact_id: str,
+) -> dict[str, Any]:
+    """Scheduler path — proposal-only; soft-fail expected eligibility/research failures.
+
+    Composes ``_run_research_to_outreach``. Does not send outbound or call executors.
+    """
+    try:
+        contact = get_contact_for_tenant(db, organization_id, contact_id)
+    except TenantAccessError:
+        return {"ok": False, "reason": "Contact not in tenant scope"}
+
+    if str(contact.organization_id) != str(organization_id):
+        return {"ok": False, "reason": "Organization mismatch"}
+
+    eligibility = evaluate_research_outreach_eligibility(db, contact, organization_id)
+    if not eligibility.get("eligible"):
+        return {"ok": False, "reason": eligibility.get("reason", "not_eligible")}
+
+    try:
+        return _run_research_to_outreach(db, organization_id, contact_id)
+    except RevenueOrchestrationError as exc:
+        return {"ok": False, "reason": str(exc)}
+
+
+def _run_research_to_outreach(
+    db: Session,
+    org_id: str,
+    contact_id: str,
+    *,
+    workflow_run_id: str | None = None,
+) -> dict[str, Any]:
+    """M1: research → score → draft → ApprovalRequest(send_outreach_email). No send."""
     run_id = workflow_run_id or str(uuid.uuid4())
-    org_id = tenant.organization_id
 
     try:
         contact = get_contact_for_tenant(db, org_id, contact_id)
@@ -130,6 +175,7 @@ def run_research_to_outreach(
             "template": "ai_cold_email",
             "context": {"body": draft["body"]},
             "workflow_run_id": run_id,
+            "workflow_kind": "rev_orch_m1_research_outreach",
             "idempotency_key": idempotency_key,
         },
         organization_id=org_id,

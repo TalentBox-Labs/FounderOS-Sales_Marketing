@@ -37,6 +37,7 @@ class ExecutionMode(str, Enum):
 WORK_LEAD_SCORE = "lead_score"
 WORK_FOLLOW_UP_PROPOSE = "follow_up_propose"
 WORK_FOLLOW_UP_SEND = "follow_up_send"
+WORK_RESEARCH_OUTREACH_PROPOSE = "research_outreach_propose"
 WORK_DEAL_AT_RISK = "deal_at_risk_flag"
 WORK_GMAIL_INBOUND = "gmail_inbound_match"
 WORK_METRICS_SNAPSHOT = "metrics_snapshot"
