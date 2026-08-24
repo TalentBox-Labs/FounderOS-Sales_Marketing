@@ -345,14 +345,18 @@ def test_runner_rejects_invalid_payload(client: TestClient) -> None:
 
 
 def test_accept_without_handoff_rejected(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, human_session: str
 ) -> None:
+    """SaaS S2: require_tenant_mutation() now resolves tenant + scopes the
+    handoff lookup before accept_qualified_demand() ever runs, so a missing
+    handoff is caught earlier as a 404 ("QualifiedDemand not found") rather
+    than accept_qualified_demand()'s own 422 ValueError."""
     monkeypatch.setattr(qd_router, "SessionLocal", lambda: _FakeDB())
     r = client.post(
         "/api/v1/sales/intake/demand/accept",
         json={"demand_id": _DEMAND_ID, "requested_by": "Krishna"},
     )
-    assert r.status_code == 422
+    assert r.status_code == 404
 
 
 def test_reject_creates_audit(
