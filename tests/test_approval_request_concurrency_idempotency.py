@@ -546,6 +546,142 @@ def test_postgres_concurrent_pending_insert():
 
 @pytest.mark.postgres
 @pytest.mark.skipif(not _is_postgres(POSTGRES_URL), reason="PostgreSQL required")
+def test_postgres_concurrent_booking_multi_slot_single_pending():
+    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
+    sf = sessionmaker(bind=engine)
+
+    org_id = str(uuid.uuid4())
+    contact_id = str(uuid.uuid4())
+
+    db = sf()
+    try:
+        db.add(
+            Organization(
+                id=uuid.UUID(org_id),
+                name="PG Booking",
+                slug=f"pgb-{org_id[:8]}",
+                status=OrganizationStatus.ACTIVE,
+            )
+        )
+        db.add(
+            Contact(
+                id=uuid.UUID(contact_id),
+                first_name="Pg",
+                last_name="Booking",
+                email="pgb@example.com",
+                status=ContactStatus.LEAD,
+                source=ContactSource.MANUAL,
+                organization_id=uuid.UUID(org_id),
+                lead_score=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    import revenue_os.database as db_mod
+    import revenue_os.services.approvals as approvals_mod
+
+    original_db = db_mod.SessionLocal
+    original_ap = approvals_mod.SessionLocal
+    db_mod.SessionLocal = sf
+    approvals_mod.SessionLocal = sf
+
+    start_a = datetime.now(timezone.utc) + timedelta(days=3)
+    start_b = datetime.now(timezone.utc) + timedelta(days=4)
+    end_a = start_a + timedelta(hours=1)
+    end_b = start_b + timedelta(hours=1)
+
+    payload_a = {
+        "contact_id": contact_id,
+        "organization_id": org_id,
+        "selected_slot_start": start_a.isoformat(),
+        "selected_slot_end": end_a.isoformat(),
+        "meeting_title": "Meet",
+    }
+    payload_b = {
+        "contact_id": contact_id,
+        "organization_id": org_id,
+        "selected_slot_start": start_b.isoformat(),
+        "selected_slot_end": end_b.isoformat(),
+        "meeting_title": "Meet",
+    }
+
+    barrier = threading.Barrier(2)
+    results: list[dict | None] = [None, None]
+
+    def worker(slot_payload: dict[str, object], idx: int) -> None:
+        barrier.wait()
+        results[idx - 1] = get_or_create_pending_approval(
+            requested_by=f"booking{idx}",
+            action_type="book_meeting",
+            title=f"Slot {idx}",
+            target_type="contact",
+            target_id=contact_id,
+            payload=slot_payload,
+            organization_id=org_id,
+        )
+
+    t1 = threading.Thread(target=worker, args=(payload_a, 1))
+    t2 = threading.Thread(target=worker, args=(payload_b, 2))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    db_mod.SessionLocal = original_db
+    approvals_mod.SessionLocal = original_ap
+
+    db = sf()
+    try:
+        rows = (
+            db.query(ApprovalRequest)
+            .filter(
+                ApprovalRequest.organization_id == org_id,
+                ApprovalRequest.approval_family == FAMILY_BOOK_MEETING,
+                ApprovalRequest.target_id == contact_id,
+            )
+            .all()
+        )
+        pending = [r for r in rows if r.status == STATUS_PENDING]
+        superseded = [r for r in rows if r.status == STATUS_SUPERSEDED]
+        persisted_superseded_ids = {str(r.id) for r in superseded}
+
+        assert len(pending) == 1
+        assert len(superseded) >= 1
+        assert all(r.logical_key == booking_logical_key(contact_id, "", "") for r in rows)
+
+        returned_superseded_ids = {
+            sid
+            for res in results
+            if isinstance(res, dict)
+            for sid in (res.get("superseded_ids") or [])
+        }
+        assert returned_superseded_ids.issubset(persisted_superseded_ids)
+
+        slot_keys = {
+            (r.payload.get("selected_slot_start"), r.payload.get("selected_slot_end"))
+            for r in rows
+            if isinstance(r.payload, dict)
+        }
+        assert slot_keys == {(start_a.isoformat(), end_a.isoformat()), (start_b.isoformat(), end_b.isoformat())}
+    finally:
+        db.close()
+
+    cleanup = sf()
+    try:
+        cleanup.query(ApprovalRequest).filter(
+            ApprovalRequest.organization_id == org_id
+        ).delete()
+        cleanup.query(Contact).filter(Contact.id == uuid.UUID(contact_id)).delete()
+        cleanup.query(Organization).filter(Organization.id == uuid.UUID(org_id)).delete()
+        cleanup.commit()
+    finally:
+        cleanup.close()
+
+
+@pytest.mark.postgres
+@pytest.mark.skipif(not _is_postgres(POSTGRES_URL), reason="PostgreSQL required")
 def test_postgres_concurrent_decide_single_effect(monkeypatch):
     engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
     sf = sessionmaker(bind=engine)

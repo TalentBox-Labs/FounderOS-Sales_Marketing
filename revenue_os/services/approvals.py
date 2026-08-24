@@ -76,7 +76,10 @@ def _execute_send_outreach_email(db: Session, payload: dict) -> dict[str, Any]:
 
     _validate_outbound_payload(db, payload)
 
+    # `effect_key` is the stable approval-derived identity.
+    # `idempotency_key` may additionally carry legacy workflow provenance.
     effect_key = payload.get("effect_key") or payload.get("idempotency_key")
+    idempotency_key = payload.get("idempotency_key") or effect_key
     n8n_payload = {
         "event": "outreach.approved",
         "contact_id": payload.get("contact_id"),
@@ -85,8 +88,8 @@ def _execute_send_outreach_email(db: Session, payload: dict) -> dict[str, Any]:
         "template": payload.get("template", "intro"),
         "context": payload.get("context", {}),
     }
-    if effect_key:
-        n8n_payload["idempotency_key"] = effect_key
+    if idempotency_key:
+        n8n_payload["idempotency_key"] = idempotency_key
 
     result = trigger_workflow("send-email", n8n_payload)
     delivered = result is not None
@@ -115,7 +118,7 @@ def _execute_send_outreach_email(db: Session, payload: dict) -> dict[str, Any]:
     return {
         "handed_to_n8n": delivered,
         "effect_key": effect_key,
-        "idempotency_key": effect_key,
+        "idempotency_key": idempotency_key,
         "note": None if delivered else "n8n unreachable — check n8n and retry",
     }
 
@@ -348,6 +351,11 @@ def get_or_create_pending_approval(
         payload=merged_payload,
     )
     merged_payload["organization_id"] = org_id
+    if family == FAMILY_BOOK_MEETING:
+        # With contact-scoped pending identity, we must still require slot fields
+        # for a booking approval to be executable/meaningful.
+        if not merged_payload.get("selected_slot_start") or not merged_payload.get("selected_slot_end"):
+            raise ValueError("Booking approval requires selected_slot_start/end")
     merged_payload.setdefault(
         "material_fingerprint",
         material_consent_fingerprint(family, merged_payload),
@@ -357,89 +365,105 @@ def get_or_create_pending_approval(
     session = db or SessionLocal()
     superseded_ids: list[str] = []
     try:
-        if family == FAMILY_BOOK_MEETING and target_id:
-            superseded_ids.extend(
-                _supersede_conflicting_booking_pending(
-                    session,
-                    organization_id=org_id,
-                    contact_id=str(target_id),
-                    new_logical_key=logical_key,
-                )
-            )
+        fp = material_consent_fingerprint(family, merged_payload)
+        result: dict[str, Any] | None = None
+        for _attempt in range(3):
+            pre_mutation_len = len(superseded_ids)
 
-        existing = _find_pending_by_identity(
-            session,
-            organization_id=org_id,
-            approval_family=family,
-            logical_key=logical_key,
-        )
-        if existing is not None:
-            fp = material_consent_fingerprint(family, merged_payload)
-            existing_fp = material_consent_fingerprint(
-                family, dict(existing.payload or {})
-            )
-            if fp == existing_fp:
-                if owns_session:
-                    session.commit()
-                return {
-                    **existing.to_dict(),
-                    "created": False,
-                    "deduplicated": True,
-                    "superseded_ids": superseded_ids,
-                }
-            _supersede_row(
-                session,
-                existing,
-                note="Superseded by materially different consent for same logical identity",
-            )
-            superseded_ids.append(str(existing.id))
-
-        request = ApprovalRequest(
-            organization_id=org_id,
-            approval_family=family,
-            logical_key=logical_key,
-            requested_by=requested_by,
-            action_type=action_type,
-            title=title,
-            description=description,
-            target_type=target_type,
-            target_id=target_id,
-            payload=merged_payload,
-            status=STATUS_PENDING,
-        )
-        session.add(request)
-        try:
-            if owns_session:
-                session.commit()
-                session.refresh(request)
-            else:
-                session.flush()
-                session.refresh(request)
-        except IntegrityError:
-            session.rollback()
             existing = _find_pending_by_identity(
                 session,
                 organization_id=org_id,
                 approval_family=family,
                 logical_key=logical_key,
             )
-            if existing is None:
-                raise
-            if owns_session:
-                session.commit()
-            return {
-                **existing.to_dict(),
-                "created": False,
-                "deduplicated": True,
-                "superseded_ids": superseded_ids,
-            }
+            if existing is not None:
+                existing_fp = material_consent_fingerprint(
+                    family, dict(existing.payload or {})
+                )
+                if fp == existing_fp:
+                    if owns_session:
+                        session.commit()
+                    return {
+                        **existing.to_dict(),
+                        "created": False,
+                        "deduplicated": True,
+                        "superseded_ids": superseded_ids,
+                    }
+                _supersede_row(
+                    session,
+                    existing,
+                    note="Superseded by materially different consent for same logical identity",
+                )
+                superseded_ids.append(str(existing.id))
 
-        result = {
-            **request.to_dict(),
-            "created": True,
-            "deduplicated": False,
-            "superseded_ids": superseded_ids,
-        }
+            request = ApprovalRequest(
+                organization_id=org_id,
+                approval_family=family,
+                logical_key=logical_key,
+                requested_by=requested_by,
+                action_type=action_type,
+                title=title,
+                description=description,
+                target_type=target_type,
+                target_id=target_id,
+                payload=merged_payload,
+                status=STATUS_PENDING,
+            )
+            session.add(request)
+            try:
+                if owns_session:
+                    session.commit()
+                    session.refresh(request)
+                else:
+                    session.flush()
+                    session.refresh(request)
+                result = {
+                    **request.to_dict(),
+                    "created": True,
+                    "deduplicated": False,
+                    "superseded_ids": superseded_ids,
+                }
+                break
+            except IntegrityError:
+                # Roll back the failed insert attempt. Any supersede done in this
+                # transaction is also rolled back, so superseded_ids must be rewound.
+                session.rollback()
+                superseded_ids = superseded_ids[:pre_mutation_len]
+
+                existing = _find_pending_by_identity(
+                    session,
+                    organization_id=org_id,
+                    approval_family=family,
+                    logical_key=logical_key,
+                )
+                if existing is None:
+                    raise
+
+                existing_fp = material_consent_fingerprint(
+                    family, dict(existing.payload or {})
+                )
+                if fp == existing_fp:
+                    if owns_session:
+                        session.commit()
+                    return {
+                        **existing.to_dict(),
+                        "created": False,
+                        "deduplicated": True,
+                        "superseded_ids": superseded_ids,
+                    }
+
+                # Material mismatch: supersede the existing pending row and retry insert.
+                _supersede_row(
+                    session,
+                    existing,
+                    note="Superseded after concurrent pending insert due to materially different consent",
+                )
+                superseded_ids.append(str(existing.id))
+                continue
+        if result is None:
+            raise RuntimeError(
+                "Failed to create canonical pending approval after retries"
+            )
     finally:
         if owns_session:
             session.close()
@@ -526,7 +550,13 @@ def _run_approval_effect(db: Session, request: ApprovalRequest) -> dict[str, Any
     payload["effect_key"] = effect_key
     # Booking proposals retain workflow idempotency_key for execution revalidation.
     if request.action_type != "book_meeting":
-        payload["idempotency_key"] = effect_key
+        legacy_idempotency_key = payload.get("idempotency_key")
+        if isinstance(legacy_idempotency_key, str) and legacy_idempotency_key.strip():
+            # Preserve legacy workflow identity for provenance/backward-compat frozen tests,
+            # while still embedding the stable approval_effect identity.
+            payload["idempotency_key"] = f"{legacy_idempotency_key}:{effect_key}"
+        else:
+            payload["idempotency_key"] = effect_key
 
     prior = dict(request.execution_result or {})
     if prior.get("phase") == EXECUTION_PHASE_COMPLETED and prior.get("effect_completed"):

@@ -258,6 +258,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{% set b = workspace.get('booking') if workspace is mapping and workspace.get('booking') is mapping else {} %}
 <script>
 const CONTACT_ID = {{ (workspace.contact.id | tojson) if workspace.contact else 'null' }};
 const BOOKING_TZ = {{ ((workspace.get('booking') or {}).get('timezone') or 'UTC') | tojson }};
@@ -358,6 +359,7 @@ function clearBookingSelection() {
   document.getElementById('booking-status-msg').style.display = 'none';
 }
 
+{% if b.ui_state == 'BOOKING_ELIGIBLE' %}
 async function submitBookingProposal() {
   if (!CONTACT_ID || !selectedBookingSlot) {
     showBookingStatus('Select a time slot first', false);
@@ -381,6 +383,7 @@ async function submitBookingProposal() {
     }
   }
 }
+{% endif %}
 
 async function contactPost(path, body) {
   const r = await fetch(path, {

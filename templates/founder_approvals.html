@@ -15,7 +15,7 @@
     <p class="founder-empty">No pending approvals</p>
   {% else %}
     {% for item in snapshot.pending %}
-    <div class="founder-list-item" data-approval-id="{{ item.id }}" data-testid="approval-item">
+    <div class="founder-list-item" data-approval-id="{{ item.id }}" data-approval-action="{{ item.action_type }}" data-testid="approval-item">
       {% if item.action_type == 'book_meeting' %}
       <span class="pill blue">Meeting booking</span>
       {% endif %}

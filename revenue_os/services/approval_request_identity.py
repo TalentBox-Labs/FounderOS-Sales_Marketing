@@ -71,13 +71,8 @@ def build_logical_key(
                 )
             return f"contact:{contact_id}:source_activity:{source_activity_id}"
         case family if family == FAMILY_BOOK_MEETING:
-            start = payload.get("selected_slot_start")
-            end = payload.get("selected_slot_end")
-            if not start or not end:
-                raise ValueError("Booking approval requires selected_slot_start/end")
-            ns = normalize_slot_timestamp(str(start))
-            ne = normalize_slot_timestamp(str(end))
-            return f"contact:{contact_id}:slot:{ns}:{ne}"
+            # Booking pending identity is contact-scoped (slot lives in immutable payload).
+            return f"contact:{contact_id}"
         case family if family == FAMILY_LINKEDIN_MESSAGE:
             return f"contact:{contact_id}"
         case family if family == FAMILY_CREATE_DEAL:
@@ -176,9 +171,8 @@ def reply_email_logical_key(contact_id: str, source_activity_id: str) -> str:
 
 
 def booking_logical_key(contact_id: str, slot_start: str, slot_end: str) -> str:
-    ns = normalize_slot_timestamp(slot_start)
-    ne = normalize_slot_timestamp(slot_end)
-    return f"contact:{contact_id}:slot:{ns}:{ne}"
+    # Backwards-compatible signature: slot is ignored for pending uniqueness.
+    return f"contact:{contact_id}"
 
 
 def backfill_identity_from_row(
@@ -214,17 +208,15 @@ def backfill_identity_from_row(
                     reply_email_logical_key(str(target_id), str(sid)),
                 )
         if action_type == "book_meeting" and target_id:
-            start = payload.get("selected_slot_start")
-            end = payload.get("selected_slot_end")
-            if start and end:
-                try:
-                    return (
-                        str(org_id),
-                        FAMILY_BOOK_MEETING,
-                        booking_logical_key(str(target_id), str(start), str(end)),
-                    )
-                except ValueError:
-                    pass
+            # Pending identity is contact-scoped; selected_slot_start/end are material
+            # consent fields handled by the executor/fingerprint.
+            start = payload.get("selected_slot_start") or ""
+            end = payload.get("selected_slot_end") or ""
+            return (
+                str(org_id),
+                FAMILY_BOOK_MEETING,
+                booking_logical_key(str(target_id), str(start), str(end)),
+            )
         if action_type == "send_linkedin_message" and target_id:
             return (
                 str(org_id),

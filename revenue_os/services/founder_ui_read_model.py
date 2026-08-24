@@ -672,7 +672,8 @@ def _build_booking_panel(
             all_pending = list_requests(status="pending", limit=50, organization_id=organization_id)
             pending = next((a for a in all_pending if a.get("id") == approval_id), None)
         panel["ui_state"] = "APPROVAL_PENDING"
-        panel["message"] = "Booking approval required before the meeting is scheduled"
+        # Frozen UI contract: this exact negative copy is asserted by INT-D2.
+        panel["message"] = "booking workflow pending"
         if pending:
             panel["pending_approval"] = _enrich_book_meeting_approval(pending)
             panel["approval"] = panel["pending_approval"]

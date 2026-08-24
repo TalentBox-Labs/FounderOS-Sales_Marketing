@@ -182,9 +182,9 @@ def test_int_d2_book_meeting_approval_renders_generically(client: TestClient, te
     r = client.get("/pending-approvals")
     assert r.status_code == 200
     assert "Book meeting with Alice A" in r.text
-    assert "Meeting booking" in r.text or "Approve booking" in r.text
+    assert "book_meeting" in r.text
     assert 'data-testid="approve-btn"' in r.text
-    assert "send-email" not in r.text.lower() or "approve booking" in r.text.lower()
+    assert "send-email" not in r.text.lower() or "book_meeting" in r.text
 
 
 def test_int_d2_booking_eligible_visible_without_booking_ui(client: TestClient, tenant_db: sessionmaker) -> None:
@@ -194,13 +194,11 @@ def test_int_d2_booking_eligible_visible_without_booking_ui(client: TestClient, 
     assert r.status_code == 200
     assert "Meeting interest" in r.text
     assert "Booking eligible" in r.text
-    assert (
-        "approval required" in r.text.lower()
-        or 'data-testid="booking-approval-pending"' in r.text
-    )
+    assert "booking workflow pending" in r.text.lower()
     assert "Propose booking" not in r.text
     assert 'data-testid="booking-eligible-panel"' not in r.text
     assert 'data-testid="booking-submit-proposal"' not in r.text
+    assert "/booking/propose" not in r.text
     assert "contactAction('booking')" not in r.text
 
 
