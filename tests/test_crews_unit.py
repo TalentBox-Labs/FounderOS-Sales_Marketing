@@ -83,7 +83,10 @@ class TestQACrew:
         crew = QACrew()
 
         # Valid output with required sections
-        valid_output = """## Failed Checks
+        valid_output = """## Passed Checks
+- All headings present
+
+## Failed Checks
 - (none)
 
 ## Observable Issues
@@ -109,6 +112,10 @@ PASS
     ) -> None:
         """QACrew builds a single QA agent and task."""
         # CrewAI Agent accepts str | BaseLLM; MagicMock fails pydantic validation.
+        # crewai's native OpenAI routing now validates credentials eagerly at
+        # construction (not just at call time), so a real-looking key is
+        # needed even though this test never actually calls the LLM.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
         monkeypatch.setattr(
             "src.base_crew.BaseCrew._build_llm", lambda self: "openai/gpt-4o-mini"
         )
@@ -145,6 +152,10 @@ class TestGenerationCrew:
     ) -> None:
         """GenerationCrew builds all four agents (Strategist, SEO, Researcher, Writer)."""
         # CrewAI Agent accepts str | BaseLLM; MagicMock fails pydantic validation.
+        # crewai's native OpenAI routing now validates credentials eagerly at
+        # construction (not just at call time), so a real-looking key is
+        # needed even though this test never actually calls the LLM.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
         monkeypatch.setattr(
             "src.base_crew.BaseCrew._build_llm", lambda self: "openai/gpt-4o-mini"
         )
@@ -174,6 +185,9 @@ class TestEditorCrew:
         """EditorCrew validates final markdown output."""
         crew = EditorCrew()
 
+        # validate_output() rejects anything under 100 chars as "too short" —
+        # padded with real body text so this exercises the frontmatter check,
+        # not the length check.
         valid_output = """---
 week_id: W99
 title: Test Article
@@ -181,7 +195,8 @@ title: Test Article
 
 # Article Content
 
-This is the main article."""
+This is the main article, with enough body text to clear the minimum
+length the editor's output-quality check requires."""
         is_valid, errors = crew.validate_output(valid_output)
         assert is_valid is True
 
@@ -189,10 +204,14 @@ This is the main article."""
         """EditorCrew requires YAML front matter."""
         crew = EditorCrew()
 
-        output_no_frontmatter = "# Article\nContent without frontmatter"
+        output_no_frontmatter = (
+            "# Article\nContent without frontmatter, padded with enough body "
+            "text to clear the length check so this exercises the frontmatter "
+            "check specifically rather than failing for being too short."
+        )
         is_valid, errors = crew.validate_output(output_no_frontmatter)
         assert is_valid is False
-        assert any("frontmatter" in e.lower() for e in errors)
+        assert any("front matter" in e.lower() for e in errors)
 
     def test_editor_staging_guard_rejects_input_paths(self) -> None:
         """EditorCrew guard rejects input/ directory paths."""
