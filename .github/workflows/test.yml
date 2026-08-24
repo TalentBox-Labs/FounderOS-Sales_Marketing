@@ -29,6 +29,8 @@ jobs:
     - name: Run tests
       run: |
         python -m pytest tests/ -v
+      env:
+        SECRET_KEY: ${{ secrets.TEST_SECRET_KEY }}
 
     - name: Verify fixture sync (no writes allowed)
       run: |
