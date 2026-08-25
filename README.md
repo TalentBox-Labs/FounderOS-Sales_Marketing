@@ -154,6 +154,72 @@ input/                  # Content markdown by week
   └── ...
 ```
 
+## Full Platform (FastAPI backend, `runner_api.py`)
+
+This repository also contains the `revenue_os/` FastAPI application (`runner_api.py`),
+the Sales/Marketing CRM API, Jinja-rendered founder/operator pages, and the
+Celery-based background workers — not just the `src/` content pipeline
+described above.
+
+### Frontend dependency
+
+The React CRM frontend lives in a separate repo,
+[`founderos-frontend`](https://github.com/TalentBox-Labs/founderos-frontend),
+checked out here as a git submodule at `frontend/`:
+
+```bash
+git submodule update --init --recursive
+```
+
+The production Docker build (`Dockerfile`, stage 1) builds this submodule
+exactly as it built `frontend/` before the repository separation — no
+Dockerfile logic changed, only where `frontend/` content comes from.
+
+### Install (full platform)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-api.txt -r requirements-revenue.txt
+```
+
+### Database
+
+Postgres 14 in production/CI; SQLite is used automatically as a local
+fallback when `DATABASE_URL` is unset. `SECRET_KEY` is required — the app
+raises a fatal error at startup without it.
+
+```bash
+docker compose up db redis   # Postgres + Redis, matching docker-compose.yml
+```
+
+Schema is created via `Base.metadata.create_all()` on startup, plus a
+hand-written `_migrate_missing_columns()` helper for adding columns to
+existing tables — Alembic (`alembic.ini`, `migrations/`) is present but
+not the primary migration path today.
+
+### Run the API
+
+```bash
+uvicorn runner_api:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Background jobs
+
+Two systems: an in-process heartbeat scheduler (starts automatically with
+the API unless `HEARTBEAT_ENABLED=0`), and Celery workers:
+
+```bash
+celery -A revenue_os.tasks.celery_app worker --loglevel=info
+celery -A revenue_os.tasks.celery_app beat --loglevel=info
+```
+
+### Production deployment
+
+`docker-compose.yml` runs `db` (Postgres), `redis`, `api`, `worker`, and
+`beat` from the same Docker image. `render.yaml` deploys the same
+Dockerfile as a single Render web service plus a managed Postgres database.
+
 ## Contributing
 
 1. Create a branch
