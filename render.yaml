@@ -6,7 +6,7 @@
 
 services:
   - type: web
-    name: workcrew-crm
+    name: founderos-backend
     runtime: docker
     plan: starter
     healthCheckPath: /health
