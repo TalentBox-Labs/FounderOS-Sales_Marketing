@@ -1,4 +1,4 @@
-# WorkCrew Sales Collateral Library
+# FounderOS Sales Collateral Library
 
 Complete library of pre-built sales materials, templates, and talking points.
 
@@ -13,7 +13,7 @@ Complete library of pre-built sales materials, templates, and talking points.
 **Hook**: 
 ```
 "Your revenue is leaking. Leaky pipeline, weak forecasts, churn surprises.
-WorkCrew fills the cracks with autonomous AI that:
+FounderOS fills the cracks with autonomous AI that:
 - Predicts revenue with 95% accuracy
 - Detects churn 30 days before it happens
 - Automates account strategy at scale"
@@ -51,7 +51,7 @@ WorkCrew fills the cracks with autonomous AI that:
 **Hook**:
 ```
 "Your sales reps are drowning in data.
-WorkCrew turns data into action:
+FounderOS turns data into action:
 - AI tells each rep which deals to focus on (today)
 - Predicts which deals will win/lose before you're surprised
 - Automates admin so reps sell more"
@@ -89,7 +89,7 @@ WorkCrew turns data into action:
 **Hook**:
 ```
 "You're losing customers you didn't see coming.
-WorkCrew alerts you before churn:
+FounderOS alerts you before churn:
 - AI spots at-risk accounts 30 days early
 - Recommends specific interventions for each account
 - Automates health check workflows"
@@ -127,7 +127,7 @@ WorkCrew alerts you before churn:
 **Hook**:
 ```
 "Your best leads are buried in your list.
-WorkCrew surfaces them with AI scoring:
+FounderOS surfaces them with AI scoring:
 - Identify sales-ready leads in real-time
 - Nurture cold leads with automation
 - Track which campaigns actually drive revenue"
@@ -186,7 +186,7 @@ Subtitle: "From chaos to revenue predictability"
 - CSMs focus on high-touch accounts only
 - Marketing knows which leads close
 
-### Slide 5: WorkCrew Solution
+### Slide 5: FounderOS Solution
 Three core capabilities:
 1. **Revenue Intelligence** - Predict revenue, deals, churn
 2. **Autonomous Workflows** - Automate CSM plays, nurture, scoring
@@ -247,7 +247,7 @@ Hi {{first_name}},
 Quick question: Do you know your sales forecast will be accurate?
 
 At companies like Acme and TechCorp, the answer was "no" — until they 
-deployed WorkCrew.
+deployed FounderOS.
 
 They went from 52% forecast MAPE → 95% accuracy.
 
@@ -284,7 +284,7 @@ to review or share with your team.
 [RECORDING LINK]
 
 Quick recap of what we showed:
-- How WorkCrew predicted $2M in churn risk for you
+- How FounderOS predicted $2M in churn risk for you
 - Which of your deals have highest win probability
 - Your expansion opportunity pipeline
 
@@ -333,7 +333,7 @@ Is this not a priority for {{company}} right now? Or just timing?
 I'm happy to:
 - Answer questions async
 - Come back in 2 months when you're planning
-- Introduce you to someone at a peer company using WorkCrew
+- Introduce you to someone at a peer company using FounderOS
 
 What works best?
 
@@ -379,10 +379,10 @@ Win message: "We integrate with what you have. We make it intelligent."
 
 ### Objection 1: "We already have Salesforce"
 **Response**:
-"Absolutely. WorkCrew integrates with Salesforce (and HubSpot, Pipedrive). 
+"Absolutely. FounderOS integrates with Salesforce (and HubSpot, Pipedrive). 
 We don't replace it — we add AI intelligence on top of the data you already have.
 
-Think of it this way: Salesforce is where you track deals. WorkCrew tells you 
+Think of it this way: Salesforce is where you track deals. FounderOS tells you 
 which deals will close, which are at risk, and which ones matter most.
 
 Want to see it work with your Salesforce data?"
@@ -430,7 +430,7 @@ Want me to send you our security brief?"
 **Response**:
 "I get it. Here's how to think about it:
 
-Average WorkCrew customer pays $X/month
+Average FounderOS customer pays $X/month
 They get $XXX/month in value from:
 - $XXX churn prevention (25% reduction × your churn)
 - $XXX expansion (we find X hidden opportunities/month)
@@ -458,7 +458,7 @@ Let me show you the math for {{company}}. What's your current churn in dollars/m
 checking in after customers were already unhappy."
 
 **The Solution**:
-"WorkCrew connects to our Salesforce and billing. Within 30 days, it 
+"FounderOS connects to our Salesforce and billing. Within 30 days, it 
 identified 8 accounts at risk of churning that our team didn't see."
 
 **The Results**:
@@ -468,7 +468,7 @@ identified 8 accounts at risk of churning that our team didn't see."
 - Payback period: 2.3 months
 
 **The Quote**:
-"Before WorkCrew, churn surprised us every quarter. Now we spot issues 30 days early. 
+"Before FounderOS, churn surprised us every quarter. Now we spot issues 30 days early. 
 It's transformed how we manage customer success." — [Customer Name], [Title]
 
 **The Numbers**:
@@ -513,7 +513,7 @@ Most of our customers use Professional."
 
 [They answer: $XXX]
 
-WorkCrew typically prevents 25-30% of that. So even in year one, you'd save 
+FounderOS typically prevents 25-30% of that. So even in year one, you'd save 
 $XXX. Our cost is $XX. That means you'd ROI in [X months]."
 
 ---
@@ -543,7 +543,7 @@ What's your [metric]? Reply below."
 "Your sales forecast is probably wrong.
 
 Industry average MAPE: 52%
-WorkCrew customer average: 5-8%
+FounderOS customer average: 5-8%
 
 The difference? Using ML on 2 years of historical data.
 
@@ -605,10 +605,10 @@ If no: "No problem. When would be a better time?"
 **PROPOSAL: AI Revenue Operations Platform**
 
 **Submitted To**: [Company Name]
-**Proposed By**: [Your Name], WorkCrew
+**Proposed By**: [Your Name], FounderOS
 
 **Executive Summary**
-Implement WorkCrew to increase revenue predictability, reduce churn, 
+Implement FounderOS to increase revenue predictability, reduce churn, 
 and accelerate sales cycles.
 
 **Proposed Solution**

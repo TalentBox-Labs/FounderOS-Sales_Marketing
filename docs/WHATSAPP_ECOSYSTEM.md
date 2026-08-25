@@ -117,10 +117,10 @@ Build engaged user communities:
 curl -X POST -H "Authorization: Bearer API_KEY" \
   https://api.workcrew.ai/api/v1/whatsapp/communities \
   -d '{
-    "name": "WorkCrew Power Users",
+    "name": "FounderOS Power Users",
     "description": "Exclusive community for power users and beta testers",
     "purpose": "user_community",
-    "welcome_message": "Welcome to the WorkCrew Power Users community! 🚀",
+    "welcome_message": "Welcome to the FounderOS Power Users community! 🚀",
     "rules": [
       "Be respectful and professional",
       "No spam or self-promotion",

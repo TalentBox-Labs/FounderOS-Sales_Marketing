@@ -2,7 +2,7 @@
 
 ## Overview
 
-Phase 9 adds comprehensive **external integrations** to the AI Executive Operating System. Connect WorkCrew with email, webhooks, calendar systems, and Slack for unified communications:
+Phase 9 adds comprehensive **external integrations** to the AI Executive Operating System. Connect FounderOS with email, webhooks, calendar systems, and Slack for unified communications:
 
 ```
 Email → SMS → Calendar → Slack → Webhooks → External Systems
@@ -115,7 +115,7 @@ curl -X POST -H "Authorization: Bearer API_KEY" \
 
 ### Create Subscription
 
-Subscribe to WorkCrew events:
+Subscribe to FounderOS events:
 
 ```bash
 curl -X POST -H "Authorization: Bearer API_KEY" \

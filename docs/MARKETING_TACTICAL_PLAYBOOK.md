@@ -1,4 +1,4 @@
-# WorkCrew Marketing Tactical Playbook
+# FounderOS Marketing Tactical Playbook
 
 ## Quick Reference for Execution
 
@@ -187,12 +187,12 @@
 
 **Step 2: Prepare Story Angle**
 - Problem/trend that's newsworthy
-- Unique WorkCrew angle
+- Unique FounderOS angle
 - Data/stats to support (if available)
 - Customer quote (with permission)
 
 **Step 3: Pitch Email**
-- Subject: Newsworthy angle (not "feature WorkCrew")
+- Subject: Newsworthy angle (not "feature FounderOS")
 - Personalization: Reference journalist's recent articles
 - Keep short: 100-150 words
 - Include 2 expert quotes
@@ -320,8 +320,8 @@ Let me know what works best for you!
 ### Case Study Development
 
 **Structure**:
-1. **Challenge** (1 paragraph - their problem before WorkCrew)
-2. **Solution** (1 paragraph - how WorkCrew addressed it)
+1. **Challenge** (1 paragraph - their problem before FounderOS)
+2. **Solution** (1 paragraph - how FounderOS addressed it)
 3. **Results** (3-5 metrics with before/after)
 4. **Quote** (2-3 sentence customer quote)
 5. **CTA** (Schedule demo link)

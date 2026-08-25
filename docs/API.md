@@ -1,6 +1,6 @@
 # WorkCrew CMS OS API Documentation
 
-Complete reference for the WorkCrew Content Management System API, including endpoints, authentication, request/response formats, and usage examples.
+Complete reference for the FounderOS Content Management System API, including endpoints, authentication, request/response formats, and usage examples.
 
 ## Quick Start
 

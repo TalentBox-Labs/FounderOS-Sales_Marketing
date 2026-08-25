@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Automation & Workflows Engine powers the autonomous operations of WorkCrew.ai's AI Executive Operating System. It connects all system components through event-driven workflows that automatically execute actions when conditions are met.
+The Automation & Workflows Engine powers the autonomous operations of FounderOS's AI Executive Operating System. It connects all system components through event-driven workflows that automatically execute actions when conditions are met.
 
 **Key Principle:** Events trigger conditions, conditions trigger actions.
 

@@ -121,7 +121,7 @@ These two systems currently coexist on the same endpoints in places (e.g. `_veri
 
 - `Dockerfile` is a two-stage build: stage 1 (`node:20-slim`) runs `npm ci && npm run build` inside `frontend/`; stage 2 (`python:3.11-slim`) installs backend deps, copies the whole repo in, then copies stage 1's `frontend/dist` into `./frontend/dist`.
 - `runner_api.py` mounts `frontend/dist` as static files at `/app` if the directory exists at runtime — meaning the running Python process serves both the API and the built SPA from one port.
-- `render.yaml` deploys this Dockerfile as **one** Render web service (`workcrew-crm`) plus one managed Postgres database. There is no separate frontend static-site service in the current Render blueprint.
+- `render.yaml` deploys this Dockerfile as **one** Render web service (`founderos-backend`) plus one managed Postgres database. There is no separate frontend static-site service in the current Render blueprint.
 - `docker-compose.yml` (local/self-hosted) runs `db` (Postgres), `redis`, `api` (this same Dockerfile), `worker` and `beat` (Celery, same Dockerfile, different `command:`) — four containers, but only one built image.
 - CI (`.github/workflows/test.yml`) only builds/tests the backend (pytest matrix against a Postgres service container); it does not build or test the frontend at all today.
 

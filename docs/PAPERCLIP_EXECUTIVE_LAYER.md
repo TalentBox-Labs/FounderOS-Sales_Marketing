@@ -2,7 +2,7 @@
 
 ## Overview
 
-Paperclip is the **AI CEO** (Chief Executive Officer) of WorkCrew.ai. It aggregates data from all systems, calculates strategic KPIs, generates insights, and provides recommendations for executive decision-making.
+Paperclip is the **AI CEO** (Chief Executive Officer) of FounderOS. It aggregates data from all systems, calculates strategic KPIs, generates insights, and provides recommendations for executive decision-making.
 
 **Core Responsibility:** Transform raw operational data into strategic intelligence.
 

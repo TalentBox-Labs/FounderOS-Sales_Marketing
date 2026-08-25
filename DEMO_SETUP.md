@@ -1,4 +1,4 @@
-# WorkCrew AI Executive Operating System - Demo/Testing Setup
+# FounderOS AI Executive Operating System - Demo/Testing Setup
 
 Complete guide for running the platform locally for internal testing before production deployment.
 

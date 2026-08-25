@@ -1,15 +1,15 @@
-# WorkCrew Marketing Strategy: AEO & GEO Expansion (2026-2027)
+# FounderOS Marketing Strategy: AEO & GEO Expansion (2026-2027)
 
 ## Executive Summary
 
-**AEO (Author & Expertise Optimization)** and **GEO (Geographic & Expansion Optimization)** strategy to establish WorkCrew as the market-leading AI Executive Operating System for revenue operations.
+**AEO (Author & Expertise Optimization)** and **GEO (Geographic & Expansion Optimization)** strategy to establish FounderOS as the market-leading AI Executive Operating System for revenue operations.
 
 ---
 
 ## Part 1: AEO Strategy (Author Expertise Optimization)
 
 ### Objective
-Position **Cyril S Thomas** and founding team as thought leaders in AI-driven revenue operations, establishing credibility for WorkCrew platform adoption.
+Position **Cyril S Thomas** and founding team as thought leaders in AI-driven revenue operations, establishing credibility for FounderOS platform adoption.
 
 ---
 
@@ -420,7 +420,7 @@ Organic search traffic (GEO)
 
 ## Part 5: Key Differentiators
 
-### Why This Works for WorkCrew
+### Why This Works for FounderOS
 
 1. **Founder-Led Narrative**
    - Cyril as "AI Revenue Operations Pioneer"
@@ -508,7 +508,7 @@ Most people would have [common solution], but we decided to [your different appr
 
 Lesson: [Key learning]
 
-This is why WorkCrew exists to solve [the problem] for revenue teams.
+This is why FounderOS exists to solve [the problem] for revenue teams.
 
 Have you faced this? What did you do? 
 #Founders #[Topic]

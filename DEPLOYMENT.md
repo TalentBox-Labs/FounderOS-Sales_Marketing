@@ -1,4 +1,4 @@
-# Deployment Guide — WorkCrew CRM
+# Deployment Guide — FounderOS
 
 One Docker image serves everything: the FastAPI backend, the autonomous
 heartbeat, and the React CRM UI (mounted at `/app`).
@@ -46,12 +46,12 @@ heartbeat, and the React CRM UI (mounted at `/app`).
 
 ```bash
 git clone <repo> && cd <repo>
-docker build -t workcrew-crm .
+docker build -t founderos-backend .
 docker run -d --name crm -p 8000:8000 \
   -e SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
   -e RUNNER_API_KEY="pick-a-strong-team-key" \
   -e DATABASE_URL="postgresql://user:pass@dbhost:5432/crm" \
-  workcrew-crm
+  founderos-backend
 ```
 
 Put nginx/Caddy with TLS in front for a public deployment.

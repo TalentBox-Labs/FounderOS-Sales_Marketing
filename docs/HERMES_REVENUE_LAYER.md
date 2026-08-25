@@ -2,7 +2,7 @@
 
 ## Overview
 
-Hermes is the Chief Revenue Officer (CRO) layer of WorkCrew.ai's AI Executive Operating System. It orchestrates the entire lead-to-revenue pipeline:
+Hermes is the Chief Revenue Officer (CRO) layer of FounderOS's AI Executive Operating System. It orchestrates the entire lead-to-revenue pipeline:
 
 **Lead → Score → Qualify → Deal → Close**
 
