@@ -46,6 +46,7 @@ from revenue_os.services.founder_ui_read_model import (
     build_approvals_snapshot,
     build_command_center_snapshot,
     build_contact_workspace_snapshot,
+    build_decision_detail_snapshot,
     build_demand_contacts_snapshot,
     ensure_command_center_snapshot_shape,
 )
@@ -837,13 +838,37 @@ def page_founder_contact(
 
 @router.get("/pending-approvals", response_class=HTMLResponse, response_model=None)
 def page_founder_approvals(request: Request) -> HTMLResponse | RedirectResponse:
-    """UI-D1 — Governed approval inbox."""
+    """UI-D1 / I3 — Decisions Queue (governed ApprovalRequest judgment)."""
     redirected = founder_login_redirect(request)
     if redirected is not None:
         return redirected
     ctx = _founder_page_context(request, active_page="approvals")
     ctx["snapshot"] = build_approvals_snapshot(organization_id=ctx.get("org_id"))
     return templates.TemplateResponse(request=request, name="founder_approvals.html", context=ctx)
+
+
+@router.get("/decisions", response_class=HTMLResponse, response_model=None)
+def page_founder_decisions_queue(request: Request) -> HTMLResponse | RedirectResponse:
+    """I3 alias — Decisions Queue shares the pending-approvals surface."""
+    return page_founder_approvals(request)
+
+
+@router.get("/decisions/{request_id}", response_class=HTMLResponse, response_model=None)
+def page_founder_decision_detail(
+    request: Request, request_id: str
+) -> HTMLResponse | RedirectResponse:
+    """I3 — Decision Detail for one ApprovalRequest (tenant-fail-closed)."""
+    redirected = founder_login_redirect(request)
+    if redirected is not None:
+        return redirected
+    ctx = _founder_page_context(request, active_page="approvals")
+    ctx["snapshot"] = build_decision_detail_snapshot(
+        organization_id=ctx.get("org_id"),
+        approval_request_id=request_id,
+    )
+    return templates.TemplateResponse(
+        request=request, name="founder_decision_detail.html", context=ctx
+    )
 
 
 @router.get("/activity", response_class=HTMLResponse, response_model=None)

@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from revenue_os.database import SessionLocal
 from revenue_os.models.activity import Activity, ActivityType, MeetingActivity
+from revenue_os.models.approvals import ApprovalRequest
 from revenue_os.models.automation_state import AgentActionLog
 from revenue_os.models.contact import Contact
 from revenue_os.models.deal import Deal
@@ -41,6 +42,10 @@ from revenue_os.services.command_operating_surface import (
     summarize_command_actions,
 )
 from revenue_os.services.command_v2_projection import compose_command_v2_projection
+from revenue_os.services.command_v2_decisions import (
+    compose_decision_detail,
+    compose_decisions_queue,
+)
 from revenue_os.services.operator_flow_read_model import build_operator_flow_snapshot
 from revenue_os.services.revenue_orchestration_service import (
     RevenueOrchestrationError,
@@ -1401,21 +1406,69 @@ def _workflow_stages(
 
 
 def build_approvals_snapshot(*, organization_id: str | None = None) -> dict[str, Any]:
-    """Governed approval inbox."""
+    """Governed approval inbox + I3 Decisions Queue projection."""
     try:
+        if not organization_id:
+            return {
+                "generated_at": _utc_now(),
+                "state": "unavailable",
+                "message": "Organization context required",
+                "organization_id": None,
+                "pending": [],
+                "recent": [],
+                "pending_count": 0,
+                "decisions_queue": compose_decisions_queue(
+                    organization_id=None,
+                    pending_approvals=[],
+                    decision_items=[],
+                ),
+            }
         pending = list_requests(status="pending", limit=100, organization_id=organization_id)
         recent = list_requests(status=None, limit=30, organization_id=organization_id)
         pending = [_present_approval(a) for a in pending]
         recent = [_present_approval(a) for a in recent]
         meeting_pending = [a for a in pending if a.get("action_type") == "book_meeting"]
+        # Compose QD items for queue adjacency without inventing Approvals.
+        decision_items = compose_commercial_decision_items(
+            pending_demands=[],
+            pending_approvals=pending,
+            meeting_interest=[],
+            follow_up_signals=[],
+            recent_activity=[],
+            organization_id=organization_id,
+        )
+        # Prefer operator pending demands when available (tenant-scoped).
+        try:
+            flow = build_operator_flow_snapshot(organization_id=organization_id)
+            pending_demands = _enrich_pending_demands(
+                flow.get("pending_demands") or [],
+                organization_id=organization_id,
+            )
+            decision_items = compose_commercial_decision_items(
+                pending_demands=pending_demands,
+                pending_approvals=pending,
+                meeting_interest=[],
+                follow_up_signals=[],
+                recent_activity=[],
+                organization_id=organization_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        queue = compose_decisions_queue(
+            organization_id=organization_id,
+            pending_approvals=pending,
+            decision_items=decision_items,
+        )
         return {
             "generated_at": _utc_now(),
             "state": "ok",
             "message": "",
+            "organization_id": str(organization_id),
             "pending": pending,
             "recent": recent,
             "pending_count": len(pending),
             "meeting_pending_count": len(meeting_pending),
+            "decisions_queue": queue,
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Approvals snapshot unavailable: %s", exc)
@@ -1423,10 +1476,83 @@ def build_approvals_snapshot(*, organization_id: str | None = None) -> dict[str,
             "generated_at": _utc_now(),
             "state": "unavailable",
             "message": "Approval queue unavailable",
+            "organization_id": str(organization_id) if organization_id else None,
             "pending": [],
             "recent": [],
             "pending_count": 0,
+            "decisions_queue": compose_decisions_queue(
+                organization_id=organization_id,
+                pending_approvals=[],
+                decision_items=[],
+            ),
         }
+
+
+def build_decision_detail_snapshot(
+    *,
+    organization_id: str | None = None,
+    approval_request_id: str | None = None,
+) -> dict[str, Any]:
+    """I3 Decision Detail — single ApprovalRequest, tenant-fail-closed."""
+    org = str(organization_id).strip() if organization_id else None
+    request_id = str(approval_request_id).strip() if approval_request_id else None
+    if not org:
+        return {
+            "generated_at": _utc_now(),
+            "state": "unavailable",
+            "message": "Organization context required",
+            "detail": compose_decision_detail(organization_id=None, approval=None),
+        }
+    if not request_id:
+        return {
+            "generated_at": _utc_now(),
+            "state": "unavailable",
+            "message": "Decision identity required",
+            "detail": compose_decision_detail(organization_id=org, approval=None),
+        }
+
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(ApprovalRequest)
+            .filter(ApprovalRequest.id == request_id)
+            .filter(ApprovalRequest.organization_id == org)
+            .one_or_none()
+        )
+        if row is None:
+            # Explicit mismatch / missing — fail closed (no cross-tenant leak).
+            return {
+                "generated_at": _utc_now(),
+                "state": "unavailable",
+                "message": "Decision not found for this organization",
+                "detail": {
+                    "organization_id": org,
+                    "source": "command_v2_decisions",
+                    "persistent": False,
+                    "fail_closed_reason": "approval_not_found_for_tenant",
+                    "available": False,
+                    "actions": [],
+                },
+            }
+        presented = _present_approval(row.to_dict())
+        detail = compose_decision_detail(organization_id=org, approval=presented)
+        return {
+            "generated_at": _utc_now(),
+            "state": "ok" if detail.get("available") else "unavailable",
+            "message": "",
+            "detail": detail,
+        }
+    except SQLAlchemyError as exc:
+        logger.warning("Decision detail unavailable: %s", exc)
+        return {
+            "generated_at": _utc_now(),
+            "state": "unavailable",
+            "message": "Decision detail unavailable",
+            "detail": compose_decision_detail(organization_id=org, approval=None),
+        }
+    finally:
+        db.close()
+
 
 
 def build_activity_snapshot(

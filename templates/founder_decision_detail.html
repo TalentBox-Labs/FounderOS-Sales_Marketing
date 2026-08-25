@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}Decision Detail — Founder OS{% endblock %}
+{% block topbar_title %}Decision Detail{% endblock %}
+{% block topbar_meta %}Understand the proposal before you decide{% endblock %}
+
+{% block content %}
+{% set detail = snapshot.detail if snapshot.detail is mapping else {} %}
+
+<p class="founder-meta" style="margin-bottom:12px">
+  <a href="{{ detail.href_queue or '/pending-approvals' }}">← Decisions</a>
+</p>
+
+{% if snapshot.state == 'unavailable' or not detail.available %}
+<p class="founder-empty" data-testid="decision-detail-unavailable">
+  {{ snapshot.message or 'Decision unavailable for this organization' }}
+</p>
+{% else %}
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail">
+  <div class="founder-card-title">
+    {{ detail.title }}
+    <span class="pill amber">{{ detail.state_label }}</span>
+  </div>
+  <div class="founder-meta">
+    <span class="pill gray">{{ detail.category }}</span>
+    · {{ detail.action_label or detail.action_type or 'Proposal' }}
+  </div>
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-proposal">
+  <div class="founder-card-title">Proposal</div>
+  <div class="founder-meta"><strong>{{ detail.proposal.summary }}</strong></div>
+  {% if detail.proposal.description %}
+  <div class="founder-meta">{{ detail.proposal.description }}</div>
+  {% endif %}
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-why">
+  <div class="founder-card-title">Why the system stopped</div>
+  <div class="founder-meta">{{ detail.why.text }}</div>
+  {% if detail.why.requires_human %}
+  <div class="founder-meta"><span class="pill amber">Founder judgment required</span></div>
+  {% endif %}
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-evidence">
+  <div class="founder-card-title">Evidence</div>
+  {% if detail.evidence.available %}
+    {% for ev in detail.evidence.items %}
+    <div class="founder-list-item">
+      <strong>{{ ev.label }}</strong>
+      <div class="founder-meta">{{ ev.value }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="founder-empty" data-testid="decision-detail-evidence-unavailable">
+      {{ detail.evidence.unavailable_message or 'Evidence is unavailable for this proposal.' }}
+    </p>
+  {% endif %}
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-consequence">
+  <div class="founder-card-title">Consequence</div>
+  <div class="founder-meta"><strong>If approved:</strong> {{ detail.consequence.on_approve }}</div>
+  <div class="founder-meta" style="margin-top:6px"><strong>If rejected:</strong> {{ detail.consequence.on_reject }}</div>
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-provenance">
+  <div class="founder-card-title">Provenance</div>
+  <div class="founder-meta">Proposed by: {{ detail.provenance.proposed_by_label }}</div>
+  {% if detail.provenance.requested_by %}
+  <div class="founder-meta">Source actor: {{ detail.provenance.requested_by }}</div>
+  {% endif %}
+  {% if detail.provenance.approval_family %}
+  <div class="founder-meta">Approval family: {{ detail.provenance.approval_family }}</div>
+  {% endif %}
+  {% if detail.provenance.created_at %}
+  <div class="founder-meta">Created: {{ detail.provenance.created_at }}</div>
+  {% endif %}
+  {% if detail.provenance.target_id %}
+  <div class="founder-meta">
+    Related:
+    {% if detail.provenance.target_type == 'contact' or not detail.provenance.target_type %}
+    <a href="/contacts/{{ detail.provenance.target_id }}">Open person →</a>
+    {% else %}
+    {{ detail.provenance.target_type }} {{ detail.provenance.target_id }}
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if detail.provenance.decided_at %}
+  <div class="founder-meta">Decided: {{ detail.provenance.decided_at }}{% if detail.provenance.decided_by %} by {{ detail.provenance.decided_by }}{% endif %}</div>
+  {% endif %}
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-authority">
+  <div class="founder-card-title">Authority</div>
+  <div class="founder-meta"><strong>What exists</strong></div>
+  {% for line in detail.authority.exists %}
+  <div class="founder-meta">· {{ line }}</div>
+  {% endfor %}
+  <div class="founder-meta" style="margin-top:8px"><strong>What does not exist</strong></div>
+  {% for line in detail.authority.does_not_exist %}
+  <div class="founder-meta">· {{ line }}</div>
+  {% endfor %}
+</div>
+
+<div class="founder-card" style="margin-bottom:16px" data-testid="decision-detail-actions">
+  <div class="founder-card-title">Available actions</div>
+  {% if detail.status != 'pending' %}
+    <p class="founder-empty">This decision is already {{ detail.status }}. No further action on this page.</p>
+  {% elif not detail.actions %}
+    <p class="founder-empty">No actions available</p>
+  {% elif not operator.configured %}
+    <p class="founder-meta">Sign in as a human operator to approve or reject</p>
+  {% else %}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      {% for action in detail.actions %}
+        {% if action.execution_mode == 'INLINE_GOVERNED' %}
+        <button type="button"
+          class="btn {% if action.action_type == 'approval_approve' %}btn-primary{% else %}btn-ghost{% endif %} btn-sm"
+          data-testid="decision-detail-action"
+          data-action-type="{{ action.action_type }}"
+          onclick="decideApproval('{{ detail.approval_request_id }}', {{ 'true' if action.action_type == 'approval_approve' else 'false' }})">
+          {{ action.label }}
+        </button>
+        {% elif action.href %}
+        <a class="btn btn-ghost btn-sm" data-testid="decision-detail-nav" href="{{ action.href }}">{{ action.label }} →</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% for action in detail.actions %}
+      {% if action.reason %}
+      <div class="founder-meta" style="margin-top:6px">{{ action.reason }}</div>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+</div>
+
+<pre id="approval-action-result" data-testid="decision-detail-result" style="display:none;margin-top:16px;font-size:12px;background:var(--surface2);padding:12px;border-radius:var(--radius-sm)"></pre>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function decideApproval(id, approve) {
+  if (!confirm(approve ? 'Approve this action?' : 'Reject this action?')) return;
+  const path = `/api/v1/approvals/${id}/${approve ? 'approve' : 'reject'}`;
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({}),
+  });
+  const data = await r.json().catch(() => ({}));
+  const el = document.getElementById('approval-action-result');
+  if (el) {
+    el.style.display = 'block';
+    const msg = r.ok ? (approve ? 'Approved' : 'Rejected') : ('Failed: ' + (data.detail || r.status));
+    el.textContent = msg;
+  }
+  if (typeof showToast === 'function') showToast(r.ok ? (approve ? 'Approved' : 'Rejected') : 'Failed', r.ok);
+  if (r.ok) setTimeout(() => location.href = '/pending-approvals', 800);
+}
+</script>
+{% endblock %}

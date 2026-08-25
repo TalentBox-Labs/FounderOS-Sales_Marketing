@@ -1,14 +1,63 @@
 {% extends "base.html" %}
 
-{% block title %}Approvals — Founder OS{% endblock %}
-{% block topbar_title %}Approval Inbox{% endblock %}
-{% block topbar_meta %}Governed actions requiring your decision{% endblock %}
+{% block title %}Decisions — Founder OS{% endblock %}
+{% block topbar_title %}Decisions{% endblock %}
+{% block topbar_meta %}What actually requires your judgment{% endblock %}
 
 {% block content %}
 {% if snapshot.state == 'unavailable' %}
 <p class="founder-empty" data-testid="approvals-unavailable">{{ snapshot.message }}</p>
 {% else %}
 
+{% set queue = snapshot.decisions_queue if snapshot.decisions_queue is mapping else {} %}
+{% set queue_items = queue.items if queue.items is sequence else [] %}
+
+<p class="founder-meta" data-testid="decisions-queue-intro" style="margin-bottom:16px">
+  What requires your decision — projected from existing ApprovalRequests and demand intake.
+  Viewing this list does not approve or execute anything.
+</p>
+
+<div class="founder-card" style="margin-bottom:18px" data-testid="decisions-queue">
+  <div class="founder-card-title">
+    Needs your judgment
+    <span class="pill amber" data-testid="decisions-queue-count">{{ queue.count | default(snapshot.pending_count) }}</span>
+  </div>
+  {% if not queue_items %}
+    <p class="founder-empty" data-testid="decisions-queue-empty">Nothing needs your judgment right now</p>
+  {% else %}
+    {% for item in queue_items %}
+    <div class="founder-list-item"
+         data-testid="decisions-queue-item"
+         data-decision-key="{{ item.decision_key }}"
+         data-kind="{{ item.kind }}"
+         {% if item.approval_request_id %}data-approval-id="{{ item.approval_request_id }}"{% endif %}
+         {% if item.action_type %}data-approval-action="{{ item.action_type }}"{% endif %}>
+      <span class="pill amber">{{ item.state_label or 'Needs your judgment' }}</span>
+      <span class="pill gray">{{ item.category or 'Governed proposal' }}</span>
+      <div style="margin-top:4px"><strong>{{ item.title }}</strong></div>
+      <div class="founder-meta">{{ item.action_label or item.action_type or 'Proposal' }}</div>
+      {% if item.why_judgment %}
+      <div class="founder-meta">{{ item.why_judgment[:200] }}{% if item.why_judgment|length > 200 %}…{% endif %}</div>
+      {% endif %}
+      <div class="founder-meta">
+        <span class="pill gray">{{ item.proposed_by_label or 'Proposal' }}</span>
+        {% if item.occurred_at %} · {{ item.occurred_at }}{% endif %}
+        {% if item.evidence_available %} · Evidence available{% else %} · Evidence unavailable{% endif %}
+      </div>
+      <div class="founder-meta" style="margin-top:6px">
+        {% if item.href_detail %}
+        <a href="{{ item.href_detail }}" data-testid="decisions-queue-open-detail">Open decision →</a>
+        {% endif %}
+        {% if item.href_context and item.href_context != item.href_detail %}
+        · <a href="{{ item.href_context }}">View context →</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+{# Frozen Approval Inbox contract — keep existing testids and actions #}
 <div class="founder-card" style="margin-bottom:18px" data-testid="approvals-pending">
   <div class="founder-card-title">Pending ({{ snapshot.pending_count }})</div>
   {% if not snapshot.pending %}
@@ -34,6 +83,7 @@
       {% if item.target_id %}
       <div class="founder-meta"><a href="/contacts/{{ item.target_id }}">Open person workspace →</a></div>
       {% endif %}
+      <div class="founder-meta"><a href="/decisions/{{ item.id }}" data-testid="approval-open-detail">Decision detail →</a></div>
       {% if operator.configured %}
       <div style="margin-top:8px;display:flex;gap:8px">
         <button type="button" class="btn btn-primary btn-sm" data-testid="approve-btn"
@@ -60,6 +110,7 @@
       <span class="pill {% if item.status == 'approved' %}green{% elif item.status == 'rejected' %}red{% else %}gray{% endif %}">{{ item.status }}</span>
       <strong>{{ item.title or item.id }}</strong>
       <div class="founder-meta">{{ item.decided_at or item.created_at or '—' }}</div>
+      <div class="founder-meta"><a href="/decisions/{{ item.id }}">View detail →</a></div>
     </div>
     {% endif %}
     {% endfor %}
