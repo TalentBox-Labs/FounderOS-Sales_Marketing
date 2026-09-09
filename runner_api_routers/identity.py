@@ -13,6 +13,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -37,6 +38,11 @@ from revenue_os.services.identity_context import (
     normalize_role,
     service_identity,
 )
+from revenue_os.services.session_revocation import (
+    SessionRevocationStoreUnavailable,
+    is_jti_revoked,
+    revoke_jti,
+)
 from src.tools.editorial_approval import is_human_approver
 
 logger = logging.getLogger(__name__)
@@ -57,6 +63,7 @@ ENV_BOOTSTRAP_NAME = "FOUNDER_OS_BOOTSTRAP_NAME"
 _request_ctx: ContextVar[Request | None] = ContextVar(
     "founder_os_identity_request", default=None
 )
+# Retained for test fixture compatibility only. Auth uses durable DB revocation.
 _revoked_jtis: set[str] = set()
 _login_failures: dict[str, list[float]] = defaultdict(list)
 
@@ -241,8 +248,14 @@ def identity_from_request(request: Request | None) -> IdentityContext | None:
     except JWTError:
         return None
     jti = payload.get("jti")
-    if isinstance(jti, str) and jti in _revoked_jtis:
-        return None
+    if isinstance(jti, str) and jti:
+        try:
+            if is_jti_revoked(jti, session_factory=SessionLocal):
+                return None
+        except SessionRevocationStoreUnavailable:
+            # Fail closed: cannot confirm the token is not revoked.
+            logger.warning("Identity revocation check unavailable; session not trusted")
+            return None
     kind_raw = payload.get("kind") or PrincipalKind.HUMAN.value
     try:
         kind = PrincipalKind(str(kind_raw))
@@ -378,7 +391,21 @@ def _authenticate(email: str, password: str) -> User:
         db.close()
 
 
+def _token_expires_at(payload: dict[str, Any]) -> datetime:
+    exp = payload.get("exp")
+    if isinstance(exp, (int, float)):
+        return datetime.fromtimestamp(float(exp), tz=timezone.utc)
+    if isinstance(exp, datetime):
+        if exp.tzinfo is None:
+            return exp.replace(tzinfo=timezone.utc)
+        return exp.astimezone(timezone.utc)
+    return datetime.now(timezone.utc) + timedelta(
+        minutes=max(1, int(settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    )
+
+
 def _revoke_request_token(request: Request) -> None:
+    """Persist JTI revocation. Raises HTTP 503 if durable store is unavailable."""
     raw = request.cookies.get(IDENTITY_COOKIE)
     if not raw:
         return
@@ -387,8 +414,19 @@ def _revoke_request_token(request: Request) -> None:
     except JWTError:
         return
     jti = payload.get("jti")
-    if isinstance(jti, str) and jti:
-        _revoked_jtis.add(jti)
+    if not isinstance(jti, str) or not jti:
+        return
+    try:
+        revoke_jti(
+            jti,
+            _token_expires_at(payload),
+            session_factory=SessionLocal,
+        )
+    except SessionRevocationStoreUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Session revocation store unavailable",
+        ) from exc
 
 
 def bootstrap_owner_if_needed() -> None:
@@ -519,6 +557,7 @@ async def submit_login(request: Request) -> Response:
 
 @router.post("/logout", response_model=None)
 def submit_logout(request: Request) -> Response:
+    # Durable revoke first; cookie clear only after successful revoke (or no token).
     _revoke_request_token(request)
     if _wants_html(request):
         response: Response = RedirectResponse(url="/login", status_code=303)
